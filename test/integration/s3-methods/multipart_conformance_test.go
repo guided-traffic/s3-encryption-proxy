@@ -33,12 +33,12 @@ import (
 // the proxy against the proxy bucket, once straight into MinIO against a bucket
 // this file creates itself. MinIO is the oracle for "what an S3 implementation
 // answers here"; the AWS documentation is the oracle for "what it should be".
-// Where the proxy and MinIO disagree, or where both disagree with AWS, the test
-// asserts the ACTUAL behaviour and the comment above it names the deviation, so
-// the suite stays green and the gap stays visible.
+// Where the proxy and MinIO disagree, or where both disagree with AWS, the
+// comment above the assertion names the deviation. Where no ADR licenses the
+// difference, the assertion states the TARGET and stays red until the product
+// meets it.
 //
 // Deviations encoded below (search for DEVIATION):
-//   D1 CompleteMultipartUpload with parts out of order is accepted (AWS/MinIO: InvalidPartOrder)
 //   D2 CompleteMultipartUpload with an empty part list answers 500 InternalError (AWS: MalformedXML)
 //   D3 UploadPart with partNumber 0 / 10001 answers 400 text/plain, no S3 error document
 //   D5 ListParts is a stub: it answers 200 with an empty part list for ANY uploadId,
@@ -47,6 +47,9 @@ import (
 //   D10 a second part below the minimum size is refused at UploadPart, not at
 //      Complete: only one part of an object may be short, so the proxy says so
 //      where the client can still act on it (ADR 0011 D5)
+//
+// Asserted as the TARGET, and RED today: D1, the out-of-order part list the
+// proxy sorts instead of refusing with InvalidPartOrder (ADR 0006 D2).
 //
 // Closed by the listing rewrite: D11 (a listing reported the stored size where
 // HEAD reported the plaintext size; both now report the plaintext length,
@@ -416,9 +419,8 @@ func TestMpuThreePartRoundTrip(t *testing.T) {
 	})
 }
 
-// AWS rejects a Complete whose parts are not in ascending part-number order with
-// InvalidPartOrder. The proxy sorts the list before forwarding it, so the client
-// never learns its list was wrong.
+// A Complete whose parts are not in ascending part-number order must be refused
+// with InvalidPartOrder, by AWS, by MinIO and by the proxy alike.
 func TestMpuCompleteWithPartsOutOfOrder(t *testing.T) {
 	integration.EnsureMinIOAndProxyAvailable(t)
 
@@ -433,7 +435,6 @@ func TestMpuCompleteWithPartsOutOfOrder(t *testing.T) {
 	first := MpuPayload(t, MpuMinPartSize)
 	second := MpuPayload(t, MpuMinPartSize)
 	third := MpuPayload(t, 512*1024)
-	ordered := append(append(append([]byte{}, first...), second...), third...)
 
 	key := MpuKey("outoforder")
 
@@ -457,26 +458,15 @@ func TestMpuCompleteWithPartsOutOfOrder(t *testing.T) {
 
 	t.Run("proxy", func(t *testing.T) {
 		uploadID, parts := buildShuffled(t, proxy)
-		out, err := MpuComplete(ctx, proxy, key, uploadID, parts)
+		_, err := MpuComplete(ctx, proxy, key, uploadID, parts)
 
-		// DEVIATION D1: the proxy sorts completeUpload.Parts by part number before
-		// it validates or forwards them (internal/proxy/handlers/multipart/complete.go),
-		// so an out-of-order list that AWS and MinIO both refuse with
-		// InvalidPartOrder succeeds here. A client whose part bookkeeping is broken
-		// gets a silent success instead of the error that would have told it.
-		require.NoErrorf(t, err, "deviation D1 may be fixed; the proxy now refuses: %s", MpuInspect(err))
-		require.NotNil(t, out)
-		t.Cleanup(func() {
-			_, _ = proxy.Client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
-				Bucket: aws.String(proxy.Bucket), Key: aws.String(key),
-			})
-		})
-
-		// The bytes are assembled in ascending part order, which is what the
-		// client presumably meant, so at least the object is not scrambled.
-		body := MpuGetBody(t, ctx, proxy.Client, proxy.Bucket, key)
-		assert.Equal(t, MpuDigest(ordered), MpuDigest(body),
-			"the proxy assembled the out-of-order list into the wrong byte order")
+		// A compatibility question is answered against S3 semantics (ADR 0006 D2),
+		// and ADR 0011 D6 rules on the part set, never on its order: a client whose
+		// part bookkeeping is broken must be told, not silently corrected.
+		require.Error(t, err, "the proxy accepted an out-of-order part list instead of refusing it")
+		shape := MpuInspect(err)
+		assert.Equal(t, "InvalidPartOrder", shape.Code, "proxy: %s", shape)
+		assert.Equal(t, http.StatusBadRequest, shape.Status, "proxy: %s", shape)
 	})
 }
 

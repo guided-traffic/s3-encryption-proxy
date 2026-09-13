@@ -256,21 +256,22 @@ func TestRtPxObjectKeyRouting(t *testing.T) {
 	}
 }
 
-// Defect pin: gorilla/mux cleans the request path before matching, so keys that
-// S3 accepts as distinct objects are answered with a 301 to a different key.
-// "a//b" and "a/../b" are legal S3 keys; an SDK does not follow the redirect and
-// reports PermanentRedirect instead.
-func TestRtPxPathNormalisationRedirectsToADifferentKey(t *testing.T) {
+// Three distinct, legal S3 keys: each must reach the object route and be served
+// as asked. A bodiless 301 to a different key neither honours nor refuses the
+// request (ADR 0007 D1) and carries no <Error> document (ADR 0008 D7).
+// Open decision: keeping the path cleaning needs a documented limit (ADR 0006 D2)
+// and a named S3 error, never a 301.
+func TestRtPxPathNormalisationMustNotRewriteTheKey(t *testing.T) {
 	_, router := RtPxrouter(t, false)
 
 	cases := []struct {
-		name         string
-		target       string
-		wantLocation string
+		name    string
+		target  string
+		wantKey string
 	}{
-		{name: "double slash in the key", target: "/bucket/a//b", wantLocation: "/bucket/a/b"},
-		{name: "dot-dot segment in the key", target: "/bucket/a/../b", wantLocation: "/bucket/b"},
-		{name: "single dot segment in the key", target: "/bucket/a/./b", wantLocation: "/bucket/a/b"},
+		{name: "double slash in the key", target: "/bucket/a//b", wantKey: "a//b"},
+		{name: "dot-dot segment in the key", target: "/bucket/a/../b", wantKey: "a/../b"},
+		{name: "single dot segment in the key", target: "/bucket/a/./b", wantKey: "a/./b"},
 	}
 
 	for _, tc := range cases {
@@ -278,30 +279,36 @@ func TestRtPxPathNormalisationRedirectsToADifferentKey(t *testing.T) {
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, tc.target, nil))
 
-			assert.Equal(t, http.StatusMovedPermanently, w.Code,
-				"current behaviour: the key is normalised away instead of being served")
-			assert.Equal(t, tc.wantLocation, w.Header().Get("Location"))
-			assert.Empty(t, w.Body.String(), "the redirect carries no S3 error document")
+			require.NotEqual(t, http.StatusMovedPermanently, w.Code,
+				"the key has to be served, not rewritten to a different object")
+			assert.Empty(t, w.Header().Get("Location"))
+			// Unsigned, so the object route refuses it; what matters is that a route
+			// answered at all instead of the path cleaner.
+			assert.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+
+			match := RtPxmatch(t, router, httptest.NewRequest(http.MethodGet, tc.target, nil))
+			assert.Equal(t, "bucket", match.Vars["bucket"])
+			assert.Equal(t, tc.wantKey, match.Vars["key"])
 		})
 	}
 }
 
-// Defect pin: a method no route declares is answered by the mux default handler,
-// which writes a bare status with no body. AWS answers 405 with an S3 <Error>
-// document, and a CORS preflight (OPTIONS) never reaches the CORS middleware
-// that would answer it, because middleware only runs once a route has matched.
-func TestRtPxUnroutedMethodsBypassTheMiddlewareChain(t *testing.T) {
+// A method no route declares is still the proxy's refusal to make: 405 with an S3
+// <Error> document and an Allow header naming the methods the path does declare -
+// no bare status, no empty body (ADR 0008 D7).
+func TestRtPxUnroutedMethodsAnswerAnS3Error(t *testing.T) {
 	_, router := RtPxrouter(t, false)
 
 	cases := []struct {
-		name   string
-		method string
-		target string
+		name      string
+		method    string
+		target    string
+		wantAllow []string
 	}{
-		{name: "CORS preflight for an object", method: http.MethodOptions, target: "/bucket/key"},
-		{name: "CORS preflight for a bucket", method: http.MethodOptions, target: "/bucket"},
-		{name: "unsupported method", method: http.MethodPatch, target: "/bucket/key"},
-		{name: "POST on the service root", method: http.MethodPost, target: "/"},
+		{name: "unsupported method", method: http.MethodPatch, target: "/bucket/key",
+			wantAllow: []string{"GET", "PUT", "POST", "DELETE", "HEAD"}},
+		{name: "POST on the service root", method: http.MethodPost, target: "/",
+			wantAllow: []string{"GET"}},
 	}
 
 	for _, tc := range cases {
@@ -309,11 +316,40 @@ func TestRtPxUnroutedMethodsBypassTheMiddlewareChain(t *testing.T) {
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, httptest.NewRequest(tc.method, tc.target, nil))
 
-			assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-			assert.Empty(t, w.Body.String(), "current behaviour: no S3 error document")
-			assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"),
-				"current behaviour: the CORS middleware never sees these requests")
-			assert.Empty(t, w.Header().Get("Allow"))
+			require.Equal(t, http.StatusMethodNotAllowed, w.Code, "body: %s", w.Body.String())
+			assert.Equal(t, "application/xml", w.Header().Get("Content-Type"))
+
+			var doc struct {
+				XMLName xml.Name `xml:"Error"`
+				Code    string   `xml:"Code"`
+			}
+			require.NoError(t, xml.Unmarshal(w.Body.Bytes(), &doc), "body: %s", w.Body.String())
+			assert.Equal(t, "MethodNotAllowed", doc.Code)
+
+			for _, method := range tc.wantAllow {
+				assert.Contains(t, w.Header().Get("Allow"), method)
+			}
+		})
+	}
+}
+
+// A CORS preflight has to reach the CORS middleware, which already answers it;
+// mux runs middleware only after a route matched, so the routing default answers
+// instead and the preflight headers never appear (ADR 0008 D7).
+func TestRtPxPreflightReachesTheCORSMiddleware(t *testing.T) {
+	_, router := RtPxrouter(t, false)
+
+	for _, tc := range []struct{ name, target string }{
+		{name: "CORS preflight for an object", target: "/bucket/key"},
+		{name: "CORS preflight for a bucket", target: "/bucket"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(http.MethodOptions, tc.target, nil))
+
+			require.Equal(t, http.StatusOK, w.Code, "a preflight is not a method refusal")
+			assert.Equal(t, "*", w.Header().Get("Access-Control-Allow-Origin"))
+			assert.NotEmpty(t, w.Header().Get("Access-Control-Allow-Methods"))
 		})
 	}
 }
@@ -410,26 +446,45 @@ func TestRtPxMonitoringMiddlewareIsTransparent(t *testing.T) {
 	}
 }
 
-// Defect pin: the health and version endpoints are registered before the S3
-// routes and match on the path alone, so a bucket named "health" or "version"
-// is unreachable through the proxy - a ListObjects on it answers the health
-// document, with 200 and no authentication.
-func TestRtPxHealthEndpointsShadowSameNamedBuckets(t *testing.T) {
+// A probe reads /health and /version unsigned and with no S3 parameters. Anything
+// that is an S3 request - signed, or carrying listing parameters - addresses a
+// bucket of that name, which S3 allows and no documented limit forbids
+// (ADR 0006 D2; ADR 0014 D11 exempts the probe, not the name).
+func TestRtPxHealthEndpointsDoNotShadowSameNamedBuckets(t *testing.T) {
 	_, router := RtPxrouter(t, false)
 
-	for _, target := range []string{"/health", "/version", "/health?list-type=2&prefix=a/"} {
-		t.Run(target, func(t *testing.T) {
+	// The probe stays the probe, and keeps answering while the server drains
+	// (ADR 0029 D1).
+	for _, target := range []string{"/health", "/version"} {
+		t.Run("probe "+target, func(t *testing.T) {
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, target, nil))
 
 			assert.Equal(t, http.StatusOK, w.Code)
-			assert.Equal(t, "application/json", w.Header().Get("Content-Type"),
-				"current behaviour: the bucket listing is shadowed by the probe endpoint")
-			assert.NotContains(t, w.Body.String(), "ListBucketResult")
+			assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
 		})
 	}
 
-	// Only GET is shadowed; the other verbs still reach the bucket handler.
+	// A listing on a bucket named "health" is an S3 request; unsigned, so the S3
+	// answer is the auth refusal - never the probe document.
+	t.Run("listing parameters reach the S3 router", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/health?list-type=2&prefix=a/", nil))
+
+		require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+		assert.Equal(t, "application/xml", w.Header().Get("Content-Type"))
+		assert.Contains(t, w.Body.String(), "<Code>")
+	})
+
+	// A signed GET is an S3 request whatever the bucket is called.
+	for _, target := range []string{"/health", "/version"} {
+		t.Run("signed "+target, func(t *testing.T) {
+			assert.Contains(t, RtPxhandlerName(t, router, RtPxsignedRequest(t, http.MethodGet, target)),
+				"bucket.(*Handler).Handle")
+		})
+	}
+
+	// Only GET is shadowed: the other verbs already reach the bucket handler.
 	req := httptest.NewRequest(http.MethodPut, "/health", nil)
 	assert.Contains(t, RtPxhandlerName(t, router, req), "bucket.(*Handler).Handle")
 }

@@ -111,7 +111,10 @@ func TestLicLogLicenseInfoFullDetails(t *testing.T) {
 	assert.True(t, Liclogged(hook, "Company: Acme Corp"))
 	assert.True(t, Liclogged(hook, "License Note: Production License"))
 	assert.True(t, Liclogged(hook, "Kubernetes Cluster: cluster-prod-01"))
-	assert.True(t, Liclogged(hook, "Kubernetes Cluster ID validation not yet implemented"))
+	// The banner must not advertise a check the product does not perform: the cluster id
+	// claim is either validated on the startup gate or dropped (ADR 0016, residual risks).
+	// Which of the two is an open owner decision.
+	assert.False(t, Liclogged(hook, "Kubernetes Cluster ID validation not yet implemented"))
 	assert.True(t, Liclogged(hook, "License expires: "+expires.Format("2006-01-02 15:04:05 MST")))
 	assert.True(t, Liclogged(hook, "Time remaining: 1 year, 35 days"))
 	assert.False(t, Liclogged(hook, "License expires soon"))

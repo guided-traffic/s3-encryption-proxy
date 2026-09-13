@@ -748,11 +748,11 @@ func TestObjGetUnparseableConditionalDateIsIgnored(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Silent 200: request parameters S3 acts on that this proxy neither honours nor
-// rejects. The client cannot tell that it got something else than it asked for.
+// Silent 200: request parameters S3 acts on. Each one is honoured or refused,
+// never accepted and discarded behind a 200 (ADR 0007 D1).
 // ---------------------------------------------------------------------------
 
-func TestObjGetGetObjectRefusesPartNumberAndDropsResponseOverrides(t *testing.T) {
+func TestObjGetGetObjectRefusesPartNumberAndHonoursResponseOverrides(t *testing.T) {
 	// partNumber selects one part of a multipart object at S3 and answers 206
 	// with x-amz-mp-parts-count. This proxy does not implement it. It used to
 	// drop the parameter and serve the WHOLE object with a 200, which is the
@@ -768,9 +768,10 @@ func TestObjGetGetObjectRefusesPartNumberAndDropsResponseOverrides(t *testing.T)
 		backend.AssertNotCalled(t, "GetObject", mock.Anything, mock.Anything)
 	})
 
-	// DEFECT (pinned): the response-* overrides are what presigned download URLs
-	// use to name a file and set its type. All six are accepted and dropped.
-	t.Run("the six response overrides are accepted and dropped", func(t *testing.T) {
+	// The response-* overrides are what a presigned download URL uses to name a
+	// file and set its type. Admitting all six and answering 200 with the stored
+	// values is the accept-and-discard ADR 0007 D1 forbids.
+	t.Run("the six response overrides are honoured", func(t *testing.T) {
 		backend := new(MockS3Backend)
 		h := ObjGetnewHandler(t, backend)
 
@@ -791,15 +792,15 @@ func TestObjGetGetObjectRefusesPartNumberAndDropsResponseOverrides(t *testing.T)
 		require.Equal(t, http.StatusOK, rr.Code)
 		require.NotNil(t, captured)
 
-		assert.Nil(t, captured.ResponseContentType, "known defect: response-content-type is dropped")
-		assert.Nil(t, captured.ResponseContentDisposition)
-		assert.Nil(t, captured.ResponseCacheControl)
-		assert.Nil(t, captured.ResponseContentEncoding)
-		assert.Nil(t, captured.ResponseContentLanguage)
-		assert.Nil(t, captured.ResponseExpires)
-		assert.Equal(t, "application/octet-stream", rr.Header().Get("Content-Type"),
-			"the stored type is served, not the requested override")
-		assert.Empty(t, rr.Header().Get("Content-Disposition"))
+		// All six reach the client: a request is honoured or refused, and these
+		// are legitimate on a GET (ADR 0007 D1, D2).
+		// Open decision: forwarded on the backend request, or applied here.
+		assert.Equal(t, "text/plain", rr.Header().Get("Content-Type"))
+		assert.Equal(t, `attachment; filename="a.txt"`, rr.Header().Get("Content-Disposition"))
+		assert.Equal(t, "no-store", rr.Header().Get("Cache-Control"))
+		assert.Equal(t, "identity", rr.Header().Get("Content-Encoding"))
+		assert.Equal(t, "en-GB", rr.Header().Get("Content-Language"))
+		assert.Equal(t, "Wed, 21 Oct 2015 07:28:00 GMT", rr.Header().Get("Expires"))
 	})
 }
 

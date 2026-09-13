@@ -725,19 +725,20 @@ func TestBktLoggingDeleteIsUnreachableThroughTheRouter(t *testing.T) {
 	})
 }
 
-// TestBktPolicyGetWithNoPolicyAnswers200WithAnEmptyBody records a deviation:
-// when the backend reports no policy without an error, the client gets 200 and
-// zero bytes behind a JSON content type. AWS answers 404 NoSuchBucketPolicy.
-func TestBktPolicyGetWithNoPolicyAnswers200WithAnEmptyBody(t *testing.T) {
+// TestBktPolicyGetWithNoPolicyAnswers404 covers handleGetPolicy on the arm where
+// the backend reports success and carries no policy document.
+func TestBktPolicyGetWithNoPolicyAnswers404(t *testing.T) {
 	backend := &MockS3Backend{}
 	backend.On("GetBucketPolicy", mock.Anything, mock.Anything).Return(&s3.GetBucketPolicyOutput{}, nil)
 	h := BktnewHandlerWith(backend)
 
 	w := Bktserve(h.GetPolicyHandler().Handle, http.MethodGet, "/"+bktBucket+"?policy", nil)
 
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
-	assert.Empty(t, w.Body.String())
+	// No policy is a refusal, not a success: ADR 0007 D1 forbids answering success
+	// for something the proxy did not honour, and ADR 0008 D7 makes every failure
+	// an S3 <Error> document - never a bare status behind an empty body.
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, "NoSuchBucketPolicy", BktparseError(t, w.Body.Bytes()).Code)
 }
 
 // TestBktPolicyPutValidatesJSONBeforeForwarding covers handlePutPolicy.
@@ -831,25 +832,50 @@ func TestBktPolicyPutValidatesJSONBeforeForwarding(t *testing.T) {
 	})
 }
 
-// TestBktPolicyPutBuffersAnUnboundedBody proves there is no size limit on a
-// bucket sub-resource body: the whole request is read into memory and forwarded.
-// AWS caps a bucket policy at 20 KB; here a client can make the proxy allocate
-// as much as it likes with a single request.
-func TestBktPolicyPutBuffersAnUnboundedBody(t *testing.T) {
-	const size = 4 << 20 // 4 MiB, far past every S3 sub-resource document limit
-	policy := append([]byte(`{"x":"`), bytes.Repeat([]byte("a"), size)...)
-	policy = append(policy, []byte(`"}`)...)
+// BktpolicyOfSize builds a syntactically valid policy document with n bytes of
+// padding, so a size case is judged on its size and not on its JSON.
+func BktpolicyOfSize(n int) []byte {
+	policy := append([]byte(`{"x":"`), bytes.Repeat([]byte("a"), n)...)
+	return append(policy, []byte(`"}`)...)
+}
 
-	backend := &MockS3Backend{}
-	backend.On("PutBucketPolicy", mock.Anything, mock.MatchedBy(func(in *s3.PutBucketPolicyInput) bool {
-		return len(aws.ToString(in.Policy)) == len(policy)
-	})).Return(&s3.PutBucketPolicyOutput{}, nil)
-	h := BktnewHandlerWith(backend)
+// TestBktPolicyPutBoundsTheBody covers both halves of a bounded sub-resource
+// ingest: what fits reaches the backend whole, what does not is refused.
+func TestBktPolicyPutBoundsTheBody(t *testing.T) {
+	t.Run("within_the_bound_it_is_forwarded_whole", func(t *testing.T) {
+		policy := BktpolicyOfSize(8 << 10) // 8 KiB, inside any bound an operator would set
 
-	w := Bktserve(h.GetPolicyHandler().Handle, http.MethodPut, "/"+bktBucket+"?policy", policy)
+		backend := &MockS3Backend{}
+		backend.On("PutBucketPolicy", mock.Anything, mock.MatchedBy(func(in *s3.PutBucketPolicyInput) bool {
+			return aws.ToString(in.Policy) == string(policy)
+		})).Return(&s3.PutBucketPolicyOutput{}, nil)
+		h := BktnewHandlerWith(backend)
 
-	assert.Equal(t, http.StatusNoContent, w.Code)
-	backend.AssertExpectations(t)
+		w := Bktserve(h.GetPolicyHandler().Handle, http.MethodPut, "/"+bktBucket+"?policy", policy)
+
+		// ADR 0007 D5: a document the proxy accepts arrives at the backend in full.
+		// A bound may refuse a body, it may never truncate or mangle one.
+		assert.Equal(t, http.StatusNoContent, w.Code)
+		backend.AssertExpectations(t)
+	})
+
+	t.Run("above_the_bound_it_is_refused_before_it_is_read", func(t *testing.T) {
+		policy := BktpolicyOfSize(4 << 20) // 4 MiB, past any sub-resource ingest bound
+
+		// BktnewBackend, not a bare mock: the forwarded call this must not make
+		// then reads as the assertion below and not as a panic on the package.
+		backend := BktnewBackend()
+		h := BktnewHandlerWith(backend)
+
+		w := Bktserve(h.GetPolicyHandler().Handle, http.MethodPut, "/"+bktBucket+"?policy", policy)
+
+		// ADR 0024 D4 wants in-flight memory bounded and configured, and ADR 0011 D5
+		// refuses an oversized body before it is read instead of buffering it first.
+		// Which bound, and EntityTooLarge vs MalformedPolicy, is still an open decision.
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Equal(t, "EntityTooLarge", BktparseError(t, w.Body.Bytes()).Code)
+		backend.AssertNotCalled(t, "PutBucketPolicy", mock.Anything, mock.Anything)
+	})
 }
 
 // TestBktDeletePolicyAnswers204 covers handleDeletePolicy including its error

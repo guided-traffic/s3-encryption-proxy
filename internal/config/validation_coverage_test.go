@@ -75,16 +75,26 @@ func CfgExitProviderConfig() *Config {
 
 func TestCfgValidateProviderTypes(t *testing.T) {
 	tests := []struct {
-		name        string
-		provider    EncryptionProvider
-		index       int
-		expectError string
+		name     string
+		provider EncryptionProvider
+		index    int
+		// expectError and expectAlso are substrings the message must carry,
+		// expectAbsent substrings it must not.
+		expectError  string
+		expectAlso   []string
+		expectAbsent []string
 	}{
 		{
-			name:        "tink is rejected as not implemented",
-			provider:    EncryptionProvider{Alias: "t", Type: "tink"},
-			index:       0,
-			expectError: "encryption.providers[0]: tink encryption is not yet implemented",
+			// "not yet implemented with the new architecture" is a leftover ADR 0005
+			// records under residual risks; ADR 0013 D7 wants the field and the rule
+			// it broke, on an arm of its own so an old configuration fails loudly.
+			// The exact wording of that rule is still the owner's to pick.
+			name:         "tink is refused by name, not as a generic unknown type",
+			provider:     EncryptionProvider{Alias: "t", Type: "tink"},
+			index:        0,
+			expectError:  "encryption.providers[0]",
+			expectAlso:   []string{"tink", "supported: aes, exit"},
+			expectAbsent: []string{"not yet implemented", "unsupported encryption type"},
 		},
 		{
 			name:        "aes without config map",
@@ -195,6 +205,12 @@ func TestCfgValidateProviderTypes(t *testing.T) {
 			}
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.expectError)
+			for _, must := range tt.expectAlso {
+				assert.Contains(t, err.Error(), must)
+			}
+			for _, mustNot := range tt.expectAbsent {
+				assert.NotContains(t, err.Error(), mustNot)
+			}
 		})
 	}
 }
@@ -479,10 +495,14 @@ func TestCfgValidateOptimizationsBoundaries(t *testing.T) {
 			expectError: "optimizations.multipart_upload_concurrency: minimum value is 1, got -1",
 		},
 		{
-			// Documents the current behaviour: the cleanup interval's struct tag
-			// declares min=60 and nothing enforces it.
-			name: "session cleanup values below their declared minimum are not enforced",
-			opts: OptimizationsConfig{MultipartSessionCleanupInterval: 1, MultipartSessionIdleTimeout: 1},
+			// ADR 0013 D7 / ADR 0017 D8: a value that switches a protection off is
+			// refused by name - the idle timeout got that check, the cleanup interval
+			// was left behind (ADR 0028, residual risks).
+			// Open: whether a written 0 is caught here or in the loader beside the
+			// idle timeout's zero check. The minimum of 1 itself is not open.
+			name:        "cleanup interval below its minimum is refused",
+			opts:        OptimizationsConfig{MultipartSessionCleanupInterval: -1},
+			expectError: "optimizations.multipart_session_cleanup_interval: minimum value is 1",
 		},
 	}
 

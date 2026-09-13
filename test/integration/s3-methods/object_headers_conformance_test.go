@@ -32,8 +32,12 @@ import (
 // The differences that are legitimate and therefore encoded rather than flagged:
 //   - the proxy filters the s3ep-* metadata namespace out of client responses
 //   - the bytes and the length the BACKEND reports are ciphertext
-//   - the ETag is the digest of the ciphertext, so it does not equal the digest
-//     MinIO reports for the same plaintext
+//
+// The ETag is not one of them. It is an MD5 of the stored bytes in the bare
+// 32-hex shape a client reads as a digest of the content it was served, and its
+// form is an open question (ADR 0010 D12, residual risks in ADR 0008 and
+// ADR 0012). This file asserts the target - a value no client mistakes for a
+// content digest - and is red until the product answers it.
 //
 // Everything else that differs is named as a deviation in the comment above the
 // assertion that encodes it.
@@ -190,6 +194,19 @@ func HdrObjectHeaderNames(h http.Header) []string {
 		}
 	}
 	return names
+}
+
+// HdrIsContentDigestShape reports whether an entity tag carries, inside its
+// quotes, the bare 32 hex digits every S3 client reads as an MD5 of the object
+// content. A multipart tag (<hex>-N) and any marked value are not that shape.
+func HdrIsContentDigestShape(etag string) bool {
+	value := strings.Trim(etag, `"`)
+	if len(value) != 32 {
+		return false
+	}
+	return strings.IndexFunc(value, func(r rune) bool {
+		return !strings.ContainsRune("0123456789abcdefABCDEF", r)
+	}) < 0
 }
 
 // HdrNewDirectBucket creates a bucket that exists only for the direct-MinIO half
@@ -352,8 +369,10 @@ func TestHdrHeadReturnsTheSameHeaderSetAsGet(t *testing.T) {
 	assert.ElementsMatch(t, backendNames, proxyNames,
 		"the proxy and the backend expose different object headers for the same upload")
 
-	// Every value the two do share must be identical, the ETag excluded: the
-	// proxy's ETag is the digest of the ciphertext.
+	// Every value the two do share must be identical. The ETag is compared on its
+	// own below rather than against the backend's - it is a digest of the stored
+	// bytes and cannot equal MinIO's digest of the same plaintext - which leaves
+	// last-modified as the only silent exclusion: two uploads, two instants.
 	for _, name := range proxyNames {
 		if name == "etag" || name == "last-modified" {
 			continue
@@ -361,6 +380,15 @@ func TestHdrHeadReturnsTheSameHeaderSetAsGet(t *testing.T) {
 		assert.Equalf(t, minioGet.Get(name), proxyGet.Get(name), "GET: value of %s differs", name)
 		assert.Equalf(t, minioHead.Get(name), proxyHead.Get(name), "HEAD: value of %s differs", name)
 	}
+
+	// ADR 0010 D12 leaves the entity-tag form open, ADR 0008 and ADR 0012 carry it
+	// as a residual risk: under an encrypting provider the value must not be the
+	// bare 32-hex shape a client reads as a digest of the body it was served.
+	// The exact marker ("-0" inside the quotes) is still the owner's decision.
+	assert.Falsef(t, HdrIsContentDigestShape(proxyGet.Get("ETag")),
+		"GET: the ETag %q is bare 32 hex over ciphertext", proxyGet.Get("ETag"))
+	assert.Falsef(t, HdrIsContentDigestShape(proxyHead.Get("ETag")),
+		"HEAD: the ETag %q is bare 32 hex over ciphertext", proxyHead.Get("ETag"))
 }
 
 // ----------------------------------------------------------------------------
@@ -649,12 +677,31 @@ func TestHdrETagIsPresentAndStableAcrossRepeatedHeads(t *testing.T) {
 	assert.Equal(t, first, getHeaders.Get("ETag"), "GET and HEAD report different ETags")
 	assert.Equal(t, aws.ToString(proxyPut.ETag), first, "PUT returned an ETag that HEAD does not confirm")
 
-	// The proxy's ETag is the digest of the stored ciphertext, so it does not
-	// match the backend's digest of the same plaintext. That is the product
-	// working; it is recorded here because a client that verifies an upload by
-	// comparing the ETag against its own MD5 will not succeed through the proxy.
-	assert.NotEqual(t, aws.ToString(minioPut.ETag), aws.ToString(proxyPut.ETag),
-		"the proxy's ETag equals the plaintext digest: is the object stored unencrypted?")
+	// ADR 0010 D12 leaves the entity-tag form open, ADR 0008 and ADR 0012 carry it
+	// as a residual risk: a bare 32-hex MD5 of the ciphertext is what rclone and
+	// s3cmd read as a digest of the content and refuse. The exact marker ("-0"
+	// inside the quotes) is still the owner's decision.
+	assert.Falsef(t, HdrIsContentDigestShape(aws.ToString(proxyPut.ETag)),
+		"the ETag %q is bare 32 hex over ciphertext", aws.ToString(proxyPut.ETag))
+
+	// Whatever shape it takes, the value the proxy hands out has to revalidate
+	// when the client sends it back.
+	_, err = tc.ProxyClient.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(tc.TestBucket), Key: aws.String(key), IfMatch: proxyPut.ETag,
+	})
+	assert.NoError(t, err, "If-Match carrying the proxy's own ETag does not revalidate")
+
+	// Encryption at rest is asserted on the stored bytes. It used to be inferred
+	// from the ETag differing from the backend's, which a correct plaintext digest
+	// over correctly sealed ciphertext would have tripped.
+	stored, err := tc.MinIOClient.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
+	})
+	require.NoError(t, err)
+	storedBytes, err := io.ReadAll(stored.Body)
+	_ = stored.Body.Close()
+	require.NoError(t, err)
+	integration.AssertDataIsEncryptedBasic(t, storedBytes, "the object the proxy wrote is stored in the clear")
 }
 
 // ----------------------------------------------------------------------------

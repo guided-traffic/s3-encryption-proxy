@@ -258,10 +258,6 @@ func TestObjMiscHandleRefusesAnObjectThisProxyDidNotWrite(t *testing.T) {
 	})
 }
 
-// DEFECT (minor, reported): a method the object resource does not support is
-// answered 501 NotImplemented. AWS answers 405 MethodNotAllowed with
-// Code=MethodNotAllowed and an Allow header. A client that retries on 501 but
-// not on 405 - or the other way round - reads the wrong instruction.
 // The router registers POST on this handler, so POST is the live case; the rest
 // are here because Handle is exported and callable with any method.
 func TestObjMiscHandleUnsupportedMethodIsRefusedNotSilently200(t *testing.T) {
@@ -278,13 +274,31 @@ func TestObjMiscHandleUnsupportedMethodIsRefusedNotSilently200(t *testing.T) {
 			assert.NotEqual(t, http.StatusOK, rr.Code)
 			assert.Equal(t, 0, len(backend.Calls), "an unsupported method must not reach the backend")
 
-			ObjMiscassertNotImplemented(t, rr, "Object_"+method)
-			// Pins the deviation from AWS so a later fix shows up here.
-			assert.NotEqual(t, http.StatusMethodNotAllowed, rr.Code,
-				"AWS answers 405 MethodNotAllowed here; the proxy answers 501")
-			assert.Empty(t, rr.Header().Get("Allow"), "no Allow header is offered either")
+			// The method is wrong, not the operation unimplemented, so the refusal
+			// that says what is true is 405 with an Allow header naming the verbs the
+			// resource carries (ADR 0007 D8, ADR 0008 D7).
+			assert.Equal(t, http.StatusMethodNotAllowed, rr.Code)
+			assert.Equal(t, "application/xml", rr.Header().Get("Content-Type"))
+			assert.Equal(t, "MethodNotAllowed", ObjMiscparseError(t, rr.Body.Bytes()).Code)
+			assert.ElementsMatch(t,
+				[]string{"GET", "HEAD", "PUT", "DELETE"},
+				ObjMiscallowedMethods(rr),
+				"the Allow header names the methods the object resource does carry")
 		})
 	}
+}
+
+// ObjMiscallowedMethods reads the Allow header as the set of verbs it names.
+func ObjMiscallowedMethods(rr *httptest.ResponseRecorder) []string {
+	header := rr.Header().Get("Allow")
+	if header == "" {
+		return nil
+	}
+	methods := strings.Split(header, ",")
+	for i, m := range methods {
+		methods[i] = strings.TrimSpace(m)
+	}
+	return methods
 }
 
 // Handler.Handle recognises acl, tagging and attributes by name; every other
@@ -723,29 +737,32 @@ func TestObjMiscObjectSubResourcesRefusedOnUnsupportedVerbs(t *testing.T) {
 	backend.AssertNotCalled(t, "PutObjectRetention", mock.Anything, mock.Anything)
 }
 
-// DEFECT (major, reported): ?torrent is a pure passthrough. The backend builds
-// the torrent from the bytes it holds, which for anything this proxy wrote are
-// the ciphertext, so every piece hash in the answer describes ciphertext while
-// the client is told 200. A client that downloads through the torrent gets the
-// encrypted object and no way to notice.
-func TestObjMiscObjectTorrentIsPassedThroughUndecrypted(t *testing.T) {
+// ?torrent is refused under an encrypting provider: the backend composes the
+// document from the bytes it holds, which are the ciphertext, and a response
+// carries only what the proxy can vouch for (ADR 0008 D1/D11, ADR 0007 D1).
+func TestObjMiscObjectTorrentIsRefusedNotPassedThroughUndecrypted(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjMiscnewHandler(t, backend)
 
+	// Stubbed so a handler that still calls it fails on the assertions below
+	// rather than on an unexpected call.
 	torrent := []byte("d8:announce20:http://tracker/announce4:infod6:lengthi5eee")
-	backend.On("GetObjectTorrent", mock.Anything, mock.MatchedBy(func(in *s3.GetObjectTorrentInput) bool {
-		return aws.ToString(in.Bucket) == "b" && aws.ToString(in.Key) == "k"
-	})).Return(&s3.GetObjectTorrentOutput{Body: io.NopCloser(bytes.NewReader(torrent))}, nil)
+	backend.On("GetObjectTorrent", mock.Anything, mock.Anything).
+		Return(&s3.GetObjectTorrentOutput{Body: io.NopCloser(bytes.NewReader(torrent))}, nil)
 
 	rr := ObjMiscdoFunc(h.HandleObjectTorrent,
 		httptest.NewRequest(http.MethodGet, "/b/k?torrent", nil),
 		map[string]string{"bucket": "b", "key": "k"})
 
-	assert.Equal(t, http.StatusOK, rr.Code)
-	assert.Equal(t, "application/x-bittorrent", rr.Header().Get("Content-Type"))
-	assert.Equal(t, torrent, rr.Body.Bytes(),
-		"the backend document is forwarded verbatim, ciphertext hashes included")
-	backend.AssertExpectations(t)
+	// Encryption forecloses the operation, so the request never reaches the
+	// backend and not one byte of its document reaches the client (ADR 0007 D1).
+	backend.AssertNotCalled(t, "GetObjectTorrent", mock.Anything, mock.Anything)
+	assert.NotEqual(t, "application/x-bittorrent", rr.Header().Get("Content-Type"))
+	assert.NotContains(t, rr.Body.String(), "announce")
+	// Open decision: 422 NotSupportedWithEncryption or 501 NotImplemented naming
+	// ObjectTorrent is the owner's call (ADR 0007 D8); asserted is the first.
+	assert.Equal(t, http.StatusUnprocessableEntity, rr.Code)
+	assert.Equal(t, "NotSupportedWithEncryption", ObjMiscparseError(t, rr.Body.Bytes()).Code)
 }
 
 func TestObjMiscObjectTorrentBackendErrorsAreMapped(t *testing.T) {

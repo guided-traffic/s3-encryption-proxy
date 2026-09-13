@@ -287,11 +287,10 @@ func TestObjMiscDeleteObjectsMalformedXMLIsRefused(t *testing.T) {
 	}
 }
 
-// DEFECT (minor, reported): an empty request body unmarshals cleanly into a
-// zero Delete document, so the proxy calls the backend with an empty object
-// list instead of refusing. AWS answers 400 MalformedXML for a Delete with no
-// Object element.
-func TestObjMiscDeleteObjectsEmptyDocumentReachesTheBackend(t *testing.T) {
+// A Delete document that parses but names no object is still not a valid Delete:
+// it is refused with 400 MalformedXML, the answer S3 gives, and never becomes an
+// empty backend call (ADR 0006 D2, ADR 0007 D1).
+func TestObjMiscDeleteObjectsEmptyDocumentIsRefused(t *testing.T) {
 	cases := map[string]string{
 		"empty_delete_element": `<Delete></Delete>`,
 		"self_closing":         `<Delete/>`,
@@ -303,16 +302,17 @@ func TestObjMiscDeleteObjectsEmptyDocumentReachesTheBackend(t *testing.T) {
 			backend := new(MockS3Backend)
 			h := ObjMiscnewHandler(t, backend)
 
-			var captured *s3.DeleteObjectsInput
+			// Stubbed so the unwanted call fails an assertion instead of
+			// panicking the whole package run.
 			backend.On("DeleteObjects", mock.Anything, mock.Anything).
-				Run(func(args mock.Arguments) { captured = args.Get(1).(*s3.DeleteObjectsInput) }).
 				Return(&s3.DeleteObjectsOutput{}, nil)
 
 			rr := ObjMiscdeleteObjects(h, "bkt", body)
 
-			assert.Equal(t, http.StatusOK, rr.Code, "AWS refuses this with 400 MalformedXML")
-			require.NotNil(t, captured)
-			assert.Empty(t, captured.Delete.Objects)
+			assert.Equal(t, http.StatusBadRequest, rr.Code)
+			assert.Equal(t, "application/xml", rr.Header().Get("Content-Type"))
+			assert.Equal(t, "MalformedXML", ObjMiscparseError(t, rr.Body.Bytes()).Code)
+			backend.AssertNotCalled(t, "DeleteObjects", mock.Anything, mock.Anything)
 		})
 	}
 }
@@ -330,41 +330,37 @@ func TestObjMiscDeleteObjectsEmptyBodyIsMalformed(t *testing.T) {
 	backend.AssertNotCalled(t, "DeleteObjects", mock.Anything, mock.Anything)
 }
 
-// DEFECT (minor, reported): an <Object> with no <Key> is forwarded as an empty
-// key. AWS refuses the document with MalformedXML rather than sending a delete
-// for "".
-func TestObjMiscDeleteObjectsAcceptsAnObjectWithoutAKey(t *testing.T) {
+// An <Object> with no <Key> makes the document invalid: 400 MalformedXML. The
+// proxy re-serialises this document, so accepting it would author a delete for
+// the empty key on the client's behalf (ADR 0007 D1/D8, ADR 0006 D2).
+func TestObjMiscDeleteObjectsObjectWithoutAKeyIsRefused(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjMiscnewHandler(t, backend)
 
-	var captured *s3.DeleteObjectsInput
+	// Stubbed so the unwanted call fails an assertion instead of panicking the
+	// whole package run.
 	backend.On("DeleteObjects", mock.Anything, mock.Anything).
-		Run(func(args mock.Arguments) { captured = args.Get(1).(*s3.DeleteObjectsInput) }).
 		Return(&s3.DeleteObjectsOutput{}, nil)
 
 	rr := ObjMiscdeleteObjects(h, "bkt", `<Delete><Object></Object></Delete>`)
 
-	assert.Equal(t, http.StatusOK, rr.Code)
-	require.NotNil(t, captured)
-	require.Len(t, captured.Delete.Objects, 1)
-	assert.Equal(t, "", aws.ToString(captured.Delete.Objects[0].Key),
-		"an empty key is forwarded to the backend")
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	assert.Equal(t, "MalformedXML", ObjMiscparseError(t, rr.Body.Bytes()).Code)
+	backend.AssertNotCalled(t, "DeleteObjects", mock.Anything, mock.Anything)
 }
 
-// DEFECT (major, reported): AWS caps a Delete document at 1000 objects and
-// answers 400 MalformedXML above it. The proxy enforces no limit: it parses the
-// whole document into memory and forwards every entry, so one request can turn
-// into an arbitrarily large backend call. The body itself is read with a plain
-// io.ReadAll, so the allocation is bounded only by what the client sends.
-func TestObjMiscDeleteObjectsDoesNotEnforceTheThousandKeyLimit(t *testing.T) {
+// Above 1000 objects the document is refused with 400 MalformedXML, as S3 does,
+// and the body read is bounded with it so one request cannot buffer a document of
+// any size and become an unbounded backend call (ADR 0006 D2, ADR 0011 D5).
+func TestObjMiscDeleteObjectsRefusesAboveTheThousandKeyLimit(t *testing.T) {
 	const count = 1001
 
 	backend := new(MockS3Backend)
 	h := ObjMiscnewHandler(t, backend)
 
-	var captured *s3.DeleteObjectsInput
+	// Stubbed so the unwanted call fails an assertion instead of panicking the
+	// whole package run.
 	backend.On("DeleteObjects", mock.Anything, mock.Anything).
-		Run(func(args mock.Arguments) { captured = args.Get(1).(*s3.DeleteObjectsInput) }).
 		Return(&s3.DeleteObjectsOutput{}, nil)
 
 	var body strings.Builder
@@ -376,10 +372,9 @@ func TestObjMiscDeleteObjectsDoesNotEnforceTheThousandKeyLimit(t *testing.T) {
 
 	rr := ObjMiscdeleteObjects(h, "bkt", body.String())
 
-	assert.Equal(t, http.StatusOK, rr.Code, "AWS answers 400 MalformedXML above 1000 keys")
-	require.NotNil(t, captured)
-	assert.Len(t, captured.Delete.Objects, count,
-		"every key is forwarded, the AWS limit is not applied")
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	assert.Equal(t, "MalformedXML", ObjMiscparseError(t, rr.Body.Bytes()).Code)
+	backend.AssertNotCalled(t, "DeleteObjects", mock.Anything, mock.Anything)
 }
 
 // ObjMiscerrReader fails on the first Read, the way a client that disconnects
@@ -389,9 +384,9 @@ type ObjMiscerrReader struct{ err error }
 func (r ObjMiscerrReader) Read([]byte) (int, error) { return 0, r.err }
 func (r ObjMiscerrReader) Close() error             { return nil }
 
-// DEFECT (minor, reported): a body that cannot be read is answered
-// 400 InvalidRequest. AWS uses IncompleteBody (400) for a truncated body and
-// RequestTimeout for a stalled one; InvalidRequest is neither.
+// A body that cannot be read is a transport fault, answered 400 IncompleteBody
+// word for word as PUT and UploadPart answer it; InvalidRequest stays the answer
+// for a request carrying no digest at all (ADR 0012 D14, ADR 0007 D8).
 func TestObjMiscDeleteObjectsBodyReadErrorIsRefused(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjMiscnewHandler(t, backend)
@@ -403,8 +398,8 @@ func TestObjMiscDeleteObjectsBodyReadErrorIsRefused(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 	doc := ObjMiscparseError(t, rr.Body.Bytes())
-	assert.Equal(t, "InvalidRequest", doc.Code)
-	assert.Equal(t, "Failed to read request body", doc.Message)
+	assert.Equal(t, "IncompleteBody", doc.Code)
+	assert.Equal(t, "The request body terminated before the declared number of bytes was read", doc.Message)
 	backend.AssertNotCalled(t, "DeleteObjects", mock.Anything, mock.Anything)
 }
 

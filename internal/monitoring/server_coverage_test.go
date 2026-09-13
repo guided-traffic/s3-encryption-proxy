@@ -211,8 +211,11 @@ func TestMonServerStartLogsListenFailure(t *testing.T) {
 
 	select {
 	case err := <-errCh:
-		// Known behaviour: a bind failure is only logged, Start still reports success.
-		assert.NoError(t, err)
+		// A failed bind must reach the caller and name the address it could not take:
+		// the proxy does not run degraded on a listener it never got (ADR 0013 D7).
+		require.Error(t, err)
+		assert.ErrorContains(t, err, blocker.Addr().String())
+		// Open decision: whether the process then aborts or carries on degraded.
 	case <-time.After(15 * time.Second):
 		t.Fatal("Start did not return after the context was cancelled")
 	}

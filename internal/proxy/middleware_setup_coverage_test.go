@@ -104,16 +104,18 @@ func TestRtPxS3AuthMiddlewareRejections(t *testing.T) {
 	stale := time.Now().UTC().Add(-20 * time.Minute)
 
 	cases := []struct {
-		name     string
-		build    func() *http.Request
-		wantCode string
+		name       string
+		build      func() *http.Request
+		wantCode   string
+		wantStatus int
 	}{
 		{
 			name: "no Authorization header at all",
 			build: func() *http.Request {
 				return httptest.NewRequest(http.MethodGet, "/test-bucket/key", nil)
 			},
-			wantCode: "InvalidRequest",
+			wantCode:   "InvalidRequest",
+			wantStatus: http.StatusBadRequest,
 		},
 		{
 			name: "not AWS Signature V4",
@@ -122,7 +124,8 @@ func TestRtPxS3AuthMiddlewareRejections(t *testing.T) {
 				r.Header.Set("Authorization", "Basic dXNlcjpwYXNzd29yZA==")
 				return r
 			},
-			wantCode: "InvalidRequest",
+			wantCode:   "InvalidRequest",
+			wantStatus: http.StatusBadRequest,
 		},
 		{
 			name: "oversized Authorization header",
@@ -131,7 +134,8 @@ func TestRtPxS3AuthMiddlewareRejections(t *testing.T) {
 				r.Header.Set("Authorization", RtPxauthHeader(RtPxaccessKey, today, strings.Repeat("a", 9000)))
 				return r
 			},
-			wantCode: "InvalidRequest",
+			wantCode:   "InvalidRequest",
+			wantStatus: http.StatusBadRequest,
 		},
 		{
 			name: "unknown access key",
@@ -141,7 +145,8 @@ func TestRtPxS3AuthMiddlewareRejections(t *testing.T) {
 				r.Header.Set("Authorization", RtPxauthHeader("RTPXUNKNOWNKEY", today, "deadbeef"))
 				return r
 			},
-			wantCode: "InvalidAccessKeyId",
+			wantCode:   "InvalidAccessKeyId",
+			wantStatus: http.StatusForbidden,
 		},
 		{
 			name: "known key, wrong signature",
@@ -152,7 +157,8 @@ func TestRtPxS3AuthMiddlewareRejections(t *testing.T) {
 				r.Header.Set("Authorization", RtPxauthHeader(RtPxaccessKey, today, "deadbeefdeadbeef"))
 				return r
 			},
-			wantCode: "SignatureDoesNotMatch",
+			wantCode:   "SignatureDoesNotMatch",
+			wantStatus: http.StatusForbidden,
 		},
 		{
 			name: "request signed 20 minutes ago",
@@ -163,7 +169,8 @@ func TestRtPxS3AuthMiddlewareRejections(t *testing.T) {
 				r.Header.Set("Authorization", RtPxauthHeader(RtPxaccessKey, stale.Format("20060102"), "deadbeef"))
 				return r
 			},
-			wantCode: "RequestTimeTooSkewed",
+			wantCode:   "RequestTimeTooSkewed",
+			wantStatus: http.StatusForbidden,
 		},
 	}
 
@@ -177,10 +184,12 @@ func TestRtPxS3AuthMiddlewareRejections(t *testing.T) {
 			server.s3AuthMiddleware(next).ServeHTTP(w, tc.build())
 
 			assert.False(t, called, "an unauthenticated request must never reach the S3 handlers")
-			// Note: AWS answers 400 for InvalidRequest and
-			// AuthorizationHeaderMalformed; this proxy answers 403 for every
-			// authentication failure.
-			assert.Equal(t, http.StatusForbidden, w.Code)
+			// S3's own status per code: 400 for InvalidRequest and
+			// AuthorizationHeaderMalformed, 403 for the rest. ADR 0006 D2 — an
+			// undocumented deviation is a defect, not a limit.
+			// Open decision: the owner may instead keep the blanket 403 and
+			// record it in ADR 0014, which is the other half of D2.
+			assert.Equal(t, tc.wantStatus, w.Code)
 			assert.Equal(t, "application/xml", w.Header().Get("Content-Type"))
 			assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"))
 			assert.Equal(t, "DENY", w.Header().Get("X-Frame-Options"))
@@ -221,13 +230,12 @@ func TestRtPxDetermineErrorCodeMapping(t *testing.T) {
 		{name: "malformed presigned credential", err: errors.New("malformed presigned credential: bad scope"), want: "AuthorizationHeaderMalformed"},
 		{name: "anything else", err: errors.New("presigned URL rejected"), want: "AccessDenied"},
 		{
-			// The header path always wraps parse failures as "malformed
-			// authorization header: ...". "authorization header" is checked
-			// before "malformed", so a malformed header reports InvalidRequest
-			// where AWS reports AuthorizationHeaderMalformed.
-			name: "malformed authorization header loses to the header case",
+			// S3 answers AuthorizationHeaderMalformed for a header it cannot
+			// parse; the ordered switch matches "authorization header" first
+			// (ADR 0006 D2 — S3 semantics, or a documented limit).
+			name: "malformed authorization header",
 			err:  errors.New("malformed authorization header: invalid credential format"),
-			want: "InvalidRequest",
+			want: "AuthorizationHeaderMalformed",
 		},
 	}
 

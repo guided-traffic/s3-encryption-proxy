@@ -643,13 +643,18 @@ func TestDelBatchDeleteResponseDocumentShape(t *testing.T) {
 	assert.Equal(t, oracleDoc.XMLName.Space, proxyDoc.XMLName.Space,
 		"the proxy must put DeleteResult in the same namespace the backend does")
 
-	// DEVIATION, reported: AWS emits x-amz-request-id (and x-amz-id-2) on every
-	// response; MinIO does too. The proxy emits neither on this path, so a
-	// client has no correlation id to report a failed batch delete with.
+	// The proxy composes its own responses (ADR 0008 D1) and an undocumented
+	// difference from S3 semantics is a defect (ADR 0006 D2): it must state an id.
 	assert.NotEmpty(t, oracleResp.Header.Get("x-amz-request-id"),
 		"the backend returns a request id")
-	assert.Empty(t, proxyResp.Header.Get("x-amz-request-id"),
-		"DEVIATION: the proxy returns no x-amz-request-id on a batch delete")
+	assert.NotEmpty(t, proxyResp.Header.Get("x-amz-request-id"),
+		"the proxy must state its own request id so a failed batch delete can be correlated")
+
+	// The id is the proxy's own, never the backend's (ADR 0008 D11 passes no
+	// backend element through). Whether x-amz-id-2 joins it is an open decision.
+	assert.NotEqual(t, oracleResp.Header.Get("x-amz-request-id"),
+		proxyResp.Header.Get("x-amz-request-id"),
+		"the proxy must compose its own request id, not restate the backend's")
 }
 
 // A batch delete must remove the ciphertext of large objects too. A 6 MiB body

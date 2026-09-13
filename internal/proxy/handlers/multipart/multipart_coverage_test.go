@@ -1237,9 +1237,7 @@ func TestMpuCompleteUnknownUploadIDIsNoSuchUpload(t *testing.T) {
 // TestMpuCompleteBuildsThePartListItself: the proxy chose where every part starts,
 // so the list it sends the backend is its own part table, not the client's — the
 // trailer it added itself included, which no client can know about. The client's
-// list is still checked against that table, so what a scrambled order costs is
-// nothing: the parts are the right ones, only out of order, where AWS answers
-// InvalidPartOrder.
+// list is only checked against that table (ADR 0011 D6); it is never forwarded.
 func TestMpuCompleteBuildsThePartListItself(t *testing.T) {
 	env := MpuNewEnv(t)
 	env.MpuInitiate(t, MpuUploadID)
@@ -1256,19 +1254,50 @@ func TestMpuCompleteBuildsThePartListItself(t *testing.T) {
 		}
 	}).Return(&s3.CompleteMultipartUploadOutput{ETag: aws.String(`"mpu-etag"`)}, nil)
 
-	w := env.MpuComplete(t, MpuUploadID, 2, 1)
+	// An ascending list is the only one that reaches the table check at all: a
+	// scrambled one is refused before it, see TestMpuCompleteRefusesAListOutOfOrder.
+	w := env.MpuComplete(t, MpuUploadID, 1, 2)
 
-	assert.Equal(t, http.StatusOK, w.Code, "AWS answers 400 InvalidPartOrder for the scrambled list")
+	require.Equal(t, http.StatusOK, w.Code)
 	require.Contains(t, stored, 3, "the trailer is stored as part 3")
 	assert.Equal(t, []int32{1, 2, 3}, forwarded,
 		"every stored part has to reach the list, the trailer included: a part the list forgets is a part the backend drops")
 	env.backend.AssertExpectations(t)
 }
 
+// TestMpuCompleteRefusesAListOutOfOrder: a compatibility question is answered
+// against S3 semantics (ADR 0006 D2), and AWS and MinIO both refuse a <Part> list
+// that is not in ascending part-number order. Checking the set against the proxy's
+// own table (ADR 0011 D6) does not make the order the client sent irrelevant: a
+// client whose part bookkeeping is broken has to be told so, not silently sorted.
+func TestMpuCompleteRefusesAListOutOfOrder(t *testing.T) {
+	env := MpuNewEnv(t)
+	env.MpuInitiate(t, MpuUploadID)
+	env.MpuCaptureParts(t)
+
+	require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 1, MpuPayload(MpuStorablePart)).Code)
+	require.Equal(t, http.StatusOK, env.MpuUploadPart(t, MpuUploadID, 2, MpuPayload(MpuStorablePart)).Code)
+
+	// The backend takes both calls so that a proxy which forwards the scrambled
+	// list fails an assertion below instead of panicking on an unexpected call.
+	env.backend.On("CompleteMultipartUpload", mock.Anything, mock.Anything).
+		Return(&s3.CompleteMultipartUploadOutput{ETag: aws.String(`"mpu-etag"`)}, nil)
+	env.backend.On("AbortMultipartUpload", mock.Anything, mock.Anything).
+		Return(&s3.AbortMultipartUploadOutput{}, nil)
+
+	w := env.MpuComplete(t, MpuUploadID, 2, 1)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	// Refused where the list arrives: nothing is sealed, nothing is forwarded, and
+	// the session stays open for the ascending list the client may still send.
+	env.backend.AssertNotCalled(t, "CompleteMultipartUpload", mock.Anything, mock.Anything)
+	env.backend.AssertNotCalled(t, "AbortMultipartUpload", mock.Anything, mock.Anything)
+	assert.Equal(t, "InvalidPartOrder", MpuParseError(t, w.Body.Bytes()).Code)
+}
+
 // TestMpuCompleteForwardsTheStoredETags: the ETags the backend sees are the ones
 // the backend itself handed out for the parts the proxy stored, unquoted. What the
-// client claims its parts were stored under never reaches it. The trailer's own
-// ETag is dropped on the way, the same defect the part list above pins.
+// client claims its parts were stored under never reaches it.
 func TestMpuCompleteForwardsTheStoredETags(t *testing.T) {
 	env := MpuNewEnv(t)
 	env.MpuInitiate(t, MpuUploadID)

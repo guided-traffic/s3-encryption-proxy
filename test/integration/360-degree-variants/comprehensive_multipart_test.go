@@ -242,29 +242,11 @@ func TestStreamingMultipartUpload(t *testing.T) {
 			objectKey := fmt.Sprintf("streaming-test-file-%s-%d", tc.name, time.Now().UnixNano()) // Upload using streaming multipart
 			_, actualSize := uploadLargeFileStreaming(t, testCtx, proxyClient, testBucket, objectKey, tc.size)
 
-			// Verify size - the stored object carries the segment chain's framing
-			// on every path (ADR 0003). Below the part size it arrives as one
-			// request, above it through the proxy's own multipart upload; the
-			// overhead is the same either way.
-			isSmallFile := tc.size < DefaultPartSize
-			if isSmallFile {
-				// For small files, allow reasonable encryption overhead (typically 16-32 bytes for AES-GCM)
-				sizeDiff := actualSize - tc.size
-				if sizeDiff < 0 || sizeDiff > 64 {
-					t.Errorf("Size verification failed for small file: expected %d bytes + encryption overhead (got %d bytes, diff: %d)",
-						tc.size, actualSize, sizeDiff)
-				} else {
-					t.Logf("✓ Size verification passed for small file: %d bytes + %d bytes encryption overhead", tc.size, sizeDiff)
-				}
-			} else {
-				// For large files (multipart), expect exact size match
-				if actualSize != tc.size {
-					t.Errorf("Size mismatch for large file: expected %d bytes, got %d bytes (loss: %d bytes)",
-						tc.size, actualSize, tc.size-actualSize)
-				} else {
-					t.Logf("✓ Size verification passed for large file: %d bytes", actualSize)
-				}
-			}
+			// Every size the proxy reports is the plaintext length, on the
+			// single-request path and the multipart path alike (ADR 0010 D1).
+			require.Equalf(t, tc.size, actualSize,
+				"HEAD through the proxy reports %d bytes for the %d byte object %s: it must report the plaintext size",
+				actualSize, tc.size, tc.name)
 
 			// Create a FRESH StreamingReader for verification (the uploaded one is already consumed)
 			freshStreamingReader := NewStreamingReader(tc.size, 64*1024)
@@ -527,6 +509,12 @@ func verifyDataIntegrityStreaming(t *testing.T, ctx context.Context, client *s3.
 	t.Logf("   Expected size: %d bytes", expectedSize)
 	t.Logf("   Proxy reports: %d bytes", proxyReportedSize)
 	t.Logf("   Difference:    %d bytes", expectedSize-proxyReportedSize)
+
+	// The same rule on the read side: HEAD states the plaintext length, so the
+	// difference is asserted here and not only logged (ADR 0010 D1).
+	require.Equalf(t, expectedSize, proxyReportedSize,
+		"HEAD through the proxy reports %d bytes for a %d byte object: it must report the plaintext size",
+		proxyReportedSize, expectedSize)
 
 	// Download the object
 	startTime := time.Now()

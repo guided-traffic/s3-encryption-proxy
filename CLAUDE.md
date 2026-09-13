@@ -259,10 +259,18 @@ a product which cannot upload *or download* a single-request object through two 
 clients was ready to merge. The defects were in a generated table nobody opens when the
 check is green. Tests exist to surface a problem, not to file it.
 
-**How to know what is still broken:** run the suites and read what fails. Each run also
-writes `test-results/e2e-<client>-verdicts.md` with a `Still broken` section, and the CI
-job puts the same list in its step summary — so a red check names the defects without
-anyone opening an artifact or grepping the test tree.
+**How to know what is still broken:** run the suites and read what fails. Every failure
+names the rule it wants and the ADR that rule belongs to. The two client suites also write
+`test-results/e2e-<client>-verdicts.md` with a `Still broken` section, and their CI jobs put
+the same list in the step summary — so a red check names the defects without anyone opening
+an artifact or grepping the test tree.
+
+**The tree was swept against this rule on 2026-09-13** and 27 tests were found asserting a
+known-wrong answer; they now assert the target and are red, which is why `make test-unit`
+and the integration suites do not pass on this branch. 28 further candidates were checked
+and left alone because an ADR decides them — a refusal that an ADR records as the product's
+intent is the product working, not a pinned defect, and that is the distinction to make
+before touching any of them.
 
 **A change to `test/e2e/harness/` is a change to all three suites.** Compiling and running
 the two client suites proves two of them. The Velero suite has to be run for real before

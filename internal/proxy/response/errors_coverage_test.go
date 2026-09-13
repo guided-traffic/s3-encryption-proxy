@@ -171,7 +171,10 @@ func TestRespWriteS3Error_ResourceComposition(t *testing.T) {
 			doc := UtlParseErrorBody(t, w.Body.String())
 			assert.Equal(t, tc.wantResource, doc.Resource)
 			assert.Equal(t, "NoSuchKey", doc.Code)
-			assert.Equal(t, "proxy-request", doc.RequestID)
+			// ADR 0008 D12: the proxy omits a value it does not have instead of
+			// inventing one, and the constant "proxy-request" identifies nothing.
+			// Open: stay absent, or mint a real id echoed in x-amz-request-id.
+			assert.Empty(t, doc.RequestID)
 
 			// bucket and key are only logged when they carry something.
 			entry, found := UtlFindLog(UtlDecodeLog(t, buf), "S3 operation failed with client error")

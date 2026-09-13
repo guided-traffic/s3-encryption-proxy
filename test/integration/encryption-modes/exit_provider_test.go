@@ -468,6 +468,9 @@ func TestProviderTypesSupported(t *testing.T) {
 		name        string
 		provider    string
 		expectError string
+		// forbidError is what the refusal must not say - the wording a row pins
+		// negatively, where the positive wording is not decided.
+		forbidError []string
 	}{
 		{
 			name: "exit",
@@ -492,11 +495,17 @@ func TestProviderTypesSupported(t *testing.T) {
 			expectError: "'none' is now 'exit'",
 		},
 		{
-			name: "tink",
+			// ADR 0005 keeps the by-name refusal of the removed `tink` type but
+			// lists its wording as a residual risk: it must name the type and
+			// promise nothing - D4 replaced tink with Vault Transit, and open
+			// question 1 leaves that provider's name undecided. The replacement
+			// wording itself is still the owner's decision.
+			name: "tink is refused by name, and the refusal promises nothing",
 			provider: `    - alias: "test-provider"
       type: "tink"
 `,
-			expectError: "not yet implemented",
+			expectError: "tink",
+			forbidError: []string{"not yet implemented", "unsupported encryption type"},
 		},
 		{
 			name: "unsupported",
@@ -517,6 +526,9 @@ func TestProviderTypesSupported(t *testing.T) {
 			}
 			require.Error(t, err, "type %s must be refused", tt.name)
 			assert.Contains(t, err.Error(), tt.expectError)
+			for _, forbidden := range tt.forbidError {
+				assert.NotContains(t, err.Error(), forbidden, "type %s: refusal must not say this", tt.name)
+			}
 		})
 	}
 }
