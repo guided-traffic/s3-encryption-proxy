@@ -237,14 +237,14 @@ pipeline's configuration, and the next reader cannot tell the difference.
   not change any colour. Red fatigue is about attention; this is the mechanism no longer producing
   the signal at all, however attentive the reader. It is the strongest argument for the enforced
   manifest above, and it is accepted here without a mitigation.
-- **No emergency release path.** The release job requires every gate, so a security fix in a
-  dependency of an encryption product cannot ship while an unrelated target is red. The way out
-  this record offers — decide the behaviour differently and record it — is not available in an hour
-  under a disclosure deadline. **This is not decided**, and it should be decided before it is
-  needed rather than during: either a security release may cut past red gates under a named,
-  written procedure that says who may do it and what backfills afterwards, or it may not and the
-  project accepts an unbounded delay on security fixes. Both are defensible; finding out which one
-  was meant during an incident is not.
+- **No emergency release path, and that is the decision** (2026-09-13). The release job requires
+  every gate, so a security fix in a dependency of an encryption product cannot ship while an
+  unrelated target is red. Asked whether a security release may cut past red gates under a named
+  procedure, the owner's answer is that no such path is provided for. The project accepts an
+  unbounded delay on security fixes rather than a way to ship what the gates have not confirmed;
+  the way out stays the ordinary one — make the gate green, or decide the behaviour differently
+  and record it. Nothing more is written down because there is nothing more to write: the absence
+  is the procedure.
 - **Not verified: what this costs a contributor.** The rule asks for a decision record before a
   limitation may be asserted. Whether that slows ordinary work enough to matter has not been
   measured.
