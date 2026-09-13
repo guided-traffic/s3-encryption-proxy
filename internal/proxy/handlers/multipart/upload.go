@@ -298,6 +298,9 @@ func (h *UploadHandler) uploadStreamedPart(
 	session.RecordETag(partNumber, cleanETag)
 
 	w.Header().Set("ETag", clientETag(h.encryptionMgr, aws.ToString(result.ETag)))
+	// This part's own plaintext CRC32C, which the seal computed anyway
+	// (ADR 0003 D16).
+	w.Header().Set("x-amz-checksum-crc32c", sum.Base64())
 	w.WriteHeader(http.StatusOK)
 
 	log.WithFields(logrus.Fields{
@@ -370,6 +373,9 @@ func (h *UploadHandler) uploadSegmentedPart(
 		partETag, _ := session.PartETag(partNumber)
 		log.WithField("bytes", len(plaintext)).Debug("Holding the last part until Complete")
 		w.Header().Set("ETag", clientETag(h.encryptionMgr, `"`+partETag+`"`))
+		if sum, ok := session.PartChecksum(partNumber); ok {
+			w.Header().Set("x-amz-checksum-crc32c", sum.Base64())
+		}
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -403,6 +409,9 @@ func (h *UploadHandler) uploadSegmentedPart(
 	session.RecordETag(partNumber, cleanETag)
 
 	w.Header().Set("ETag", clientETag(h.encryptionMgr, aws.ToString(result.ETag)))
+	if sum, ok := part.Checksum(); ok {
+		w.Header().Set("x-amz-checksum-crc32c", sum.Base64())
+	}
 	w.WriteHeader(http.StatusOK)
 
 	log.WithFields(logrus.Fields{

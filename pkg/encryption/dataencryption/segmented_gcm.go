@@ -13,6 +13,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -80,6 +81,15 @@ type Checksum struct {
 // NewChecksum computes the checksum of a complete plaintext.
 func NewChecksum(plaintext []byte) Checksum {
 	return Checksum{Value: crc32.Checksum(plaintext, crcTable), Length: int64(len(plaintext))}
+}
+
+// Base64 renders the value the way S3 states a CRC32C: base64 of the four raw
+// bytes, big endian. It lives here so every path that answers
+// x-amz-checksum-crc32c renders it identically.
+func (c Checksum) Base64() string {
+	var raw [4]byte
+	binary.BigEndian.PutUint32(raw[:], c.Value)
+	return base64.StdEncoding.EncodeToString(raw[:])
 }
 
 // Append returns the checksum of this plaintext followed by next's.

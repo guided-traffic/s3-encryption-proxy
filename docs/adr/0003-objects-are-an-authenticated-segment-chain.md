@@ -23,6 +23,17 @@ tree and not only of the format. Beside the client's own metadata a stored objec
 proxy keys: `s3ep-dek-algorithm`, `s3ep-encrypted-dek`, `s3ep-kek-fingerprint` and
 `s3ep-kek-algorithm`.
 
+**D16 is implemented, 2026-09-13**, on all five write answers.
+
+**Found while implementing it, and it closed a question rather than opening one.** The
+proxy-to-backend leg looked unprotected: nothing in this codebase names a checksum on a backend
+write. It is protected, by the SDK — aws-sdk-go-v2 defaults `RequestChecksumCalculation` to
+`when_supported` and puts a CRC32 over the bytes it sends on every `PutObject` and `UploadPart`,
+without being asked. Adding a second, explicit CRC32C on top of it made one conformance backend
+refuse every write with *"Expecting a single x-amz-checksum- header"*, which is how this was
+found. The proxy therefore names no checksum algorithm on a backend request, and that absence is
+deliberate.
+
 **D15 is implemented, 2026-09-13.** Both read paths report a truncated body through one
 classifier: an integrity sentinel is an error-level line naming bucket, key and reason plus the
 counter, anything else — a client that went away — stays a warning and is not counted.
@@ -295,6 +306,28 @@ as one, or the counter stops meaning anything.
 
 The counter is expected to read zero for the life of a deployment. That is what makes it worth
 alerting on, and an operator who wants one alert from this product should take this one.
+
+**D16** (added 2026-09-13). **The checksum is answered on a write as well as on a read**:
+`x-amz-checksum-crc32c` on a single-request upload, on every part upload, and on the completion
+of a multipart upload, under an encrypting provider. A part's answer describes that part, the
+completion's describes the object, and the value is always the one sealed into the object - so a
+write and a later read of the same object answer the same number, and so do the two write paths
+for the same bytes.
+
+It is free. The seal computes this value for the trailer whatever happens, so what the header
+costs is the header. That is what separates it from the upload-side verification of
+[ADR 0012](0012-client-checksums-are-verified-never-forwarded.md) D15, which is a configuration
+key precisely because it is a pass over every body: **verification prevents a bad upload,
+this lets a client detect one**, and only one of the two costs anything.
+
+What a client does with it is the client's business, and the honest limit is that the two clients
+this product has suites for do not read it — the value is for an SDK that asked for a CRC32C, and
+for anyone comparing by hand. It is answered anyway, because it is the one integrity value over
+the plaintext this proxy can vouch for itself rather than relay.
+
+Under the exit provider nothing is answered: the proxy seals nothing there, and a value copied
+from somewhere else would not be its own. A ranged read answers none either, for the reason D14
+already gives.
 
 ## Consequences
 

@@ -46,6 +46,17 @@ type SegmentedWrite struct {
 	sealer *dataencryption.EncryptReader
 }
 
+// Checksum reports the CRC32C over the plaintext this write sealed - the value it
+// put in the object's trailer, and the one a read of the object will answer. It
+// is final only once the body has been read to the end, which is where the
+// backend has taken every byte, and it reports false before that.
+func (w *SegmentedWrite) Checksum() (dataencryption.Checksum, bool) {
+	if w.sealer == nil {
+		return dataencryption.Checksum{}, false
+	}
+	return w.sealer.Checksum()
+}
+
 // NewSegmentedWrite prepares a write whose plaintext length is known: a fresh
 // data key, the object metadata, and a body that seals as the backend pulls it.
 // Nothing beyond one segment is ever buffered.

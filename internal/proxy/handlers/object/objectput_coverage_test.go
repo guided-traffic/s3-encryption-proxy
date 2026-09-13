@@ -606,7 +606,9 @@ func TestObjPutForwardsTheStorageHeadersOnTheSingleRequestPath(t *testing.T) {
 	assert.Equal(t, "/elsewhere", aws.ToString(stored.input.WebsiteRedirectLocation))
 
 	// Client checksums are ADR 0012's, not this decision's: nothing reads them
-	// and nothing forwards them yet.
+	// and nothing forwards them. The proxy names no checksum algorithm on a
+	// backend request either - aws-sdk-go-v2 adds its own CRC32 downstream of
+	// this input, and a second one is refused outright by some backends.
 	assert.Nil(t, stored.input.ContentMD5)
 	assert.Empty(t, stored.input.ChecksumAlgorithm)
 }

@@ -219,6 +219,16 @@ back door into the encrypted objects:
   the body instead of before it (section 3.5, item 3, and ADR 0025). Nothing
   about `exit` softens the refusals; it does not decide what happens to an
   encrypted object, only what happens to one the proxy never wrote.
+- **The leg from the proxy to the backend carries a checksum, and it is not this
+  codebase that puts it there.** aws-sdk-go-v2 defaults `RequestChecksumCalculation`
+  to `when_supported` and computes a CRC32 over the bytes it sends on every
+  `PutObject` and `UploadPart`, so a write mangled between the proxy and the
+  backend is refused where it lands rather than discovered on a later read. This
+  is worth stating because grepping this repository for a checksum on a backend
+  write finds nothing and invites the opposite conclusion. The proxy deliberately
+  names no algorithm of its own there: a second `x-amz-checksum-*` header on one
+  request is refused outright by at least one S3 implementation
+  ([ADR 0003](docs/adr/0003-objects-are-an-authenticated-segment-chain.md) D16).
 - **A fault found mid-stream truncates the response, and is reported rather than
   hidden.** The status line is committed before the first plaintext byte moves,
   so a segment that fails its tag partway through a read can only cut the body —

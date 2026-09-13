@@ -18,6 +18,7 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/utils"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 	"github.com/sirupsen/logrus"
 )
 
@@ -179,6 +180,11 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	// owns no part table: the list the client sent is the object, and the backend
 	// is the one that checks it. Nothing is sealed and no record closes the
 	// object, because there is no chain to close.
+	// The object's own plaintext CRC32C, which only the encrypting arm has: it is
+	// the value sealed into the trailer (ADR 0003 D16). Under the exit provider
+	// the proxy sealed nothing and states nothing.
+	var objectSum *dataencryption.Checksum
+
 	var completedParts []types.CompletedPart
 	if h.encryptionMgr.IsExitProvider() {
 		numbers := make([]int, 0, len(parts))
@@ -254,6 +260,7 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		session.RecordETag(final.PartNumber, strings.Trim(aws.ToString(finalResult.ETag), "\""))
+		objectSum = &final.Sum
 
 		completedParts = make([]types.CompletedPart, 0, len(parts)+1)
 		for _, number := range session.PartNumbers() {
@@ -297,6 +304,9 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	// Set response headers
 	if finalETag != "" {
 		w.Header().Set("ETag", finalETag)
+	}
+	if objectSum != nil {
+		w.Header().Set("x-amz-checksum-crc32c", objectSum.Base64())
 	}
 	if finalVersionID != "" {
 		w.Header().Set("x-amz-version-id", finalVersionID)

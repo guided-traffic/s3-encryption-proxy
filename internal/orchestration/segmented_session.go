@@ -76,6 +76,10 @@ type SessionPart struct {
 type FinalPart struct {
 	PartNumber int
 	Body       []byte
+	// Sum is the CRC32C over the object's whole plaintext - the value sealed
+	// into the trailer this part carries, and the one a completed upload can
+	// state to the client.
+	Sum dataencryption.Checksum
 }
 
 // s3MinimumPartSize is what S3 refuses below, for every part but the last. A
@@ -608,6 +612,19 @@ func (s *SegmentedSession) RecordETag(partNumber int, etag string) {
 	}
 }
 
+// PartChecksum reports the CRC32C over one part's plaintext, and whether the
+// session has that part. It is what an UploadPart answer states about the part
+// the client just sent, the held one included.
+func (s *SegmentedSession) PartChecksum(partNumber int) (dataencryption.Checksum, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	part, ok := s.parts[partNumber]
+	if !ok {
+		return dataencryption.Checksum{}, false
+	}
+	return part.sum, true
+}
+
 // PartETag reports what a part was stored under.
 func (s *SegmentedSession) PartETag(partNumber int) (string, bool) {
 	s.mu.Lock()
@@ -680,7 +697,7 @@ func (s *SegmentedSession) Complete() (*FinalPart, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &FinalPart{PartNumber: s.pendingNum, Body: sealed}, nil
+		return &FinalPart{PartNumber: s.pendingNum, Body: sealed, Sum: sum}, nil
 	}
 
 	trailer, err := s.Upload.Trailer(sum)
@@ -695,7 +712,7 @@ func (s *SegmentedSession) Complete() (*FinalPart, error) {
 		offset:       s.parts[highest].offset + s.parts[highest].plaintextLen,
 		plaintextLen: 0,
 	}
-	return &FinalPart{PartNumber: trailerNumber, Body: trailer}, nil
+	return &FinalPart{PartNumber: trailerNumber, Body: trailer, Sum: sum}, nil
 }
 
 // VerifyClientParts checks the list the client sent against the part table the

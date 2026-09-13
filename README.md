@@ -1383,6 +1383,18 @@ What the key does not do:
 A mismatch answers `400 BadDigest`, decided before the last payload byte is
 released, so a refused upload stores nothing.
 
+**Every write answers `x-amz-checksum-crc32c`** under an encrypting provider — a
+single-request `PUT`, every `UploadPart`, and `CompleteMultipartUpload`. A part's
+answer is that part's checksum, the completion's is the object's, and it is the
+same value a later `GET` or `HEAD` of that object answers. Compare it against
+your own file and you know the proxy received what you sent
+([ADR 0003](./docs/adr/0003-objects-are-an-authenticated-segment-chain.md) D16).
+
+That costs nothing — the value is sealed into the object either way — which is
+what separates it from `verify_payload_hash` above: **verification refuses a bad
+upload, this one lets you detect one.** Under the exit provider no write answers
+a checksum, and neither does a ranged read.
+
 ### Entity tags
 
 **The entity tag this proxy answers is a change token, never a digest of your

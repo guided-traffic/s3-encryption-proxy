@@ -447,6 +447,7 @@ func (h *Handler) putObjectSegmented(
 	// upload possible; the backend answers 412 rather than overwriting.
 	ReadConditionalHeaders(r).ApplyToPutObject(putInput)
 
+	var sealed *orchestration.SegmentedWrite
 	if h.encryptionMgr.IsExitProvider() {
 		// Pass-through: the object is stored as the client sent it, with no
 		// proxy metadata at all.
@@ -463,6 +464,7 @@ func (h *Handler) putObjectSegmented(
 		putInput.Body = write.Body
 		putInput.ContentLength = aws.Int64(write.ContentLength)
 		putInput.Metadata = write.Metadata
+		sealed = write
 	}
 
 	putOutput, err := h.s3Backend.PutObject(r.Context(), putInput)
@@ -490,6 +492,16 @@ func (h *Handler) putObjectSegmented(
 	}).Debug("Single-request upload completed")
 
 	w.Header().Set("ETag", h.clientETag(aws.ToString(putOutput.ETag)))
+	// The CRC32C this upload sealed into the object's trailer, stated back to
+	// the client. The seal computed it anyway, so the only cost is the header,
+	// and it lets a client confirm that the bytes the proxy received are the
+	// bytes it sent - the one integrity value over the plaintext this proxy can
+	// vouch for itself (ADR 0003 D16). The exit provider seals nothing.
+	if sealed != nil {
+		if sum, ok := sealed.Checksum(); ok {
+			w.Header().Set("x-amz-checksum-crc32c", sum.Base64())
+		}
+	}
 	writeVersionHeaders(w, putOutput.VersionId, nil)
 	WriteSSEHeaders(w, putOutput.ServerSideEncryption, putOutput.SSEKMSKeyId)
 	w.WriteHeader(http.StatusOK)
@@ -1241,6 +1253,9 @@ producerLoop:
 	}).Debug("Multipart producer completed")
 
 	w.Header().Set("ETag", h.clientETag(aws.ToString(completeOutput.ETag)))
+	// Same value as a single-request PUT of the same bytes would answer: the
+	// producer accumulated it part by part and sealed it into the trailer.
+	w.Header().Set("x-amz-checksum-crc32c", sum.Base64())
 	writeVersionHeaders(w, completeOutput.VersionId, nil)
 	w.WriteHeader(http.StatusOK)
 }

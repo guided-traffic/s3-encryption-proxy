@@ -37,6 +37,25 @@ a payload hash. Counting it there would retire that refusal.
 A `STREAMING-*` value and `UNSIGNED-PAYLOAD` are not digests and never become
 declarations, key or no key, so an `aws-chunked` upload is unaffected.
 
+## The checksum a write answers
+
+`x-amz-checksum-crc32c` on a write comes from the seal, not from a second pass:
+`SegmentedWrite.Checksum()` for a single-request `PUT`, the producer's running
+`sum` for the path above the ceiling, `SealedPart.Checksum()` and
+`SegmentedSession.PartChecksum` for a part, and `FinalPart.Sum` for the
+completion (ADR 0003 D16). All of them render through `Checksum.Base64()`, which
+is why a write and a read cannot disagree about the encoding.
+
+The value on a single-request `PUT` is final only after `PutObject` returns: the
+body seals as the backend pulls it, so reading it earlier gives a partial sum.
+That ordering is load-bearing and is why the header is written after the call
+rather than beside the other response headers.
+
+**Nothing sets `ChecksumAlgorithm` on a backend request, and that is deliberate.**
+aws-sdk-go-v2 already adds a CRC32 of its own to every `PutObject` and
+`UploadPart`; a second `x-amz-checksum-*` header makes some backends refuse the
+write outright.
+
 ## When the status is already out
 
 A read streams, so a fault the reader finds after `WriteHeader` cannot become an
