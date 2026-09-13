@@ -309,9 +309,13 @@ in the code, in a workflow run, or in a rendered artefact.
 - [ ] **The release template advertises what nothing publishes**: a `ghcr.io`
       image and `linux/arm64`, while the push workflow pushes only to Docker Hub
       and builds `linux/amd64` alone.
-- [ ] **`performance.sh` prints `AES-CTR (default)`** as the encryption provider in
+- [x] **`performance.sh` prints `AES-CTR (default)`** as the encryption provider in
       the report the release summary consumes. That cipher left the tree with the
-      deletion round.
+      deletion round. **Done 2026-09-13**, together with the summary rewrite: the
+      report names the AES-256-GCM segment chain, and its "Encryption Overhead
+      Analysis" section — which described envelope encryption and graded an
+      efficiency percentage the summary no longer carries — is replaced by what the
+      ratio actually contains.
 
 ### Documentation, all verified false against the tree
 

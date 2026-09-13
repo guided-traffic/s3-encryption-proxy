@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -637,91 +638,116 @@ func measureComparisonPerformance(t *testing.T, ctx context.Context, client *s3.
 	}
 }
 
-// weightedThroughput is one leg pair reduced to total bytes over total time.
-type weightedThroughput struct {
-	encrypted  float64 // MB/s
-	plain      float64 // MB/s
-	efficiency float64 // percent of the plain leg the encrypted leg retains
+// weightedLeg is one leg pair reduced to total bytes over total time.
+type weightedLeg struct {
+	proxy  float64 // MiB/s
+	direct float64 // MiB/s
+	ratio  float64 // percent of the direct leg the proxy leg retains
+	added  float64 // milliseconds the proxy leg adds per MiB
 }
 
-// weightedEfficiency sums the bytes and the seconds rather than averaging the
-// per-size ratios, so a 1 GB transfer counts for a thousand times what a 1 MB
-// one does instead of exactly as much.
-func weightedEfficiency(results []ComparisonResult, times func(ComparisonResult) (time.Duration, time.Duration)) weightedThroughput {
-	var bytes float64
-	var encSeconds, plainSeconds float64
+// weighLeg sums the bytes and the seconds rather than averaging the per-size
+// ratios, so a 1 GiB transfer counts for a thousand times what a 1 MiB one does
+// instead of exactly as much. The mean of the per-size ratios that used to be
+// published put about 60 % of its score on the six sizes that are about 1 % of
+// the bytes, where the number is request latency and not the cost of moving one.
+func weighLeg(results []ComparisonResult, times func(ComparisonResult) (time.Duration, time.Duration)) weightedLeg {
+	var mib, proxySeconds, directSeconds float64
 	for _, r := range results {
-		enc, plain := times(r)
-		if enc <= 0 || plain <= 0 {
+		proxy, direct := times(r)
+		if proxy <= 0 || direct <= 0 {
 			continue
 		}
-		bytes += float64(r.Encrypted.FileSize) / (1024 * 1024)
-		encSeconds += enc.Seconds()
-		plainSeconds += plain.Seconds()
+		mib += float64(r.Encrypted.FileSize) / (1024 * 1024)
+		proxySeconds += proxy.Seconds()
+		directSeconds += direct.Seconds()
 	}
-	if encSeconds == 0 || plainSeconds == 0 {
-		return weightedThroughput{}
+	if mib == 0 || proxySeconds == 0 || directSeconds == 0 {
+		return weightedLeg{}
 	}
-	out := weightedThroughput{encrypted: bytes / encSeconds, plain: bytes / plainSeconds}
-	out.efficiency = 100 * out.encrypted / out.plain
+	out := weightedLeg{proxy: mib / proxySeconds, direct: mib / directSeconds}
+	out.ratio = 100 * out.proxy / out.direct
+	// The ratio is not comparable between the two legs: it divides by a baseline
+	// that is itself faster on reads, so an equal absolute cost shows there as
+	// the worse percentage. This column divides by no baseline at all.
+	out.added = 1000 * (proxySeconds - directSeconds) / mib
 	return out
 }
 
-// printComparisonSummary prints a summary of the comparison results
-func printComparisonSummary(t *testing.T, results []ComparisonResult) {
-	fmt.Printf("\n=== Performance Comparison Summary ===\n")
-
-	var totalUploadEff, totalDownloadEff float64
-	var encryptedUpload, unencryptedUpload, encryptedDownload, unencryptedDownload float64
-
-	for _, result := range results {
-		totalUploadEff += result.UploadEfficiency
-		totalDownloadEff += result.DownloadEfficiency
-		encryptedUpload += result.Encrypted.UploadThroughput
-		unencryptedUpload += result.Unencrypted.UploadThroughput
-		encryptedDownload += result.Encrypted.DownloadThroughput
-		unencryptedDownload += result.Unencrypted.DownloadThroughput
+// summaryPath is where the markdown summary lands. The package runs from its own
+// directory, so the default walks back up to the repository.
+func summaryPath() string {
+	if v := os.Getenv("S3EP_PERF_SUMMARY"); v != "" {
+		return v
 	}
+	return filepath.Join("..", "..", "..", "test-results", "performance-summary.md")
+}
 
-	avgUploadEff := totalUploadEff / float64(len(results))
-	avgDownloadEff := totalDownloadEff / float64(len(results))
-	avgEncUpload := encryptedUpload / float64(len(results))
-	avgPlainUpload := unencryptedUpload / float64(len(results))
-	avgEncDownload := encryptedDownload / float64(len(results))
-	avgPlainDownload := unencryptedDownload / float64(len(results))
-
-	fmt.Printf("Average Upload Efficiency: %.1f%% (Encrypted: %.2f MB/s, Plain: %.2f MB/s)\n",
-		avgUploadEff, avgEncUpload, avgPlainUpload)
-	fmt.Printf("Average Download Efficiency: %.1f%% (Encrypted: %.2f MB/s, Plain: %.2f MB/s)\n",
-		avgDownloadEff, avgEncDownload, avgPlainDownload)
-
-	fmt.Printf("Encryption Overhead: Upload %.1f%%, Download %.1f%%\n",
-		100-avgUploadEff, 100-avgDownloadEff)
-
-	// The four lines above average ten per-size ratios with equal weight. The six
-	// sizes at or below 10 MB are about 1 % of the bytes moved and 60 % of that
-	// score, so they report per-request latency rather than the cost of
-	// encrypting a byte. The two lines below are total bytes over total time,
-	// which is what a caller moving data actually experiences.
-	byteUp := weightedEfficiency(results, func(r ComparisonResult) (time.Duration, time.Duration) {
+// printComparisonSummary renders the comparison as markdown — one overall table,
+// then one row per object size — and writes it next to the two totals a badge
+// needs. Rendered here rather than parsed back out of the test log, so the
+// number a pull request shows is the number that was measured (ADR 0020 D16).
+func printComparisonSummary(t *testing.T, results []ComparisonResult) {
+	up := weighLeg(results, func(r ComparisonResult) (time.Duration, time.Duration) {
 		return r.Encrypted.UploadTime, r.Unencrypted.UploadTime
 	})
-	byteDown := weightedEfficiency(results, func(r ComparisonResult) (time.Duration, time.Duration) {
+	down := weighLeg(results, func(r ComparisonResult) (time.Duration, time.Duration) {
 		return r.Encrypted.DownloadTime, r.Unencrypted.DownloadTime
 	})
-	fmt.Printf("Byte-weighted Upload Efficiency: %.1f%% (Encrypted: %.2f MB/s, Plain: %.2f MB/s)\n",
-		byteUp.efficiency, byteUp.encrypted, byteUp.plain)
-	fmt.Printf("Byte-weighted Download Efficiency: %.1f%% (Encrypted: %.2f MB/s, Plain: %.2f MB/s)\n",
-		byteDown.efficiency, byteDown.encrypted, byteDown.plain)
-	fmt.Printf("Byte-weighted Encryption Overhead: Upload %.1f%%, Download %.1f%%\n",
-		100-byteUp.efficiency, 100-byteDown.efficiency)
 
-	// Which transports were compared. The proxy leg and the backend leg do not
-	// have to be the same scheme, and over plain HTTP aws-sdk-go-v2 declares an
-	// upload checksum as a header while over HTTPS it sends the aws-chunked
-	// trailer instead -- two different client code paths in one comparison.
-	fmt.Printf("Legs: proxy %s, backend %s\n", ProxyEndpoint, MinIOEndpoint)
+	var b strings.Builder
+	b.WriteString("## 🚀 Proxy against direct backend\n\n")
+	b.WriteString("| | Proxy | Direct | Ratio | Proxy adds |\n")
+	b.WriteString("|---|---:|---:|---:|---:|\n")
+	fmt.Fprintf(&b, "| **Upload** | `%.2f MiB/s` | `%.2f MiB/s` | `%.1f%%` | `%+.2f ms/MiB` |\n",
+		up.proxy, up.direct, up.ratio, up.added)
+	fmt.Fprintf(&b, "| **Download** | `%.2f MiB/s` | `%.2f MiB/s` | `%.1f%%` | `%+.2f ms/MiB` |\n",
+		down.proxy, down.direct, down.ratio, down.added)
+	b.WriteString("\nTotal bytes over total time across every size, so a 1 GiB transfer weighs a thousand 1 MiB ones.")
+	b.WriteString(" The ratio compares a proxy path — one plaintext hop and one TLS hop — against a direct path of one TLS hop;")
+	b.WriteString(" it is not the cost of encryption. `Proxy adds` is the same measurement with no baseline in the denominator,")
+	b.WriteString(" which is the only column on which the upload and the download leg may be compared with each other.\n")
+	fmt.Fprintf(&b, "\nLegs: proxy %s, backend %s.\n", ProxyEndpoint, MinIOEndpoint)
 
-	t.Logf("Performance comparison complete - encryption adds %.1f%% upload overhead and %.1f%% download overhead (byte-weighted: %.1f%% / %.1f%%)",
-		100-avgUploadEff, 100-avgDownloadEff, 100-byteUp.efficiency, 100-byteDown.efficiency)
+	b.WriteString("\n### By object size\n\n")
+	b.WriteString("| Size | Upload proxy | Upload direct | Upload ratio | Download proxy | Download direct | Download ratio |\n")
+	b.WriteString("|---|---:|---:|---:|---:|---:|---:|\n")
+	for _, r := range results {
+		fmt.Fprintf(&b, "| `%s` | %.2f MiB/s | %.2f MiB/s | %.1f%% | %.2f MiB/s | %.2f MiB/s | %.1f%% |\n",
+			r.FileSize,
+			r.Encrypted.UploadThroughput, r.Unencrypted.UploadThroughput, r.UploadEfficiency,
+			r.Encrypted.DownloadThroughput, r.Unencrypted.DownloadThroughput, r.DownloadEfficiency)
+	}
+	b.WriteString("\nOne sample per size (ADR 0020 D7): repetition belongs to the local baseline suite, not to continuous integration.")
+	b.WriteString(" The rows at or below 10 MiB are about one percent of the bytes and measure request latency rather than throughput.\n")
+
+	summary := b.String()
+	fmt.Printf("\n%s", summary)
+	writeSummary(t, summary, up, down)
+
+	t.Logf("Byte-weighted against the direct leg - upload %.1f%% (%+.2f ms/MiB), download %.1f%% (%+.2f ms/MiB)",
+		up.ratio, up.added, down.ratio, down.added)
+}
+
+// writeSummary drops the markdown and the two ratios a badge needs side by side.
+// A failure here is logged and not fatal: the measurement is the product and the
+// file is a copy of it, and nothing about performance fails a run (ADR 0020 D11).
+func writeSummary(t *testing.T, summary string, up, down weightedLeg) {
+	path := summaryPath()
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Logf("performance summary directory %s: %v", dir, err)
+		return
+	}
+	if err := os.WriteFile(path, []byte(summary), 0o600); err != nil {
+		t.Logf("performance summary %s: %v", path, err)
+		return
+	}
+	totals := filepath.Join(dir, "performance-totals.env")
+	body := fmt.Sprintf("upload_ratio=%.1f\ndownload_ratio=%.1f\n", up.ratio, down.ratio)
+	if err := os.WriteFile(totals, []byte(body), 0o600); err != nil {
+		t.Logf("performance totals %s: %v", totals, err)
+		return
+	}
+	t.Logf("Performance summary written to %s and %s", path, totals)
 }

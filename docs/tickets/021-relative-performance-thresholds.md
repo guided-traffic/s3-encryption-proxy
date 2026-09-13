@@ -50,12 +50,10 @@ on the post-change commit is the "after".
 All on `main`, all in continuous integration, none of them a gate. They exist because a
 gate was coming; with no gate they are dead weight or active harm.
 
-- [ ] **1. Delete the disarming switch and the dead threshold branch.** With no
-      assertion left there is nothing to disarm. `SKIP_PERFORMANCE_CHECKS` in
-      `.github/workflows/test-pipeline.yml` (four places), in `performance.sh`, and both it and
-      `SKIP_PERFORMANCE_TESTS` in `test/integration/performance-test/performance_test.go`,
-      together with the `minEfficiency` branch and its continuous-integration relaxation.
-      The step keeps measuring and keeps publishing; it stops pretending it could fail.
+- [x] **1. Delete the disarming switch and the dead threshold branch.** **Done.**
+      `grep -rn "SKIP_PERFORMANCE\|minEfficiency" --exclude-dir=graphify-out` returns
+      nothing outside this ticket (verified 2026-09-13). The step keeps measuring and
+      keeps publishing; there is no assertion left for a switch to hide.
 - [ ] **2. Delete the duplicate measurement run.** `performance.sh` runs the comparison a
       second time to generate the report and the badge. Generate both from the measured
       run's own output instead: it is half the wall clock and it removes the possibility
@@ -66,23 +64,31 @@ gate was coming; with no gate they are dead weight or active harm.
       encrypted comparison bucket is never cleared and the listing is not paged, so every
       repeat run measures against a fuller backend (ADR 0020 D13). The local suite already
       does this; the CI test does not.
-- [ ] **5. Rename the published summary to what it measures.** `Encryption Overhead` is
-      not the cost of encryption — it is a proxy path against a direct path, with one
-      plaintext hop and one TLS hop on the proxy side against one TLS hop on the direct
-      side (ADR 0020 D16). Its own commit, because the string is a parsed interface: the
-      workflow greps it, `performance.sh` matches it twice, and a positional `grep -A 3`
-      reads the block under it.
+      **Half done (verified 2026-09-13):** both comparison buckets are cleared before the
+      run. The listing is still one unpaged `ListObjectsV2`, so a bucket that ever holds
+      more than a page is only partly emptied — which the ten objects a run writes never
+      reach, but the guarantee is what D13 asks for.
+- [x] **5. Rename the published summary to what it measures.** **Done 2026-09-13.** The
+      parsed interface is gone rather than renamed: the measurement renders its own markdown
+      — one overall table, one row per object size — into `test-results/performance-summary.md`
+      with the two ratios beside it in `performance-totals.env`, and all three consumers copy
+      the file instead of parsing the log. The positional `grep -A 3 … | tail -3` in the
+      workflow and in `performance.sh` had been publishing the equal-weighted mean of the
+      per-size ratios and dropping the byte-weighted lines underneath it, so the headline
+      percentage did not match the two throughputs on its own line (84.4 % against
+      180.00/205.89 = 87.4 %; 70.7 % against 426.20/556.44 = 76.6 %). `Encryption Overhead`
+      is dropped, not renamed (ADR 0020 D16).
 - [ ] **6. Keep the step from growing.** The continuous-integration measurement stays one
       run per size. Repetition, more sizes and new instruments belong in the local suite
       (ADR 0020 D22).
 
 ## Done when
 
-- [ ] `grep -rn "SKIP_PERFORMANCE" --exclude-dir=graphify-out` returns nothing outside
+- [x] `grep -rn "SKIP_PERFORMANCE" --exclude-dir=graphify-out` returns nothing outside
       this ticket. The knowledge-graph artefacts under `graphify-out/` carry the string
       inside copied ticket text and clear on the next graph rebuild.
 - [ ] The performance job runs the measurement once, publishes from that run's own
       output, and no longer wipes the module cache.
-- [ ] The published summary names what it measures, and both parsers follow the rename in
-      the same commit.
+- [x] The published summary names what it measures, and both parsers follow in the same
+      commit — by being deleted: the measurement writes the markdown, the consumers copy it.
 - [ ] The continuous-integration performance step is no slower than it is today.

@@ -404,8 +404,14 @@ image builds with a newer toolchain than that.
   so there is nothing to pick loosely, tightly or at all. The local run covers both listener
   transports because the trailer-framed upload path is the default for modern SDKs over HTTPS
   and was otherwise unmeasured.
-* **Still owed: the published summary is renamed**, in a commit of its own. It survives the
-  amendment because a number that names itself wrongly is wrong whether or not it gates.
+* **Settled 2026-09-13: the published summary names what it measures.** `Encryption Overhead`
+  is gone, and with it the equal-weighted mean of the per-size ratios it was derived from — a
+  number that put about three fifths of its score on the sizes that are about one hundredth of
+  the bytes, and that did not match the two throughputs printed beside it on the same line. What
+  is published is total bytes over total time for each leg, the ratio derived from them, and the
+  milliseconds the proxy leg adds per mebibyte. That last column is the one the two legs may be
+  compared on: a ratio divides by a baseline that is itself faster on reads, so an equal absolute
+  cost reads there as the worse percentage.
 * **Settled: the unpooled ranged-read copy is fixed** by the pooled-copy change that landed on
   `main`; its measurement is part of the baseline of D17.
 * **The baseline is only as complete as the instrument list above.** A shape the list does not
