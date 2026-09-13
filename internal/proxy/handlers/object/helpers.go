@@ -81,6 +81,29 @@ func writeEntityHeaders(w http.ResponseWriter, e storedEntityHeaders) {
 	}
 }
 
+// responseOverrides maps the six response-* query parameters S3 defines onto the
+// headers they replace. They are what a presigned download URL uses to name a
+// file and set its type, so they are applied rather than dropped (ADR 0007 D1).
+var responseOverrides = map[string]string{
+	"response-content-type":        "Content-Type",
+	"response-content-disposition": "Content-Disposition",
+	"response-content-encoding":    "Content-Encoding",
+	"response-content-language":    "Content-Language",
+	"response-cache-control":       "Cache-Control",
+	"response-expires":             "Expires",
+}
+
+// applyResponseOverrides runs after the stored values are set, so what the
+// request asked for wins over what the object carries.
+func applyResponseOverrides(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	for param, header := range responseOverrides {
+		if value := query.Get(param); value != "" {
+			w.Header().Set(header, value)
+		}
+	}
+}
+
 const getResponseBufferSize = 128 * 1024
 
 var getResponseBufferPool = sync.Pool{

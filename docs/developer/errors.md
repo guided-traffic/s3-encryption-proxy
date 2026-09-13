@@ -87,6 +87,13 @@ Three corrections run over the result:
 | Server-side copy under encryption — `CopyObject`, `UploadPartCopy` | `422 NotSupportedWithEncryption` |
 | A verb or sub-resource that is not implemented | `501 NotImplemented` |
 | A sub-resource that has a route, but not for this method | `405 MethodNotAllowed` — running the base operation deleted objects |
+| A method no route declares, or one the object resource does not carry | `405 MethodNotAllowed` with an `Allow` header naming the verbs that path does carry |
+| `?torrent` | `422 NotSupportedWithEncryption` — the backend composes the document from the ciphertext it holds, and the request never leaves the proxy |
+| A `Delete` document naming no object, one without a key, or more than 1000 | `400 MalformedXML`, before any backend call |
+| A `DeleteObjects` body that cannot be read | `400 IncompleteBody`, the wording `PUT` and `UploadPart` use |
+| `GetBucketPolicy` on a bucket with no policy | `404 NoSuchBucketPolicy` — a `200` with an empty body reports a policy the bucket does not have |
+| A bucket policy above 20 KiB | `400 EntityTooLarge`, refused on the declared length before the body is read |
+| A completion list that is not in ascending part order | `400 InvalidPartOrder`, and the upload survives — sorting it silently accepted broken part bookkeeping |
 | A `PUT` still carrying `partNumber` and `uploadId`, so the part routes refused it | `400 InvalidArgument` — running the base `PUT` replaced the object with one part |
 | A multipart part layout that cannot be stored as a chain | `400 InvalidPart`, and the upload is aborted |
 | A completion list that does not describe the upload | `400 InvalidPart`, and the upload survives |
@@ -158,6 +165,12 @@ adds no check of its own.
   echoed that text into the response body and broke the XML whenever a key
   contained `&` or `<`. `authErrorMessage` in `internal/proxy/middleware_setup.go`
   holds one fixed sentence per code instead.
+
+The status of an authentication refusal follows its code, not a blanket 403:
+`InvalidRequest` (a scheme this proxy does not implement) and
+`AuthorizationHeaderMalformed` (a header it cannot parse) are `400`, everything
+else — an unsigned request, an unknown key, a bad signature, a skewed clock — is
+`403`. `authErrorStatus` in the same file is the one place that decides it.
 
 What **does** reach the client is the backend's own `<Message>`, verbatim, for any
 error the SDK parsed a code out of. That is deliberate: it is the storage

@@ -23,6 +23,9 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 )
 
+// maxDeleteObjectsKeys is the number of keys S3 accepts in one Delete document.
+const maxDeleteObjectsKeys = 1000
+
 // handleGetObject handles GET object requests with decryption support
 func (h *Handler) handleGetObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	h.logger.WithFields(map[string]interface{}{
@@ -124,7 +127,7 @@ func (h *Handler) serveWholeObject(w http.ResponseWriter, r *http.Request, bucke
 	// else the backend returned describes the stored ciphertext, not the
 	// plaintext this response delivers — the length above all, which is the
 	// trailer's here and not the backend's.
-	h.writeGetObjectResponse(w, &s3.GetObjectOutput{
+	h.writeGetObjectResponse(w, r, &s3.GetObjectOutput{
 		Body:               plaintext,
 		CacheControl:       tail.output.CacheControl,
 		ContentDisposition: tail.output.ContentDisposition,
@@ -173,7 +176,7 @@ func (h *Handler) servePerObject(w http.ResponseWriter, r *http.Request, bucket,
 			h.writeDecryptionError(w, orchestration.ErrKeyMaterialUnreadable, bucket, key)
 			return
 		}
-		h.writeGetObjectResponse(w, output, "")
+		h.writeGetObjectResponse(w, r, output, "")
 		return
 	}
 
@@ -193,7 +196,7 @@ func (h *Handler) servePerObject(w http.ResponseWriter, r *http.Request, bucket,
 		plaintextLen = aws.Int64(size)
 	}
 
-	h.writeGetObjectResponse(w, &s3.GetObjectOutput{
+	h.writeGetObjectResponse(w, r, &s3.GetObjectOutput{
 		Body:               plaintext,
 		CacheControl:       output.CacheControl,
 		ContentDisposition: output.ContentDisposition,
@@ -268,7 +271,7 @@ func (h *Handler) writeDecryptionError(w http.ResponseWriter, err error, bucket,
 // carries plaintext. The one checksum that may be emitted is the proxy's own,
 // read out of the object's sealed trailer, and the caller passes it in
 // (ADR 0003 D14).
-func (h *Handler) writeGetObjectResponse(w http.ResponseWriter, output *s3.GetObjectOutput, checksum string) {
+func (h *Handler) writeGetObjectResponse(w http.ResponseWriter, r *http.Request, output *s3.GetObjectOutput, checksum string) {
 	// Set response headers
 	if output.ContentType != nil {
 		w.Header().Set("Content-Type", *output.ContentType)
@@ -304,6 +307,7 @@ func (h *Handler) writeGetObjectResponse(w http.ResponseWriter, output *s3.GetOb
 	for key, value := range h.cleanMetadata(output.Metadata) {
 		w.Header().Set("x-amz-meta-"+key, value)
 	}
+	applyResponseOverrides(w, r)
 
 	w.WriteHeader(http.StatusOK)
 
@@ -656,7 +660,8 @@ func (h *Handler) handleDeleteObjects(w http.ResponseWriter, r *http.Request, bu
 		if h.errorWriter.WriteChecksumVerdict(w, err) {
 			return
 		}
-		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidRequest", "Failed to read request body")
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "IncompleteBody",
+			"The request body terminated before the declared number of bytes was read")
 		return
 	}
 
@@ -681,6 +686,23 @@ func (h *Handler) handleDeleteObjects(w http.ResponseWriter, r *http.Request, bu
 		}).Error("Failed to parse delete objects XML request")
 		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "MalformedXML", "The XML you provided was not well-formed")
 		return
+	}
+
+	// A document that parses but names no object, names one without a key, or
+	// names more than S3 accepts is not a valid Delete: the proxy re-serialises
+	// it, so forwarding any of the three would author a request the client did
+	// not send (ADR 0007 D1).
+	if len(deleteRequest.Objects) == 0 || len(deleteRequest.Objects) > maxDeleteObjectsKeys {
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "MalformedXML",
+			"The XML you provided was not well-formed")
+		return
+	}
+	for _, obj := range deleteRequest.Objects {
+		if obj.Key == "" {
+			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "MalformedXML",
+				"The XML you provided was not well-formed")
+			return
+		}
 	}
 
 	// Convert parsed objects to AWS SDK types
@@ -801,35 +823,18 @@ func (h *Handler) handleDeleteObjects(w http.ResponseWriter, r *http.Request, bu
 }
 
 // handleObjectTorrent handles object torrent operations
-func (h *Handler) handleObjectTorrent(w http.ResponseWriter, r *http.Request, bucket, key string) {
+func (h *Handler) handleObjectTorrent(w http.ResponseWriter, _ *http.Request, bucket, key string) {
 	h.logger.WithFields(map[string]interface{}{
 		"operation": "object-torrent",
 		"bucket":    bucket,
 		"key":       key,
-	}).Debug("Handling object torrent (passthrough)")
+	}).Warn("Object torrent is not available for an encrypted object, refusing")
 
-	input := &s3.GetObjectTorrentInput{
-		Bucket:              aws.String(bucket),
-		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
-		Key:                 aws.String(key),
-	}
-
-	output, err := h.s3Backend.GetObjectTorrent(r.Context(), input)
-	if err != nil {
-		h.errorWriter.WriteS3Error(w, err, bucket, key)
-		return
-	}
-	defer output.Body.Close()
-
-	// Set content type for torrent file
-	w.Header().Set("Content-Type", "application/x-bittorrent")
-
-	// Copy the torrent data
-	w.WriteHeader(http.StatusOK)
-	_, err = copyWithPooledBuffer(w, output.Body)
-	if err != nil {
-		h.logger.WithError(err).Error("Failed to copy torrent data")
-	}
+	// The backend composes the document from the bytes it holds, which are the
+	// ciphertext, and its info hash describes an object no client can use. The
+	// request never leaves the proxy (ADR 0007 D1).
+	h.errorWriter.WriteGenericError(w, http.StatusUnprocessableEntity, "NotSupportedWithEncryption",
+		"The specified operation is not supported for objects this proxy encrypts")
 }
 
 // handleSelectObjectContent refuses S3 Select. The previous implementation

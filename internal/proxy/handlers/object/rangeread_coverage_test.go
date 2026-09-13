@@ -915,7 +915,7 @@ func TestObjGetWriteRangeResponseMinimal(t *testing.T) {
 	h := newResponseTestHandler(nil)
 
 	rr := httptest.NewRecorder()
-	h.writeRangeResponse(rr, bytes.NewReader([]byte("abc")), "", -1, &s3.GetObjectOutput{})
+	h.writeRangeResponse(rr, httptest.NewRequest(http.MethodGet, "/b/k", nil), bytes.NewReader([]byte("abc")), "", -1, &s3.GetObjectOutput{})
 
 	// No Content-Range means no range was applied, and that is a 200: a 206
 	// without one is not a partial response (RFC 7233).
@@ -930,7 +930,7 @@ func TestObjGetWriteRangeResponseBodyFailure(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	body := io.MultiReader(bytes.NewReader([]byte("part")), ObjGeterrReader{err: errors.New("broken")})
-	h.writeRangeResponse(rr, body, "bytes 0-9/10", 10, &s3.GetObjectOutput{})
+	h.writeRangeResponse(rr, httptest.NewRequest(http.MethodGet, "/b/k", nil), body, "bytes 0-9/10", 10, &s3.GetObjectOutput{})
 
 	assert.Equal(t, http.StatusPartialContent, rr.Code)
 	assert.Equal(t, "part", rr.Body.String())

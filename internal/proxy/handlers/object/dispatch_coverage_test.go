@@ -14,7 +14,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/aws/smithy-go"
 	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -765,41 +764,6 @@ func TestObjMiscObjectTorrentIsRefusedNotPassedThroughUndecrypted(t *testing.T) 
 	assert.Equal(t, "NotSupportedWithEncryption", ObjMiscparseError(t, rr.Body.Bytes()).Code)
 }
 
-func TestObjMiscObjectTorrentBackendErrorsAreMapped(t *testing.T) {
-	cases := map[string]struct {
-		err        error
-		wantStatus int
-		wantCode   string
-	}{
-		"no_such_key":    {&types.NoSuchKey{}, http.StatusNotFound, "NoSuchKey"},
-		"no_such_bucket": {&types.NoSuchBucket{}, http.StatusNotFound, "NoSuchBucket"},
-		"access_denied": {&smithy.GenericAPIError{Code: "AccessDenied", Message: "Access Denied"},
-			http.StatusForbidden, "AccessDenied"},
-		"network_error": {errors.New("dial tcp 10.0.0.1:9000: connect: connection refused"),
-			http.StatusInternalServerError, "InternalError"},
-	}
-
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			backend := new(MockS3Backend)
-			h := ObjMiscnewHandler(t, backend)
-			backend.On("GetObjectTorrent", mock.Anything, mock.Anything).Return(nil, tc.err)
-
-			rr := ObjMiscdoFunc(h.HandleObjectTorrent,
-				httptest.NewRequest(http.MethodGet, "/b/k?torrent", nil),
-				map[string]string{"bucket": "b", "key": "k"})
-
-			assert.Equal(t, tc.wantStatus, rr.Code)
-			doc := ObjMiscparseError(t, rr.Body.Bytes())
-			assert.Equal(t, tc.wantCode, doc.Code)
-			assert.Equal(t, "b/k", doc.Resource)
-			assert.NotContains(t, rr.Body.String(), "10.0.0.1",
-				"the backend endpoint must never reach the client")
-			assert.NotEqual(t, "application/x-bittorrent", rr.Header().Get("Content-Type"))
-		})
-	}
-}
-
 // ObjMiscbrokenReader fails partway through, the way a truncated backend
 // response does.
 type ObjMiscbrokenReader struct {
@@ -817,23 +781,6 @@ func (r *ObjMiscbrokenReader) Read(p []byte) (int, error) {
 }
 
 func (r *ObjMiscbrokenReader) Close() error { return nil }
-
-// The status is already committed when the copy starts, so a mid-stream failure
-// can only truncate the body. Worth pinning: the client sees 200 and a short
-// document, which is why the torrent path cannot report the failure.
-func TestObjMiscObjectTorrentStreamFailureTruncatesAfterCommittedStatus(t *testing.T) {
-	backend := new(MockS3Backend)
-	h := ObjMiscnewHandler(t, backend)
-	backend.On("GetObjectTorrent", mock.Anything, mock.Anything).
-		Return(&s3.GetObjectTorrentOutput{Body: &ObjMiscbrokenReader{prefix: []byte("d8:anno")}}, nil)
-
-	rr := ObjMiscdoFunc(h.HandleObjectTorrent,
-		httptest.NewRequest(http.MethodGet, "/b/k?torrent", nil),
-		map[string]string{"bucket": "b", "key": "k"})
-
-	assert.Equal(t, http.StatusOK, rr.Code)
-	assert.Equal(t, "d8:anno", rr.Body.String())
-}
 
 // The wrappers take bucket and key from the mux vars; an empty key still
 // reaches the same refusal rather than a panic.

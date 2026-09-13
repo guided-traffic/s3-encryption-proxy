@@ -110,12 +110,16 @@ func TestRtPxS3AuthMiddlewareRejections(t *testing.T) {
 		wantStatus int
 	}{
 		{
+			// An anonymous request, which S3 and MinIO both answer AccessDenied;
+			// only a header that is present and unusable is a 400. The cell used
+			// to carry the blanket InvalidRequest this proxy answered everything
+			// with, under the new status table.
 			name: "no Authorization header at all",
 			build: func() *http.Request {
 				return httptest.NewRequest(http.MethodGet, "/test-bucket/key", nil)
 			},
-			wantCode:   "InvalidRequest",
-			wantStatus: http.StatusBadRequest,
+			wantCode:   "AccessDenied",
+			wantStatus: http.StatusForbidden,
 		},
 		{
 			name: "not AWS Signature V4",

@@ -18,7 +18,17 @@ authentication is second, so nothing further runs for a request that will be
 refused and no handler ever runs unauthenticated. `/health` and `/version` sit on
 a subrouter registered ahead of the chain and are the only paths outside it — a
 readiness probe has to keep being answered while the drain guard refuses
-everything else. The monitoring middleware is separate: it wraps the whole
+everything else. That subrouter matches a probe only: unsigned and with no query
+string. A signed `GET /health`, or one carrying listing parameters, is an S3
+request for a bucket of that name and falls through to the S3 routes.
+
+The router does not clean the path (`SkipClean`): `a//b`, `a/./b` and `a/../b`
+are three distinct keys, and cleaning answered a bodiless `301` to a fourth. A
+method no route declares reaches the router's own refusal instead of mux's bare
+`405`: an S3 `<Error>` document with an `Allow` header naming the verbs that path
+does carry. A CORS preflight is answered there too — no route declares `OPTIONS`,
+and mux runs a subrouter's middleware only after a route matched, so the CORS
+middleware would never see one. The monitoring middleware is separate: it wraps the whole
 router, and only when `monitoring.enabled`. What SigV4 does and does not verify
 is in [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md).
 
@@ -259,6 +269,14 @@ reach a client. `Handler.cleanMetadata` drops every key under the configured
 prefix, case-insensitively, because `net/http` canonicalises header names on the
 way in.
 
+The six `response-*` query parameters are applied last, so what the request asked
+for wins over what the object carries: `response-content-type`,
+`-content-disposition`, `-content-encoding`, `-content-language`,
+`-cache-control` and `-expires`, on the whole-object read and the ranged one
+alike. A presigned download URL names a file that way, and admitting the
+parameter and answering with the stored value is the accept-and-discard
+[ADR 0007](../adr/0007-forward-it-or-refuse-it.md) D1 forbids.
+
 The cleaning sits in the three response writers rather than in their callers, so
 the exit provider's pass-through is cleaned too. That branch is the one that
 needs it most: it serves objects an earlier release wrote, whose metadata carries
@@ -439,9 +457,11 @@ format's promises, not because the backend would reject them. The four that take
 only an empty body answer `NotImplemented` to a document because parsing it was
 never built.
 
-Of the object sub-resources only `?torrent` is live; `?acl`, `?select` and
-`?attributes` answer `NotImplemented`, and `?tagging`, `?retention` and
-`?legal-hold` are pass-through since 2026-09-11.
+Of the object sub-resources `?tagging`, `?retention` and `?legal-hold` are
+pass-through since 2026-09-11; `?acl`, `?select` and `?attributes` answer
+`NotImplemented`, and `?torrent` answers `422 NotSupportedWithEncryption` — the
+backend composes that document from the bytes it holds, which are the
+ciphertext.
 
 ## Listings
 

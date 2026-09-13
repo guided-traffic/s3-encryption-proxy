@@ -124,11 +124,9 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sort parts by part number
-	sort.Slice(completeUpload.Parts, func(i, j int) bool {
-		return completeUpload.Parts[i].PartNumber < completeUpload.Parts[j].PartNumber
-	})
-
+	// The list is judged in the order the client sent it. Sorting it first
+	// accepted broken part bookkeeping silently, where AWS and MinIO both refuse
+	// a list that is not ascending (ADR 0006 D2).
 	// Validate part sequence
 	for i, part := range completeUpload.Parts {
 		if part.PartNumber < 1 || part.PartNumber > 10000 {
@@ -144,9 +142,9 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 					"uploaded, or the specified entity tag may not have matched the part's entity tag.")
 			return
 		}
-		// Check for duplicate part numbers
-		if i > 0 && completeUpload.Parts[i-1].PartNumber == part.PartNumber {
-			log.WithField("part_number", part.PartNumber).Error("Duplicate part number")
+		// Ascending and without duplicates, which is one check
+		if i > 0 && completeUpload.Parts[i-1].PartNumber >= part.PartNumber {
+			log.WithField("part_number", part.PartNumber).Error("Part list is not in ascending order")
 			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidPartOrder",
 				"The list of parts was not in ascending order. Parts must be ordered by part number.")
 			return

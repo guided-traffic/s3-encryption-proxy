@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"
@@ -51,7 +52,10 @@ func BktnewBackend() *MockS3Backend {
 	m.On("GetBucketCors", mock.Anything, mock.Anything).Return(&s3.GetBucketCorsOutput{}, nil).Maybe()
 	m.On("PutBucketCors", mock.Anything, mock.Anything).Return(&s3.PutBucketCorsOutput{}, nil).Maybe()
 	m.On("DeleteBucketCors", mock.Anything, mock.Anything).Return(&s3.DeleteBucketCorsOutput{}, nil).Maybe()
-	m.On("GetBucketPolicy", mock.Anything, mock.Anything).Return(&s3.GetBucketPolicyOutput{}, nil).Maybe()
+	// A policy document, not an empty output: a bucket without a policy answers
+	// 404 NoSuchBucketPolicy, which is not the real answer this matrix wants.
+	m.On("GetBucketPolicy", mock.Anything, mock.Anything).
+		Return(&s3.GetBucketPolicyOutput{Policy: aws.String(`{"Version":"2012-10-17","Statement":[]}`)}, nil).Maybe()
 	m.On("PutBucketPolicy", mock.Anything, mock.Anything).Return(&s3.PutBucketPolicyOutput{}, nil).Maybe()
 	m.On("DeleteBucketPolicy", mock.Anything, mock.Anything).Return(&s3.DeleteBucketPolicyOutput{}, nil).Maybe()
 	m.On("GetBucketLocation", mock.Anything, mock.Anything).Return(&s3.GetBucketLocationOutput{}, nil).Maybe()

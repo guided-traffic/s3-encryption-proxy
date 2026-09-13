@@ -309,7 +309,7 @@ func (h *Handler) handleGetObjectRange(w http.ResponseWriter, r *http.Request, b
 		return
 	}
 
-	h.writeRangeResponse(w, decrypted, resolved.contentRange(), resolved.length, output)
+	h.writeRangeResponse(w, r, decrypted, resolved.contentRange(), resolved.length, output)
 }
 
 // maxWindowOverAsk bounds what provisionalWindow can ask for beyond the real
@@ -430,7 +430,7 @@ func (h *Handler) passThroughRange(w http.ResponseWriter, r *http.Request, bucke
 	}
 	defer func() { _ = output.Body.Close() }()
 
-	h.writeRangeResponse(w, output.Body, aws.ToString(output.ContentRange),
+	h.writeRangeResponse(w, r, output.Body, aws.ToString(output.ContentRange),
 		aws.ToInt64(output.ContentLength), output)
 }
 
@@ -452,7 +452,7 @@ func contentRangeTotal(contentRange string) (int64, error) {
 	return total, nil
 }
 
-func (h *Handler) writeRangeResponse(w http.ResponseWriter, body io.Reader, contentRange string, length int64, output *s3.GetObjectOutput) {
+func (h *Handler) writeRangeResponse(w http.ResponseWriter, r *http.Request, body io.Reader, contentRange string, length int64, output *s3.GetObjectOutput) {
 	header := w.Header()
 	header.Set("Accept-Ranges", "bytes")
 	if contentRange != "" {
@@ -481,6 +481,7 @@ func (h *Handler) writeRangeResponse(w http.ResponseWriter, body io.Reader, cont
 		CacheControl:       output.CacheControl,
 		Expires:            output.ExpiresString,
 	})
+	applyResponseOverrides(w, r)
 
 	// A 206 without a Content-Range is not a partial response, and RFC 7233 does
 	// not allow one. The pass-through arm can meet that: a backend that did not

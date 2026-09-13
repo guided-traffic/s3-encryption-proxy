@@ -27,6 +27,11 @@ are enforced wherever they can apply — `max_clock_skew_seconds` on both authen
 `max_presign_expiry_seconds` on the pre-signed form, which is the only one that declares a
 lifetime.
 
+**Implemented 2026-09-13: D13 and D14.** The blanket `403 InvalidRequest` every authentication
+failure used to answer is replaced by the status and code each failure actually warrants, and the
+probe pair is matched as a probe rather than as a path. Both were open questions this ADR left to
+the owner; both are now decided below and true in the tree.
+
 **Added while implementing D4, and it is a refusal this ADR did not specify:** a configured
 `max_clock_skew_seconds` of `0` is refused at startup. It used to be read silently as the
 900-second default on both paths — so the value an operator picks to mean "no tolerance" quietly
@@ -141,7 +146,8 @@ key id, the signed header names and the clock offset are logged and never echoed
 response (ADR 0008).
 
 **D11** `/health` and `/version` are unauthenticated by design and are served ahead of the
-authentication middleware. The monitoring listener carries no authentication at all and is to be
+authentication middleware; D14 says which requests to those two paths are the probe and which
+are S3 requests. The monitoring listener carries no authentication at all and is to be
 fenced by the network, not by the proxy. Profiling endpoints run on their own listener bound to
 loopback; a non-loopback address for them is a startup error, because a heap profile of this
 process contains key material and plaintext.
@@ -149,6 +155,27 @@ process contains key material and plaintext.
 **D12** If throttling is ever wanted in the proxy itself, it arrives as a new configuration key
 that lands in the same change as the code reading it and a test that proves it throttles. That
 test is the whole point, and it is what the deleted keys never had.
+
+**D13** The status of an authentication refusal follows its S3 error code, and the code names what
+actually failed. A request carrying no `Authorization` header at all is anonymous and answers
+`403 AccessDenied`. A header carrying a scheme this proxy does not implement answers
+`400 InvalidRequest`; a header it cannot parse answers `400 AuthorizationHeaderMalformed`. An
+unknown access key id (`403 InvalidAccessKeyId`), a signature that does not match
+(`403 SignatureDoesNotMatch`) and a timestamp outside the window (`403 RequestTimeTooSkewed`) keep
+the status S3 gives them. The rule is that 400 means the request itself is unusable and 403 means
+it was understood and refused; a blanket status for every failure tells a client to fix the wrong
+thing, and D10's fixed message per code is only useful if the code is right. Verified against
+MinIO on the two cases that differ: anonymous is `403 AccessDenied` there too, and a `Basic`
+header is `400 InvalidRequest`. Where MinIO and AWS disagree — MinIO answers an unparseable AWS4
+header with status 400 and code `AccessDenied` — this proxy follows AWS, because clients branch on
+the code (ADR 0006 D2).
+
+**D14** A request to `/health` or `/version` is the probe only when it is unsigned and carries no
+query string at all. Anything else addressed to those two paths is an S3 request for a bucket of
+that name — which S3 allows and this proxy does not forbid — and is routed, authenticated and
+answered as one. Reserving the two names for the probe would make two legal bucket names
+unreachable through the proxy without saying so anywhere; the probe keeps its exemption, the name
+does not get one. Both paths keep answering the probe while the proxy drains (ADR 0029 D1).
 
 ## Consequences
 
@@ -238,6 +265,11 @@ test is the whole point, and it is what the deleted keys never had.
   between the configured window and 900 seconds off used to authenticate on the header path and
   now does not. Every shipped example configuration and the production deployment values set 300,
   so the window narrows from 900 to 300 for anyone who took one of those as their starting point.
+- **A probe that starts signing its requests stops being a probe.** D14 tells the two apart by the
+  absence of a signature and of a query string, so a readiness check that is given credentials, or
+  a health URL that acquires a cache-busting parameter, is routed to the bucket of that name and
+  answers an S3 error instead of the probe document. That is the intended answer, and it is a
+  failure mode worth knowing before it is diagnosed as an outage.
 - **What "no rate limiting" means operationally is untested.** No measurement exists of how many
   failing authentications per second one instance absorbs before it degrades, so the ingress
   requirement is stated from design, not from a number.

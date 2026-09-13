@@ -1187,7 +1187,7 @@ func TestObjGetWriteGetObjectResponseMinimalOutput(t *testing.T) {
 	h := newResponseTestHandler(nil)
 
 	rr := httptest.NewRecorder()
-	h.writeGetObjectResponse(rr, &s3.GetObjectOutput{Body: io.NopCloser(bytes.NewReader(nil))}, "")
+	h.writeGetObjectResponse(rr, httptest.NewRequest(http.MethodGet, "/b/k", nil), &s3.GetObjectOutput{Body: io.NopCloser(bytes.NewReader(nil))}, "")
 
 	require.Equal(t, http.StatusOK, rr.Code)
 	assert.Equal(t, []string{"accept-ranges"}, headerNames(rr.Result().Header))
@@ -1201,7 +1201,7 @@ func TestObjGetWriteGetObjectResponseBodyFailure(t *testing.T) {
 	h := newResponseTestHandler(nil)
 
 	rr := httptest.NewRecorder()
-	h.writeGetObjectResponse(rr, &s3.GetObjectOutput{
+	h.writeGetObjectResponse(rr, httptest.NewRequest(http.MethodGet, "/b/k", nil), &s3.GetObjectOutput{
 		Body:          io.NopCloser(io.MultiReader(bytes.NewReader([]byte("head")), ObjGeterrReader{err: errors.New("broken")})),
 		ContentLength: aws.Int64(1000),
 	}, "")
@@ -1218,7 +1218,7 @@ func TestObjGetWriteGetObjectResponseCloseFailureIsSwallowed(t *testing.T) {
 	payload := ObjGetpayload(512)
 
 	rr := httptest.NewRecorder()
-	h.writeGetObjectResponse(rr, &s3.GetObjectOutput{
+	h.writeGetObjectResponse(rr, httptest.NewRequest(http.MethodGet, "/b/k", nil), &s3.GetObjectOutput{
 		Body:          ObjGetcloseErrReader{Reader: bytes.NewReader(payload), err: errors.New("object failed authentication")},
 		ContentLength: aws.Int64(int64(len(payload))),
 	}, "")

@@ -1,6 +1,8 @@
 package proxy
 
 import (
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -10,10 +12,21 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/multipart"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/object"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/root"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/middleware"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
 )
 
 // setupRoutes configures the HTTP routes for the S3 API
 func (s *Server) setupRoutes(router *mux.Router) {
+	// An S3 key is opaque: "a//b", "a/./b" and "a/../b" are three distinct
+	// objects, and mux's path cleaning answered a bodiless 301 to a fourth
+	// (ADR 0007 D1).
+	router.SkipClean(true)
+
+	// A path or a method no route declares is still this proxy's refusal to
+	// make, and it is an S3 <Error> document like every other (ADR 0008 D7).
+	router.MethodNotAllowedHandler = s.methodNotAllowedHandler(router)
+
 	// Add monitoring middleware if monitoring is enabled
 	if s.config.Monitoring.Enabled {
 		router.Use(monitoring.HTTPMiddleware)
@@ -44,10 +57,14 @@ func (s *Server) setupRoutes(router *mux.Router) {
 		},
 	)
 
-	// Health and version endpoints - before middleware to avoid authentication
+	// Health and version endpoints - before middleware to avoid authentication.
+	// The probe is unsigned and carries no parameters; anything else addresses a
+	// bucket of that name, which S3 allows, so it falls through to the S3 routes
+	// rather than being answered with the probe document (ADR 0014 D11 exempts
+	// the probe, not the name).
 	healthRouter := router.NewRoute().Subrouter()
-	healthRouter.HandleFunc("/health", healthHandler.Health).Methods("GET")
-	healthRouter.HandleFunc("/version", healthHandler.Version).Methods("GET")
+	healthRouter.HandleFunc("/health", healthHandler.Health).Methods("GET").MatcherFunc(isProbeRequest)
+	healthRouter.HandleFunc("/version", healthHandler.Version).Methods("GET").MatcherFunc(isProbeRequest)
 
 	// S3 API endpoints - protected by S3 authentication
 	s3Router := router.NewRoute().Subrouter()
@@ -119,4 +136,56 @@ func (s *Server) setupRoutes(router *mux.Router) {
 
 	// Object operations (main) - refactored
 	s3Router.HandleFunc("/{bucket}/{key:.*}", objectHandler.Handle).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
+}
+
+// isProbeRequest tells a readiness probe from an S3 request for a bucket that
+// happens to be called "health" or "version": a probe is unsigned and carries
+// no query at all.
+func isProbeRequest(r *http.Request, _ *mux.RouteMatch) bool {
+	return r.Header.Get("Authorization") == "" && r.URL.RawQuery == ""
+}
+
+// probeMethods are the verbs a router walk drives against a matcher-guarded
+// route; kept here so the Allow header of a refusal names the same set.
+var refusalMethods = []string{
+	http.MethodGet, http.MethodHead, http.MethodPost,
+	http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions,
+}
+
+// methodNotAllowedHandler answers what mux would otherwise answer with a bare
+// 405 and an empty body. A CORS preflight reaches it too: no route declares
+// OPTIONS, and mux runs a subrouter's middleware only after a route matched, so
+// the CORS middleware never sees one. It is answered here instead, unsigned by
+// definition and with a response that is the same for every path.
+func (s *Server) methodNotAllowedHandler(router *mux.Router) http.Handler {
+	cors := middleware.NewCORS(s.logger)
+	preflight := cors.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			preflight.ServeHTTP(w, r)
+			return
+		}
+
+		if allow := allowedMethods(router, r); len(allow) > 0 {
+			w.Header().Set("Allow", strings.Join(allow, ", "))
+		}
+		response.NewErrorWriter(s.logger).WriteGenericError(w, http.StatusMethodNotAllowed,
+			"MethodNotAllowed", "The specified method is not allowed against this resource.")
+	})
+}
+
+// allowedMethods asks the router itself which verbs this path does carry.
+func allowedMethods(router *mux.Router, r *http.Request) []string {
+	var allow []string
+	for _, method := range refusalMethods {
+		probe := r.Clone(r.Context())
+		probe.Method = method
+
+		var match mux.RouteMatch
+		if router.Match(probe, &match) && match.MatchErr == nil {
+			allow = append(allow, method)
+		}
+	}
+	return allow
 }

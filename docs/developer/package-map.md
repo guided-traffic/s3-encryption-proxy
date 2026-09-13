@@ -54,7 +54,7 @@ type, `handlers/bucket/listing.go` for the stored-to-plaintext conversion.
 | `request/` | Request parsing, aws-chunked body decoding, upload checksum verification, query parameters, and the `x-amz-expected-bucket-owner` guard every backend call carries on the verbs S3 defines it for ([ADR 0007](../adr/0007-forward-it-or-refuse-it.md) D14) |
 | `response/` | S3 error documents, backend error mapping, XML helpers. See [errors.md](errors.md) |
 | `utils/` | One file: the detached, 30-second context that lets a multipart abort finish after the client is gone |
-| `handlers/object/` | GET, PUT, HEAD, DELETE, DeleteObjects, ranged reads, the internal multipart producer, and the object sub-resources: `?tagging`, `?retention`, `?legal-hold` and `?torrent` forwarded, `?acl` and `?select` refused |
+| `handlers/object/` | GET, PUT, HEAD, DELETE, DeleteObjects, ranged reads, the internal multipart producer, and the object sub-resources: `?tagging`, `?retention` and `?legal-hold` forwarded, `?acl`, `?select` and `?torrent` refused |
 | `handlers/multipart/` | The client-driven multipart verbs |
 | `handlers/bucket/`, `handlers/root/`, `handlers/health/` | Bucket verbs and sub-resources, ListBuckets, `/health` and `/version` |
 | `interfaces/s3_backend.go` | The 52 methods of the AWS SDK's S3 client the handlers compile against. Mocked in the handler unit tests. `CopyObject` is deliberately absent: both server-side copy verbs are refused ([ADR 0011](../adr/0011-the-proxy-owns-the-part-layout.md) D9) |

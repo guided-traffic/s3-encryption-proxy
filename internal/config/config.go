@@ -85,8 +85,8 @@ type OptimizationsConfig struct {
 	StreamingSegmentSize int64 `mapstructure:"streaming_segment_size" validate:"min=5242880,max=5368709120"` // 5MB - 5GB, default: 12MB
 
 	// Multipart Session Cleanup
-	MultipartSessionCleanupInterval int `mapstructure:"multipart_session_cleanup_interval" validate:"min=60"` // Cleanup interval in seconds (default: 300 = 5 minutes)
-	MultipartSessionIdleTimeout     int `mapstructure:"multipart_session_idle_timeout"`                       // Seconds a client-driven upload may go untouched before the proxy abandons it (default: 3600)
+	MultipartSessionCleanupInterval int `mapstructure:"multipart_session_cleanup_interval"` // Cleanup interval in seconds (default: 300 = 5 minutes)
+	MultipartSessionIdleTimeout     int `mapstructure:"multipart_session_idle_timeout"`     // Seconds a client-driven upload may go untouched before the proxy abandons it (default: 3600)
 
 	// Multipart Upload Parallelism
 	// Number of concurrent S3 UploadPart calls dispatched from putObjectAutoMultipart
@@ -255,6 +255,18 @@ func Load() (*Config, error) {
 				"a value below 1 makes every client-driven upload look idle the moment the "+
 				"sweeper runs, and it is ended at the backend",
 			viper.GetInt("optimizations.multipart_session_idle_timeout"))
+	}
+
+	// Same question one key over: a written 0 switched the session sweeper off,
+	// and the short-part budget an abandoned upload holds was then never given
+	// back (ADR 0028 residual risks, ADR 0017 D8).
+	if viper.InConfig("optimizations.multipart_session_cleanup_interval") &&
+		viper.GetInt("optimizations.multipart_session_cleanup_interval") < 1 {
+		return nil, fmt.Errorf(
+			"optimizations.multipart_session_cleanup_interval: minimum value is 1 second, got %d; "+
+				"a value below 1 switches the session sweeper off, and the short-part budget an "+
+				"abandoned upload holds is never given back",
+			viper.GetInt("optimizations.multipart_session_cleanup_interval"))
 	}
 
 	unmarshalErr := viper.Unmarshal(&cfg, func(dc *mapstructure.DecoderConfig) {
@@ -787,7 +799,8 @@ func validateEncryption(cfg *Config) error {
 func validateProvider(provider *EncryptionProvider, index int) error {
 	switch provider.Type {
 	case "tink":
-		return fmt.Errorf("encryption.providers[%d]: tink encryption is not yet implemented with the new architecture", index)
+		return fmt.Errorf(
+			"encryption.providers[%d].type: 'tink' is not a provider of this proxy (supported: aes, exit)", index)
 	case "aes":
 		return validateAESKey(provider.Config, index)
 	case "exit":
@@ -878,6 +891,14 @@ func validateOptimizations(cfg *Config) error {
 		return fmt.Errorf(
 			"optimizations.multipart_short_part_buffer_size: minimum value is 5MB (5242880 bytes), got %d",
 			cfg.Optimizations.MultipartShortPartBufferSize)
+	}
+
+	// A negative interval would be a sweeper that never runs: the sessions it
+	// would have expired keep their buffers (ADR 0017 D8).
+	if cfg.Optimizations.MultipartSessionCleanupInterval < 0 {
+		return fmt.Errorf(
+			"optimizations.multipart_session_cleanup_interval: minimum value is 1, got %d",
+			cfg.Optimizations.MultipartSessionCleanupInterval)
 	}
 
 	// Validate multipart upload concurrency (1 to 32 range)

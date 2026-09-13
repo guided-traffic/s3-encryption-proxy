@@ -40,8 +40,6 @@ func LogLicenseInfo(result *ValidationResult) {
 
 	if info.Claims.KubernetesClusterID != "" {
 		logrus.Infof("Kubernetes Cluster: %s", info.Claims.KubernetesClusterID)
-		// TODO: Implement cluster ID validation in future
-		logrus.Debug("Note: Kubernetes Cluster ID validation not yet implemented")
 	}
 
 	// Log expiration information

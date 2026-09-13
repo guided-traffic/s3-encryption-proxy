@@ -441,7 +441,7 @@ func TestWriteGetObjectResponse_EmitsOnlyTheAllowlist(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	h.writeGetObjectResponse(rr, out, "")
+	h.writeGetObjectResponse(rr, httptest.NewRequest(http.MethodGet, "/b/k", nil), out, "")
 
 	require.Equal(t, http.StatusOK, rr.Code)
 	assert.Equal(t, []string{

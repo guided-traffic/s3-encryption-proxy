@@ -105,7 +105,7 @@ func TestWriteRangeResponse_EmitsVersionAndEntityHeaders(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	h.writeRangeResponse(rr, bytes.NewReader(window), "bytes 0-9/100", int64(len(window)), out)
+	h.writeRangeResponse(rr, httptest.NewRequest(http.MethodGet, "/b/k", nil), bytes.NewReader(window), "bytes 0-9/100", int64(len(window)), out)
 
 	require.Equal(t, http.StatusPartialContent, rr.Code)
 	assert.Equal(t, "version-42", rr.Header().Get("x-amz-version-id"))

@@ -2,6 +2,7 @@ package object
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gorilla/mux"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
@@ -66,6 +67,10 @@ func NewHandler(
 // their own route in router.go, or their own branch below. Reaching the base
 // operation with one of them means the route did not match - almost always
 // because the HTTP method is not one the sub-resource is registered for.
+// objectMethods are the verbs the base object resource carries; they are what
+// a 405 names in its Allow header.
+var objectMethods = []string{http.MethodGet, http.MethodHead, http.MethodPut, http.MethodDelete}
+
 var knownObjectSubResources = map[string]bool{
 	"acl": true, "tagging": true, "attributes": true,
 	"legal-hold": true, "retention": true, "torrent": true,
@@ -203,7 +208,11 @@ func (h *Handler) handleBaseObjectOperations(w http.ResponseWriter, r *http.Requ
 	case http.MethodHead:
 		h.handleHeadObject(w, r, bucket, key)
 	default:
-		h.errorWriter.WriteNotImplemented(w, "Object_"+r.Method)
+		// The method is wrong, not the operation unimplemented: 405 names the
+		// verbs the object resource carries (ADR 0007 D8).
+		w.Header().Set("Allow", strings.Join(objectMethods, ", "))
+		h.errorWriter.WriteGenericError(w, http.StatusMethodNotAllowed, "MethodNotAllowed",
+			"The specified method is not allowed against this resource.")
 	}
 }
 

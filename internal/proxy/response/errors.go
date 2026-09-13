@@ -63,11 +63,12 @@ func (e *ErrorWriter) WriteS3Error(w http.ResponseWriter, err error, bucket, key
 		logEntry.Warn("S3 operation failed with client error")
 	}
 
+	// No RequestId: the proxy mints none, and a constant identifies nothing
+	// (ADR 0008 D12).
 	e.writeErrorDocument(w, mapped.StatusCode, s3Error{
-		Code:      mapped.Code,
-		Message:   mapped.Message,
-		Resource:  resource,
-		RequestID: "proxy-request",
+		Code:     mapped.Code,
+		Message:  mapped.Message,
+		Resource: resource,
 	})
 }
 

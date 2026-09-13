@@ -57,7 +57,8 @@ func (s *Server) s3AuthMiddleware(next http.Handler) http.Handler {
 		// Perform comprehensive authentication using the robust service
 		accessKeyID, err := s.s3AuthService.AuthenticateRequest(r)
 		if err != nil {
-			s.writeS3Error(w, s.determineErrorCode(err), http.StatusForbidden)
+			code := s.determineErrorCode(err)
+			s.writeS3Error(w, code, authErrorStatus(code))
 			return
 		}
 		// The handlers describe the caller, never the backend account (ADR 0008).
@@ -136,10 +137,19 @@ func (s *Server) determineErrorCode(err error) string {
 		return "SignatureDoesNotMatch"
 	case strings.Contains(errMsg, "timestamp"), strings.Contains(errMsg, "clock skew"), strings.Contains(errMsg, "replay"):
 		return "RequestTimeTooSkewed"
-	case strings.Contains(errMsg, "authorization header"):
+	// No header at all is an anonymous request, which S3 answers with
+	// AccessDenied rather than a parse error. A scheme this proxy does not
+	// implement is InvalidRequest. Both arrive wrapped in "malformed
+	// authorization header", so they are matched before it.
+	case strings.Contains(errMsg, "missing authorization header"):
+		return "AccessDenied"
+	case strings.Contains(errMsg, "unsupported authorization algorithm"):
 		return "InvalidRequest"
+	// S3 answers AuthorizationHeaderMalformed for a header it cannot parse.
 	case strings.Contains(errMsg, "malformed"):
 		return "AuthorizationHeaderMalformed"
+	case strings.Contains(errMsg, "authorization header"):
+		return "InvalidRequest"
 	default:
 		return "AccessDenied"
 	}
@@ -157,6 +167,18 @@ var authErrorMessage = map[string]string{
 	"InvalidRequest":               "The authorization mechanism you provided is not supported",
 	"AuthorizationHeaderMalformed": "The authorization header you provided is invalid",
 	"AccessDenied":                 "Access Denied",
+}
+
+// authErrorStatus is the HTTP status S3 answers per authentication error code:
+// 400 for the two that say the request itself is unusable, 403 for a request
+// that was understood and refused (ADR 0006 D2).
+func authErrorStatus(code string) int {
+	switch code {
+	case "InvalidRequest", "AuthorizationHeaderMalformed":
+		return http.StatusBadRequest
+	default:
+		return http.StatusForbidden
+	}
 }
 
 // writeS3Error writes an S3-compatible error response with security headers

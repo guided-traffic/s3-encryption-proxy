@@ -479,7 +479,7 @@ first.
   one (section 7).
 - **Client authentication.** A request without a valid SigV4 signature over a
   configured `s3_clients` credential never reaches a handler
-  ([router.go:53-65](internal/proxy/router.go#L53)).
+  ([router.go:70-83](internal/proxy/router.go#L70)).
 - **Metadata isolation, both ways.** The `s3ep-*` keys are stripped from every
   client response, and a client cannot write into that namespace: a request that
   carries one is refused with `400 InvalidArgument` (section 3.4).
@@ -672,10 +672,14 @@ default rather than something tighter.
   below for what it does and does not buy.
 - **Replay within the window.** There is no nonce store. A captured signed
   request can be replayed until its timestamp ages out of the 15-minute window.
-- **Anything on `/health` and `/version`.** Both are registered on a subrouter
+- **A probe on `/health` and `/version`.** Both are registered on a subrouter
   that carries no middleware, before the S3 subrouter that carries the auth
-  middleware ([router.go:47-65](internal/proxy/router.go#L47)), and are
-  unauthenticated by design.
+  middleware ([router.go:65-67](internal/proxy/router.go#L65)), and are
+  unauthenticated by design. Since 2026-09-13 those routes match a probe only —
+  unsigned and with no query string (ADR 0014 D14). A signed request to either
+  path, or one carrying S3 parameters, is an S3 request for a bucket of that name
+  and goes through authentication like any other, so the exemption covers the
+  probe and not the two names.
 - **Anything on the monitoring listener.** `monitoring.bind_address`
   (`:9090` # default) serves `/metrics`, `/health` and `/info` with **no
   authentication at all** ([monitoring/server.go:34](internal/monitoring/server.go#L34)).
@@ -812,7 +816,7 @@ noted — instead of a misleading success:
   (the route was shadowed and its header matcher compared the literal string
   `{source}`), so such a request silently stored a 0-byte part; the route now
   matches and the honest error is returned
-  ([router.go:94-98](internal/proxy/router.go#L94)).
+  ([router.go:113-117](internal/proxy/router.go#L113)).
 - Client-issued `CopyObject` (`PUT` with `x-amz-copy-source`) answers the same
   `422 NotSupportedWithEncryption`
   ([operations.go:337-351](internal/proxy/handlers/object/operations.go#L337)).

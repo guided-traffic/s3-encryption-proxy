@@ -17,7 +17,7 @@ Every key both paths depend on lives under `optimizations`:
 | `streaming_segment_size` | `12582912` # default | one part on the producer path |
 | `multipart_upload_concurrency` | `4` # default | parallel `UploadPart` workers, and with it the memory bound |
 | `multipart_short_part_buffer_size` | `67108864` # default | what all client-driven sessions together may hold |
-| `multipart_session_cleanup_interval` | `300` # default | seconds between session sweeps, `0` disables the sweeper |
+| `multipart_session_cleanup_interval` | `300` # default | seconds between session sweeps, minimum 1 checked at startup |
 | `multipart_session_idle_timeout` | `3600` # default | seconds an upload may go without a part before the sweeper ends it |
 
 ## The internal producer
@@ -291,7 +291,9 @@ Nothing is *completed* at shutdown. An object assembled from whatever happened t
 arrive would authenticate perfectly and be wrong.
 
 The sweeper starts only when `multipart_session_cleanup_interval` is greater than
-zero. Setting it to zero leaves nothing to reclaim an abandoned session.
+zero, and a configuration that writes `0` or less refuses the start: nothing
+would reclaim an abandoned session, and the short-part budget it holds would
+never be given back (ADR 0017 D8).
 
 ### The two listing verbs
 

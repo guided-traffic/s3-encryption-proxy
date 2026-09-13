@@ -417,7 +417,8 @@ optimizations:
                                     # checked at startup). Two jobs: the size of one S3
                                     # part in the internal multipart producer, and the
                                     # ceiling above which a PUT stops being a single request
-  multipart_session_cleanup_interval: 300  # default, seconds, not range-checked; 0 disables the sweeper
+  multipart_session_cleanup_interval: 300  # default, seconds, minimum 1 checked at startup
+                                           # (a written 0 stranded the short-part budget)
   multipart_session_idle_timeout: 3600     # default, seconds, minimum 1 checked at startup
                                            # (0 would expire every open upload); counted from the
                                            # last part an upload received (ADR 0028), not from its start

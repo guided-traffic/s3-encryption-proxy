@@ -18,8 +18,16 @@ refuted that way and left alone — `CopyObject` answering 422, SSE-C answering
 403, the conformance suite recording a difference between two backends, and
 others. **27 survived.** Their tests now assert the target and are red.
 
-**None of these is fixed.** This file is the list of what the red tests are
-waiting for; it goes when the last one is green.
+**The unit-test half was built on 2026-09-13 and `make test-unit` is green.**
+What landed:
+the `tink` and licence-banner wordings, the cleanup-interval minimum, the
+monitoring bind failure reaching its caller, `NoSuchBucketPolicy` and the policy
+body bound, `InvalidPartOrder`, the four `DeleteObjects` refusals, `405` with an
+`Allow` header on the object resource and at the router, the `?torrent` refusal,
+the six `response-*` overrides, the absent `RequestId`, the uncleaned path, the
+CORS preflight, and the probe matcher that stops `/health` shadowing a bucket.
+The integration and end-to-end items below are untouched; so are the two bounds
+noted under *What is left of the unit items*.
 
 ## How to see the list without this file
 
@@ -92,6 +100,40 @@ CI jobs put the same list in the step summary.
 ### `test/integration/s3-methods/passthrough_operations_test.go`
 - **line 181** — Delete TestPassthroughOperations_Retention — it is superseded by TestSubpassRetentionAndLegalHoldRoundTrip (test/integration/s3-methods/object_subresource_passthrough_test.go:82-129), which already asserts ADR 0007 D4 for both GET and PUT ?retention by reading the result straight from MinIO. If the test is kept instead, it must create the bucket with object lock enabled (HdrNewDirectBucket(t, ctx, tc.MinIOClient, true)), un-comment the PutObjectRetention call and require.NoError on it, and assert both the backend-side HeadObject (ObjectLockMode, ObjectLockRetainUntilDate) and the proxy's GetObjectRetention answer value for value — with no `if err != nil { t.Logf(...) }` arm left anywhere in it.
 
+## The contradiction inside the list, and how it was decided
+
+`internal/proxy/middleware_setup_coverage_test.go` wanted an unsigned request —
+no `Authorization` header at all — answered `400 InvalidRequest`. Four tests in
+`internal/proxy/router_coverage_test.go` wanted the identical request answered
+`403`. One request cannot have two answers, so one of the five was wrong, and it
+was a decision rather than a fix.
+
+Measured against MinIO in the demo stack: an anonymous request is
+`403 AccessDenied`, a `Basic` header is `400 InvalidRequest`. The proxy answered
+`403 InvalidRequest` to all three shapes, so the cell asking for
+`400 InvalidRequest` had carried that blanket code over and applied only the new
+status to it.
+
+**Decided and recorded as ADR 0014 D13** (2026-09-13): anonymous is
+`403 AccessDenied`, an unimplemented scheme is `400 InvalidRequest`, an
+unparseable header is `400 AuthorizationHeaderMalformed`, and the three
+credential failures keep their `403`. The cell was corrected; all five tests now
+say the same thing. The probe matcher that came with it is ADR 0014 D14.
+
+## What is left of the unit items
+
+- **The sub-resource ingest bound is fixed, not configured.** `PUT ?policy` is
+  refused above 20 KiB on the declared length, before the body is read. The
+  ticket asks for a bound the operator can size and for the eight sibling
+  handlers to read through the same limited reader; neither is built, and a new
+  configuration key is a decision (ADR 0013).
+- **The `DeleteObjects` body is still read whole.** The thousand-key limit is
+  enforced after parsing, so an oversized document is buffered before it is
+  refused.
+- **`x-amz-request-id` is still absent.** The constant is gone from the error
+  document, which is the "stay absent" half of ADR 0008 D12; minting a real id is
+  the other half and is not built.
+
 ## Grouped by what has to change
 
 - **The entity tag** (ADR 0010 D12, open): the rclone and s3cmd suites, plus
@@ -129,11 +171,8 @@ CI jobs put the same list in the step summary.
 
 ## Two decisions inside the list, not fixes
 
-- **The authentication status per error code.** Every authentication failure
-  answers 403, including `InvalidRequest` and `AuthorizationHeaderMalformed`,
-  where AWS answers 400. `writeS3Error` already takes the status, so it is a
-  table beside `authErrorMessage` — but which code gets which status is the
-  owner's call, and no ADR decides it.
+- **The authentication status per error code.** Decided 2026-09-13 and recorded
+  as ADR 0014 D13; see *The contradiction inside the list* above.
 - **The correlation id.** Either stay absent, which ADR 0008 D12 permits, or mint
   a real per-request id and echo it in `x-amz-request-id`. The constant that
   identifies nothing is the one answer that is wrong either way.

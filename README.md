@@ -435,7 +435,7 @@ optimizations:
   # does not cover whole segments. These three keys decide peak resident memory;
   # the terms are in docs/developer/performance.md, "Memory, what one request costs".
   multipart_short_part_buffer_size: 67108864  # default 64MB, minimum 5MB
-  multipart_session_cleanup_interval: 300  # default, seconds; 0 disables the sweeper
+  multipart_session_cleanup_interval: 300  # default, seconds, minimum 1 checked at startup
   # Measured from the last part the upload received, not from its start.
   multipart_session_idle_timeout: 3600     # default, seconds, minimum 1
 ```
@@ -539,6 +539,22 @@ The Go runtime and process collectors (`go_*`, `process_*`) are served as well.
 Anything else an older dashboard charts — S3 operation counters, encryption or
 HMAC timings, throughput gauges, provider info — no longer exists: those metrics
 were removed together with the code that never observed them.
+
+### Health and version endpoints
+
+`GET /health` and `GET /version` answer a JSON document without a signature, and
+they keep answering while the proxy drains so a readiness probe can take the
+instance out of rotation. They are the only unauthenticated paths on the S3
+listener.
+
+A request to either path counts as the probe **only when it is unsigned and
+carries no query string**. Anything else addressed to them — a signed request, or
+one carrying listing parameters — is an S3 request for a bucket of that name and
+is routed, authenticated and answered as one, because `health` and `version` are
+legal bucket names and reserving them would make two buckets unreachable
+([ADR 0014](./docs/adr/0014-authentication-is-sigv4-no-rate-limiting.md) D14). A
+probe that is given credentials, or a health URL that acquires a cache-busting
+parameter, therefore stops being a probe and answers an S3 error.
 
 ### Upgrading from 3.x or 4.x
 
@@ -1276,6 +1292,26 @@ the stored ciphertext's**, not a digest of the plaintext — send back the value
 the proxy gave you and revalidation works; compute an MD5 of your own file and
 it will not.
 
+### What an unauthenticated request is told
+
+Every S3 path requires a SigV4 signature; the proxy holds the backend credentials
+itself, so there is no anonymous access to pass through. The refusal names what
+actually failed
+([ADR 0014](./docs/adr/0014-authentication-is-sigv4-no-rate-limiting.md) D13):
+
+| Request | Answer |
+|---|---|
+| No `Authorization` header at all | `403 AccessDenied` |
+| A scheme this proxy does not implement | `400 InvalidRequest` |
+| An `Authorization` header that does not parse | `400 AuthorizationHeaderMalformed` |
+| An access key id no `s3_clients` entry carries | `403 InvalidAccessKeyId` |
+| A signature that does not match | `403 SignatureDoesNotMatch` |
+| A timestamp outside `max_clock_skew_seconds`, or a pre-signed URL past its lifetime | `403 RequestTimeTooSkewed` |
+
+400 means the request itself is unusable, 403 that it was understood and refused.
+The message is fixed per code: the attempted access key id, the signed header
+names and the clock offset are logged and never echoed back.
+
 ### Operations the proxy does not implement
 
 A sub-resource the proxy does not implement is answered rather than performed,
@@ -1298,9 +1334,10 @@ What that means for a client today:
   `?legal-hold` (`GET`, `PUT`) reach the backend and answer with its document —
   they carry no plaintext of the object and the proxy has nothing to add to them
   ([ADR 0007](./docs/adr/0007-forward-it-or-refuse-it.md) D4). `?torrent` is
-  forwarded too. `?acl`, `?attributes` and S3 Select answer `501`, and so does a
-  verb `?tagging` does not define. A verb `?retention`, `?legal-hold` or
-  `?torrent` does not define — a `DELETE` on any of them, say — answers
+  refused with `422 NotSupportedWithEncryption`: the backend would compose that
+  document from the ciphertext it holds. `?acl`, `?attributes` and S3 Select
+  answer `501`, and so does a verb `?tagging` does not define. A verb
+  `?retention` or `?legal-hold` does not define — a `DELETE` on either, say — answers
   `405 MethodNotAllowed`, and so does `?restore`, which has no route at all. A
   request document that does not parse answers `400 MalformedXML`, through the
   proxy's own error document.

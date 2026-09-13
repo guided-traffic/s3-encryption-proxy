@@ -353,7 +353,9 @@ func TestServer_RoutingSetup(t *testing.T) {
 			if tt.expectedMatch {
 				assert.True(t, matches, "Route should match")
 			} else {
-				assert.False(t, matches, "Route should not match")
+				// A method no route declares reaches the refusal handler rather
+				// than nothing at all, and mux reports that in MatchErr.
+				assert.ErrorIs(t, match.MatchErr, mux.ErrMethodMismatch, "no route may carry this method")
 			}
 		})
 	}
