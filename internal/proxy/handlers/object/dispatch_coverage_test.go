@@ -276,9 +276,12 @@ func TestObjMiscHandleUnsupportedMethodIsRefusedNotSilently200(t *testing.T) {
 			// The method is wrong, not the operation unimplemented, so the refusal
 			// that says what is true is 405 with an Allow header naming the verbs the
 			// resource carries (ADR 0007 D8, ADR 0008 D7).
-			assert.Equal(t, http.StatusMethodNotAllowed, rr.Code)
-			assert.Equal(t, "application/xml", rr.Header().Get("Content-Type"))
-			assert.Equal(t, "MethodNotAllowed", ObjMiscparseError(t, rr.Body.Bytes()).Code)
+			const rule = "the method is wrong, not the operation unimplemented, so the refusal that says " +
+				"what is true is 405 with an Allow header naming the verbs the resource carries " +
+				"(ADR 0007 D8, ADR 0008 D7)"
+			assert.Equal(t, http.StatusMethodNotAllowed, rr.Code, rule)
+			assert.Equal(t, "application/xml", rr.Header().Get("Content-Type"), rule)
+			assert.Equal(t, "MethodNotAllowed", ObjMiscparseError(t, rr.Body.Bytes()).Code, rule)
 			assert.ElementsMatch(t,
 				[]string{"GET", "HEAD", "PUT", "DELETE"},
 				ObjMiscallowedMethods(rr),
@@ -760,8 +763,11 @@ func TestObjMiscObjectTorrentIsRefusedNotPassedThroughUndecrypted(t *testing.T) 
 	assert.NotContains(t, rr.Body.String(), "announce")
 	// Open decision: 422 NotSupportedWithEncryption or 501 NotImplemented naming
 	// ObjectTorrent is the owner's call (ADR 0007 D8); asserted is the first.
-	assert.Equal(t, http.StatusUnprocessableEntity, rr.Code)
-	assert.Equal(t, "NotSupportedWithEncryption", ObjMiscparseError(t, rr.Body.Bytes()).Code)
+	const rule = "encryption forecloses the operation: the backend composes the torrent from the bytes " +
+		"it holds, which are the ciphertext, and a response carries only what the proxy can vouch for " +
+		"(ADR 0008 D1/D11, ADR 0007 D1/D8)"
+	assert.Equal(t, http.StatusUnprocessableEntity, rr.Code, rule)
+	assert.Equal(t, "NotSupportedWithEncryption", ObjMiscparseError(t, rr.Body.Bytes()).Code, rule)
 }
 
 // ObjMiscbrokenReader fails partway through, the way a truncated backend

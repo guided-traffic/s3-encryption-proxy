@@ -175,7 +175,10 @@ func TestRespWriteS3Error_ResourceComposition(t *testing.T) {
 			// ADR 0008 D12: the id in the document is the one the request-id
 			// middleware stated on the response. This writer is driven directly,
 			// so there is none, and the element is omitted rather than invented.
-			assert.Empty(t, doc.RequestID)
+			assert.Empty(t, doc.RequestID,
+				"the id in the document is the one the request-id middleware stated on the response; "+
+					"this writer is driven directly, so there is none and the element is omitted rather "+
+					"than invented (ADR 0008 D12, D12a)")
 
 			// bucket and key are only logged when they carry something.
 			entry, found := UtlFindLog(UtlDecodeLog(t, buf), "S3 operation failed with client error")

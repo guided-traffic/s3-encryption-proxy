@@ -195,7 +195,13 @@ All three were decided on 2026-09-13 and built the same day.
 Three things the sweep and its decision left outstanding. They are here because a
 decision record is not a work list; the reasoning for each is in ADR 0031.
 
-- [ ] **A red test does not name its rule where a reader sees it.** ADR 0031 D7
+- [x] **A red test names its rule where a reader sees it** (done 2026-09-13). Every
+      assertion the sweep touched carries the rule and the record in its failure
+      message rather than in a comment above it. Making the swallowed errors in
+      `passthrough_operations_test.go` assert instead of log found one defect on
+      the spot and retired two tests that could not fail; the defect is ticket 036.
+
+- [ ] **~~A red test does not name its rule where a reader sees it.~~** ADR 0031 D7
       asks for the rule and the record *in the failure message*. The two client
       suites do it; the twenty-seven tests above do not — their citation sits in
       a source comment and the failure is bare tool output (`Should be empty, but

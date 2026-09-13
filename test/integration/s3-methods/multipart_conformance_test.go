@@ -463,10 +463,13 @@ func TestMpuCompleteWithPartsOutOfOrder(t *testing.T) {
 		// A compatibility question is answered against S3 semantics (ADR 0006 D2),
 		// and ADR 0011 D6 rules on the part set, never on its order: a client whose
 		// part bookkeeping is broken must be told, not silently corrected.
-		require.Error(t, err, "the proxy accepted an out-of-order part list instead of refusing it")
+		const rule = "a <Part> list that is not in ascending order is refused as AWS and MinIO refuse " +
+			"it, never sorted into one: ADR 0011 D6 rules on the part set, and ADR 0006 D2 makes the " +
+			"order S3 semantics"
+		require.Error(t, err, "the proxy accepted an out-of-order part list instead of refusing it: %s", rule)
 		shape := MpuInspect(err)
-		assert.Equal(t, "InvalidPartOrder", shape.Code, "proxy: %s", shape)
-		assert.Equal(t, http.StatusBadRequest, shape.Status, "proxy: %s", shape)
+		assert.Equal(t, "InvalidPartOrder", shape.Code, "%s; proxy: %s", rule, shape)
+		assert.Equal(t, http.StatusBadRequest, shape.Status, "%s; proxy: %s", rule, shape)
 	})
 }
 

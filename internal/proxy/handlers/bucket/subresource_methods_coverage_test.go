@@ -737,8 +737,11 @@ func TestBktPolicyGetWithNoPolicyAnswers404(t *testing.T) {
 	// No policy is a refusal, not a success: ADR 0007 D1 forbids answering success
 	// for something the proxy did not honour, and ADR 0008 D7 makes every failure
 	// an S3 <Error> document - never a bare status behind an empty body.
-	assert.Equal(t, http.StatusNotFound, w.Code)
-	assert.Equal(t, "NoSuchBucketPolicy", BktparseError(t, w.Body.Bytes()).Code)
+	const rule = "a bucket with no policy is a refusal, not an empty success: answering 200 reports a " +
+		"policy the bucket does not have (ADR 0007 D1), and every failure is an S3 <Error> document " +
+		"rather than a bare status (ADR 0008 D7)"
+	assert.Equal(t, http.StatusNotFound, w.Code, rule)
+	assert.Equal(t, "NoSuchBucketPolicy", BktparseError(t, w.Body.Bytes()).Code, rule)
 }
 
 // TestBktPolicyPutValidatesJSONBeforeForwarding covers handlePutPolicy.
@@ -872,8 +875,10 @@ func TestBktPolicyPutBoundsTheBody(t *testing.T) {
 		// ADR 0024 D4 wants in-flight memory bounded and configured, and ADR 0011 D5
 		// refuses an oversized body before it is read instead of buffering it first.
 		// Which bound, and EntityTooLarge vs MalformedPolicy, is still an open decision.
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Equal(t, "EntityTooLarge", BktparseError(t, w.Body.Bytes()).Code)
+		const rule = "a document above optimizations.max_request_document_size is refused on what " +
+			"arrived, before the backend is called (ADR 0024 D8, ADR 0011 D5)"
+		assert.Equal(t, http.StatusBadRequest, w.Code, rule)
+		assert.Equal(t, "EntityTooLarge", BktparseError(t, w.Body.Bytes()).Code, rule)
 		backend.AssertNotCalled(t, "PutBucketPolicy", mock.Anything, mock.Anything)
 	})
 }

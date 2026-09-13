@@ -203,13 +203,17 @@ func TestCfgValidateProviderTypes(t *testing.T) {
 				require.NoError(t, err)
 				return
 			}
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), tt.expectError)
+			// A configuration this proxy cannot work with refuses the start, and
+			// the message names the field and the rule it broke (ADR 0013 D7).
+			const rule = "a refused configuration names the field and the rule it broke (ADR 0013 D7)"
+			require.Error(t, err, rule)
+			assert.Contains(t, err.Error(), tt.expectError, rule)
 			for _, must := range tt.expectAlso {
-				assert.Contains(t, err.Error(), must)
+				assert.Contains(t, err.Error(), must, rule)
 			}
 			for _, mustNot := range tt.expectAbsent {
-				assert.NotContains(t, err.Error(), mustNot)
+				assert.NotContains(t, err.Error(), mustNot,
+					"%s, and it does not promise an implementation that does not exist", rule)
 			}
 		})
 	}
@@ -526,8 +530,11 @@ func TestCfgValidateOptimizationsBoundaries(t *testing.T) {
 				require.NoError(t, err)
 				return
 			}
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), tt.expectError)
+			// A value that switches a protection off is refused by name, never
+			// quietly replaced with the default (ADR 0017 D8).
+			const rule = "an out-of-range optimisation is refused by name, not silently fixed up (ADR 0017 D8)"
+			require.Error(t, err, rule)
+			assert.Contains(t, err.Error(), tt.expectError, rule)
 		})
 	}
 }

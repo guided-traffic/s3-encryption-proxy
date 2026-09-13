@@ -213,8 +213,11 @@ func TestMonServerStartLogsListenFailure(t *testing.T) {
 	case err := <-errCh:
 		// A failed bind must reach the caller and name the address it could not take:
 		// the proxy does not run degraded on a listener it never got (ADR 0013 D7).
-		require.Error(t, err)
-		assert.ErrorContains(t, err, blocker.Addr().String())
+		require.Error(t, err,
+			"a listener the server never got is reported to the caller, not only logged: the proxy "+
+				"does not run degraded on a listener it never got (ADR 0013 D7)")
+		assert.ErrorContains(t, err, blocker.Addr().String(),
+			"the error names the address it could not take (ADR 0013 D7)")
 		// Open decision: whether the process then aborts or carries on degraded.
 	case <-time.After(15 * time.Second):
 		t.Fatal("Start did not return after the context was cancelled")

@@ -245,7 +245,9 @@ func TestStreamingMultipartUpload(t *testing.T) {
 			// Every size the proxy reports is the plaintext length, on the
 			// single-request path and the multipart path alike (ADR 0010 D1).
 			require.Equalf(t, tc.size, actualSize,
-				"HEAD through the proxy reports %d bytes for the %d byte object %s: it must report the plaintext size",
+				"HEAD through the proxy reports %d bytes for the %d byte object %s: every size the proxy "+
+					"reports is the plaintext length, on the single-request path and the multipart path "+
+					"alike (ADR 0010 D1)",
 				actualSize, tc.size, tc.name)
 
 			// Create a FRESH StreamingReader for verification (the uploaded one is already consumed)

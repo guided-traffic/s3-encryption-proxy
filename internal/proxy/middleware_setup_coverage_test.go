@@ -188,12 +188,9 @@ func TestRtPxS3AuthMiddlewareRejections(t *testing.T) {
 			server.s3AuthMiddleware(next).ServeHTTP(w, tc.build())
 
 			assert.False(t, called, "an unauthenticated request must never reach the S3 handlers")
-			// S3's own status per code: 400 for InvalidRequest and
-			// AuthorizationHeaderMalformed, 403 for the rest. ADR 0006 D2 — an
-			// undocumented deviation is a defect, not a limit.
-			// Open decision: the owner may instead keep the blanket 403 and
-			// record it in ADR 0014, which is the other half of D2.
-			assert.Equal(t, tc.wantStatus, w.Code)
+			assert.Equal(t, tc.wantStatus, w.Code,
+				"the status of an authentication refusal follows its code: 400 where the request itself "+
+					"is unusable, 403 where it was understood and refused (ADR 0014 D13)")
 			assert.Equal(t, "application/xml", w.Header().Get("Content-Type"))
 			assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"))
 			assert.Equal(t, "DENY", w.Header().Get("X-Frame-Options"))
@@ -246,7 +243,9 @@ func TestRtPxDetermineErrorCodeMapping(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			code := server.determineErrorCode(tc.err)
-			assert.Equal(t, tc.want, code)
+			assert.Equal(t, tc.want, code,
+				"the code names what actually failed; the switch is ordered, and a new case in the "+
+					"wrong place silently re-labels an existing failure (ADR 0014 D13)")
 			assert.Contains(t, authErrorMessage, code, "every returned code needs client-facing wording")
 		})
 	}

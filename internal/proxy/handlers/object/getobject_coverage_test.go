@@ -793,14 +793,15 @@ func TestObjGetGetObjectRefusesPartNumberAndHonoursResponseOverrides(t *testing.
 		require.NotNil(t, captured)
 
 		// All six reach the client: a request is honoured or refused, and these
-		// are legitimate on a GET (ADR 0007 D1, D2).
-		// Open decision: forwarded on the backend request, or applied here.
-		assert.Equal(t, "text/plain", rr.Header().Get("Content-Type"))
-		assert.Equal(t, `attachment; filename="a.txt"`, rr.Header().Get("Content-Disposition"))
-		assert.Equal(t, "no-store", rr.Header().Get("Cache-Control"))
-		assert.Equal(t, "identity", rr.Header().Get("Content-Encoding"))
-		assert.Equal(t, "en-GB", rr.Header().Get("Content-Language"))
-		assert.Equal(t, "Wed, 21 Oct 2015 07:28:00 GMT", rr.Header().Get("Expires"))
+		// are legitimate on a GET.
+		const rule = "the six response-* overrides are honoured, not admitted and discarded behind a " +
+			"200 - that is the silent-200 class ADR 0007 D1/D2 forbids"
+		assert.Equal(t, "text/plain", rr.Header().Get("Content-Type"), rule)
+		assert.Equal(t, `attachment; filename="a.txt"`, rr.Header().Get("Content-Disposition"), rule)
+		assert.Equal(t, "no-store", rr.Header().Get("Cache-Control"), rule)
+		assert.Equal(t, "identity", rr.Header().Get("Content-Encoding"), rule)
+		assert.Equal(t, "en-GB", rr.Header().Get("Content-Language"), rule)
+		assert.Equal(t, "Wed, 21 Oct 2015 07:28:00 GMT", rr.Header().Get("Expires"), rule)
 	})
 }
 

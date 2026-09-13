@@ -309,9 +309,12 @@ func TestObjMiscDeleteObjectsEmptyDocumentIsRefused(t *testing.T) {
 
 			rr := ObjMiscdeleteObjects(h, "bkt", body)
 
-			assert.Equal(t, http.StatusBadRequest, rr.Code)
-			assert.Equal(t, "application/xml", rr.Header().Get("Content-Type"))
-			assert.Equal(t, "MalformedXML", ObjMiscparseError(t, rr.Body.Bytes()).Code)
+			const rule = "a Delete document that parses but names no object is refused with 400 " +
+				"MalformedXML before any backend call, as S3 refuses it: forwarding it would author " +
+				"an empty delete on the client's behalf (ADR 0006 D2, ADR 0007 D1)"
+			assert.Equal(t, http.StatusBadRequest, rr.Code, rule)
+			assert.Equal(t, "application/xml", rr.Header().Get("Content-Type"), rule)
+			assert.Equal(t, "MalformedXML", ObjMiscparseError(t, rr.Body.Bytes()).Code, rule)
 			backend.AssertNotCalled(t, "DeleteObjects", mock.Anything, mock.Anything)
 		})
 	}
@@ -344,8 +347,11 @@ func TestObjMiscDeleteObjectsObjectWithoutAKeyIsRefused(t *testing.T) {
 
 	rr := ObjMiscdeleteObjects(h, "bkt", `<Delete><Object></Object></Delete>`)
 
-	assert.Equal(t, http.StatusBadRequest, rr.Code)
-	assert.Equal(t, "MalformedXML", ObjMiscparseError(t, rr.Body.Bytes()).Code)
+	const rule = "an <Object> with no <Key> makes the document invalid: the proxy re-serialises it, so " +
+		"accepting it would author a delete for the empty key on the client's behalf " +
+		"(ADR 0007 D1/D8, ADR 0006 D2)"
+	assert.Equal(t, http.StatusBadRequest, rr.Code, rule)
+	assert.Equal(t, "MalformedXML", ObjMiscparseError(t, rr.Body.Bytes()).Code, rule)
 	backend.AssertNotCalled(t, "DeleteObjects", mock.Anything, mock.Anything)
 }
 
@@ -372,8 +378,10 @@ func TestObjMiscDeleteObjectsRefusesAboveTheThousandKeyLimit(t *testing.T) {
 
 	rr := ObjMiscdeleteObjects(h, "bkt", body.String())
 
-	assert.Equal(t, http.StatusBadRequest, rr.Code)
-	assert.Equal(t, "MalformedXML", ObjMiscparseError(t, rr.Body.Bytes()).Code)
+	const rule = "above a thousand objects the document is refused with 400 MalformedXML, as S3 " +
+		"refuses it, so one request cannot become an unbounded backend call (ADR 0006 D2, ADR 0011 D5)"
+	assert.Equal(t, http.StatusBadRequest, rr.Code, rule)
+	assert.Equal(t, "MalformedXML", ObjMiscparseError(t, rr.Body.Bytes()).Code, rule)
 	backend.AssertNotCalled(t, "DeleteObjects", mock.Anything, mock.Anything)
 }
 
@@ -398,8 +406,11 @@ func TestObjMiscDeleteObjectsBodyReadErrorIsRefused(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 	doc := ObjMiscparseError(t, rr.Body.Bytes())
-	assert.Equal(t, "IncompleteBody", doc.Code)
-	assert.Equal(t, "The request body terminated before the declared number of bytes was read", doc.Message)
+	const rule = "a body that cannot be read is a transport fault, answered word for word as PUT and " +
+		"UploadPart answer it; InvalidRequest stays reserved for a request carrying no digest at all " +
+		"(ADR 0012 D14, ADR 0007 D8)"
+	assert.Equal(t, "IncompleteBody", doc.Code, rule)
+	assert.Equal(t, "The request body terminated before the declared number of bytes was read", doc.Message, rule)
 	backend.AssertNotCalled(t, "DeleteObjects", mock.Anything, mock.Anything)
 }
 

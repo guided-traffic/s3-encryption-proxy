@@ -524,8 +524,10 @@ func TestProviderTypesSupported(t *testing.T) {
 				require.NoError(t, err, "type %s must be admitted", tt.name)
 				return
 			}
-			require.Error(t, err, "type %s must be refused", tt.name)
-			assert.Contains(t, err.Error(), tt.expectError)
+			const rule = "a provider type this product does not have is refused at startup, and the " +
+				"message names the type without promising an implementation (ADR 0005, ADR 0013 D7)"
+			require.Error(t, err, "type %s must be refused: %s", tt.name, rule)
+			assert.Contains(t, err.Error(), tt.expectError, rule)
 			for _, forbidden := range tt.forbidError {
 				assert.NotContains(t, err.Error(), forbidden, "type %s: refusal must not say this", tt.name)
 			}

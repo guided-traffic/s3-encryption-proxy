@@ -1287,12 +1287,14 @@ func TestMpuCompleteRefusesAListOutOfOrder(t *testing.T) {
 
 	w := env.MpuComplete(t, MpuUploadID, 2, 1)
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	const rule = "a <Part> list that is not in ascending order is refused as AWS and MinIO refuse it, " +
+		"not sorted into one: a client whose part bookkeeping is broken has to be told (ADR 0006 D2)"
+	assert.Equal(t, http.StatusBadRequest, w.Code, rule)
 	// Refused where the list arrives: nothing is sealed, nothing is forwarded, and
 	// the session stays open for the ascending list the client may still send.
 	env.backend.AssertNotCalled(t, "CompleteMultipartUpload", mock.Anything, mock.Anything)
 	env.backend.AssertNotCalled(t, "AbortMultipartUpload", mock.Anything, mock.Anything)
-	assert.Equal(t, "InvalidPartOrder", MpuParseError(t, w.Body.Bytes()).Code)
+	assert.Equal(t, "InvalidPartOrder", MpuParseError(t, w.Body.Bytes()).Code, rule)
 }
 
 // TestMpuCompleteForwardsTheStoredETags: the ETags the backend sees are the ones

@@ -282,7 +282,9 @@ func TestRtPxPathNormalisationMustNotRewriteTheKey(t *testing.T) {
 
 			require.NotEqual(t, http.StatusMovedPermanently, w.Code,
 				"the key has to be served, not rewritten to a different object")
-			assert.Empty(t, w.Header().Get("Location"))
+			assert.Empty(t, w.Header().Get("Location"),
+				"a bodiless 301 to a different key neither honours nor refuses the request "+
+					"(ADR 0007 D1) and carries no <Error> document (ADR 0008 D7)")
 			// Unsigned, so the object route refuses it; what matters is that a route
 			// answered at all instead of the path cleaner.
 			assert.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
@@ -317,8 +319,11 @@ func TestRtPxUnroutedMethodsAnswerAnS3Error(t *testing.T) {
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, httptest.NewRequest(tc.method, tc.target, nil))
 
-			require.Equal(t, http.StatusMethodNotAllowed, w.Code, "body: %s", w.Body.String())
-			assert.Equal(t, "application/xml", w.Header().Get("Content-Type"))
+			const rule = "a method no route declares is still the proxy's refusal to make: 405 with an " +
+				"S3 <Error> document and an Allow header, never a bare status behind an empty body " +
+				"(ADR 0008 D7)"
+			require.Equal(t, http.StatusMethodNotAllowed, w.Code, "%s; body: %s", rule, w.Body.String())
+			assert.Equal(t, "application/xml", w.Header().Get("Content-Type"), rule)
 
 			var doc struct {
 				XMLName xml.Name `xml:"Error"`
@@ -484,9 +489,12 @@ func TestRtPxHealthEndpointsDoNotShadowSameNamedBuckets(t *testing.T) {
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/health?list-type=2&prefix=a/", nil))
 
-		require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
-		assert.Equal(t, "application/xml", w.Header().Get("Content-Type"))
-		assert.Contains(t, w.Body.String(), "<Code>")
+		const rule = "anything that is an S3 request - signed, or carrying listing parameters - " +
+			"addresses a bucket of that name, which S3 allows and no documented limit forbids; the " +
+			"probe exemption covers the probe, not the name (ADR 0014 D11, D14; ADR 0006 D2)"
+		require.Equal(t, http.StatusForbidden, w.Code, "%s; body: %s", rule, w.Body.String())
+		assert.Equal(t, "application/xml", w.Header().Get("Content-Type"), rule)
+		assert.Contains(t, w.Body.String(), "<Code>", rule)
 	})
 
 	// A signed GET is an S3 request whatever the bucket is called.
