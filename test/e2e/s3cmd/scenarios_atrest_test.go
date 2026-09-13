@@ -64,12 +64,12 @@ func TestS7_EncryptionAtRest(t *testing.T) {
 					"the proxy's own metadata prefix reached the client")
 			})
 
-			verdicts.Record(t, harness.Case{
+			verdicts.Want(t, harness.Case{
 				ID:       "S7",
 				Endpoint: ep.name,
-				What:     "every object s3cmd wrote is ciphertext at rest under the four s3ep- keys",
-				Expect:   harness.Accepts,
-			}, harness.Accepts, "both objects are encrypted at rest and carry the segmented format id")
+				What:     "read every object s3cmd wrote straight from the backend",
+				Wants:    "store every object as ciphertext under the four s3ep- keys of ADR 0009",
+			}, true, "both objects are encrypted at rest and carry the segmented format id")
 		})
 	}
 }

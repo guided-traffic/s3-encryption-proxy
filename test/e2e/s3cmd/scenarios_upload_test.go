@@ -4,7 +4,6 @@ package s3cmd
 
 import (
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -14,29 +13,20 @@ import (
 
 const (
 	// singlePartSize is below both s3cmd's own multipart threshold and
-	// optimizations.streaming_segment_size, so one PUT reaches the proxy and the
-	// backend answers a bare 32-hex entity tag.
+	// optimizations.streaming_segment_size, so one PUT reaches the proxy.
 	singlePartSize = 1 << 20 // 1 MiB
 	// multiPartSize with a 5 MiB chunk is three client parts.
 	multiPartSize = 12 << 20 // 12 MiB
 	// producerSize is above optimizations.streaming_segment_size (12 MiB), so a
-	// single client PUT becomes the proxy's internal multipart producer and the
-	// answer carries the <hex>-N shape instead. See TestS2b.
+	// single client PUT becomes the proxy's internal multipart producer.
 	producerSize = 20 << 20 // 20 MiB
-	// producerChunkMB keeps s3cmd from splitting producerSize itself: its own
-	// multipart threshold has to stay above the file for the case to be about
-	// the proxy's part layout and not about s3cmd's.
+	// producerChunkMB keeps s3cmd from splitting producerSize itself.
 	producerChunkMB = "200"
 )
 
-// etagIsCiphertextDigest is what S1's and S4's rows pin.
-const etagIsCiphertextDigest = "the entity tag of a single-request PUT is the backend's MD5 of the STORED bytes " +
-	"in the exact shape S3 reserves for a content digest, and s3cmd compares every PUT response tag with the MD5 " +
-	"of the bytes it sent (ADR 0010 D12 leaves this open; ADR 0012's residual risk that no examined client " +
-	"verifies the entity tag is refuted by this case)"
-
-// TestS1_SinglePartPut is the single-part verdict: what a user gets from `s3cmd put`
-// with a configuration written the documented way and no flag at all.
+// TestS1_SinglePartPut: a user puts a file with a configuration written the
+// documented way and no flags. It has to work, and the exit code has to tell
+// the truth about what was stored.
 func TestS1_SinglePartPut(t *testing.T) {
 	ctx := preflight(t)
 
@@ -47,37 +37,31 @@ func TestS1_SinglePartPut(t *testing.T) {
 
 			r := s.run(t, ctx, "put", src, s.uri("small.bin"))
 
-			verdicts.Record(t, harness.Case{
+			verdicts.Want(t, harness.Case{
 				ID:       "S1",
 				Endpoint: ep.name,
 				What:     "put a 1 MiB file, defaults",
-				Expect:   harness.Refuses,
-				Defect:   etagIsCiphertextDigest,
-			}, outcome(r), s.says(r))
+				Wants: "accept the upload. s3cmd compares the entity tag of every PUT response with the MD5 " +
+					"of the bytes it sent, so the tag a single-request PUT answers must not be a digest of the " +
+					"STORED bytes; it has no option that switches the check off (ADR 0010 D12)",
+			}, r.OK(), s.says(r))
 
-			require.Contains(t, r.Combined, "MD5 Sums don't match!",
-				"s3cmd refused the upload, but not over the entity tag")
-			require.Contains(t, r.Combined, "failed too many times",
-				"s3cmd did not exhaust its retries the way the case assumes")
-			require.Equalf(t, 2, r.ExitCode,
-				"a refused transfer is EX_PARTIAL (2) without --stop-on-error; got %d", r.ExitCode)
-
-			// The half of this that a user pays for twice: s3cmd reports the
-			// upload as failed and the object IS in the bucket, decryptable and
-			// whole. A caller that trusts the exit code believes it stored
-			// nothing. rclone, by contrast, deletes what it could not vouch for.
+			// A non-zero exit while the object is in the bucket is its own
+			// defect: a caller that trusts the exit code concludes nothing was
+			// written. Asserted after the verdict so it is reached once S1 passes.
 			stored := harness.ListStored(t, ctx, harness.BackendClient(t), s.bucket, "small.bin")
-			require.Lenf(t, stored, 1,
-				"the suite assumed a refused s3cmd put leaves its object behind; it stored %d", len(stored))
+			require.Len(t, stored, 1, "the upload reported success but stored nothing")
 			require.Equal(t, harness.SHA256File(t, src),
 				harness.SHA256Bytes(harness.ReadViaProxy(t, ctx, s.bucket, "small.bin")),
-				"the object s3cmd reported as corrupted does not read back as the file it sent")
+				"what was stored is not what s3cmd sent")
 		})
 	}
 }
 
-// TestS2_MultipartPut is the multipart verdict, and the question the object-level
-// entity tag cannot answer: s3cmd checks a tag per UPLOADED PART.
+// TestS2_MultipartPut: the same file in parts. s3cmd checks the entity tag of
+// every UploadPart response against that part's MD5, so this is the case no
+// object-level answer can satisfy — the upload is decided part by part and never
+// reaches CompleteMultipartUpload.
 func TestS2_MultipartPut(t *testing.T) {
 	ctx := preflight(t)
 
@@ -88,100 +72,79 @@ func TestS2_MultipartPut(t *testing.T) {
 
 			r := s.run(t, ctx, "--multipart-chunk-size-mb=5", "put", src, s.uri("big.bin"))
 
-			verdicts.Record(t, harness.Case{
+			// Whatever the verdict, the client must not be left holding an upload
+			// it cannot see or abort (S6b). Checked before the assertion so a
+			// failing case still reports it.
+			open := harness.OpenUploads(t, ctx, s.bucket)
+
+			verdicts.Want(t, harness.Case{
 				ID:       "S2",
 				Endpoint: ep.name,
 				What:     "put a 12 MiB file in 5 MiB parts",
-				Expect:   harness.Refuses,
-				Defect: "s3cmd compares the entity tag of every UploadPart response with the MD5 of that part, and " +
-					"under an encrypting provider a part's tag is the backend's MD5 of the SEALED part; the upload " +
-					"is refused on the first part and never reaches CompleteMultipartUpload, so no object-level " +
-					"entity tag can answer it (ADR 0010 D12)",
-			}, outcome(r), s.says(r))
+				Wants: "accept the upload. Under an encrypting provider a part's entity tag is the backend's " +
+					"MD5 of the SEALED part, so s3cmd is refused on the first part and never reaches " +
+					"CompleteMultipartUpload — no object-level entity tag can answer this, the rule has to " +
+					"cover a part's answer too (ADR 0010 D12)",
+			}, r.OK(), s.says(r))
 
-			require.Contains(t, r.Combined, "MD5 Sums don't match!")
-			// The first part, not the last: a per-part refusal, not a completion
-			// that was checked afterwards.
-			require.Contains(t, r.Combined, "part 1 failed",
-				"the suite assumed s3cmd refuses the FIRST part; it got further")
-			require.Contains(t, r.Combined, "abortmp",
-				"s3cmd did not print the abort instructions this case expects")
-
-			// Nothing was completed, so nothing is stored — but an upload was
-			// opened and left open. The client cannot clean it up: the proxy
-			// answers `s3cmd multipart` with 405 (see TestS6).
-			require.Empty(t, harness.ListStored(t, ctx, harness.BackendClient(t), s.bucket, "big.bin"),
-				"a multipart upload refused at part 1 still produced an object")
-			require.NotEmpty(t, harness.OpenUploads(t, ctx, s.bucket),
-				"the suite assumed a refused multipart put leaves the upload open on the backend")
+			require.Emptyf(t, open, "the upload left %d multipart upload(s) open on the backend", len(open))
+			require.Equal(t, harness.SHA256File(t, src),
+				harness.SHA256Bytes(harness.ReadViaProxy(t, ctx, s.bucket, "big.bin")),
+				"what was stored is not what s3cmd sent")
 		})
 	}
 }
 
-// TestS2b_AHyphenInTheEntityTagDisablesEveryCheck is the case the decision turns
-// on, and it needs no change to the product to run.
+// TestS2b_ProducerObject: an object above the single-request ceiling goes up in
+// one client request and through the proxy's internal multipart producer. It has
+// to work, and its own digest has to survive the round trip.
 //
-// s3cmd skips its entity-tag comparison whenever the tag contains a hyphen — the
-// test it uses to recognise a completed multipart upload, whose tag S3 itself
-// calls opaque. The proxy already answers that shape for an object above
-// optimizations.streaming_segment_size, because such a PUT becomes the internal
-// multipart producer.
-//
-// So the SAME client uploading through the SAME proxy under the SAME encryption
-// succeeds or is refused depending on nothing but whether the answer happens to
-// carry a hyphen. That is the measurement behind the proposed marker: it says
-// the marker is sufficient for s3cmd at object level, and — with S2 — that it is
-// necessary at part level too, which is a wider scope than an object-level rule.
-func TestS2b_AHyphenInTheEntityTagDisablesEveryCheck(t *testing.T) {
+// It is worth keeping beside S1 and S2 because the only difference between them
+// is the shape of the answer: s3cmd skips its check whenever the entity tag
+// carries a hyphen, which is what the producer's `<hex>-N` happens to do. That
+// measurement is what says an entity-tag marker would answer S1 — and, since S2
+// is decided per part, that it has to reach a part's answer as well.
+func TestS2b_ProducerObject(t *testing.T) {
 	ctx := preflight(t)
 	ep := endpoints(t)[1] // TLS
 
 	s := newSuite(t, ctx, "s2b", ep)
 	src := harness.WriteRandomFile(t, s.work, "producer.bin", producerSize)
 
-	// One client PUT, above the proxy's single-request ceiling.
 	r := s.run(t, ctx, "--multipart-chunk-size-mb="+producerChunkMB, "put", src, s.uri("producer.bin"))
-	require.Truef(t, r.OK(), "the upload was refused, which is the opposite of this case:\n%s", r.Combined)
 
-	tag := harness.ProxyETag(t, ctx, s.bucket, "producer.bin")
-	require.Containsf(t, tag, "-",
-		"this case needs the proxy to answer a hyphenated entity tag for a %d byte object; it answered %q. "+
-			"Either optimizations.streaming_segment_size moved above the payload, or the producer's answer changed",
-		producerSize, tag)
-	require.NotEqualf(t, harness.MD5File(t, src), strings.SplitN(tag, "-", 2)[0],
-		"the entity tag's digest half equals the plaintext MD5, so this case is no longer about an opaque tag")
-
-	verdicts.Record(t, harness.Case{
+	verdicts.Want(t, harness.Case{
 		ID:       "S2b",
 		Endpoint: ep.name,
-		What:     "put a 20 MiB file, one client request, so the proxy answers <hex>-N",
-		Expect:   harness.Accepts,
-	}, outcome(r), s.says(r))
+		What:     "put a 20 MiB file in one client request, above the single-request ceiling",
+		Wants:    "accept the upload",
+	}, r.OK(), s.says(r))
 
-	// And the two consequences of the hyphen that S1 and S4 are refused for.
 	t.Run("ls_reports_the_plaintext_md5", func(t *testing.T) {
-		// With a hyphenated tag s3cmd stops trusting it and reads the digest out
-		// of its own x-amz-meta-s3cmd-attrs instead — which the proxy preserved.
-		// With a bare 32-hex tag it reports that tag, i.e. a digest of bytes the
-		// user never had (TestS5).
 		ls := s.run(t, ctx, "--list-md5", "ls", s.uri("")+"/")
-		require.Contains(t, ls.Stdout, harness.MD5File(t, src),
-			"`ls --list-md5` did not report the plaintext MD5 for an object with a hyphenated entity tag")
+		want := harness.MD5File(t, src)
+		verdicts.Want(t, harness.Case{
+			ID:       "S2c",
+			Endpoint: ep.name,
+			What:     "ls --list-md5 of that object",
+			Wants:    "report the plaintext MD5, which s3cmd preserved in its own x-amz-meta-s3cmd-attrs",
+		}, ls.OK() && lineFor(ls.Stdout, "producer.bin") != "" &&
+			containsStr(lineFor(ls.Stdout, "producer.bin"), want), s.says(ls))
 	})
 
-	t.Run("sync_transfers_nothing_on_a_second_run", func(t *testing.T) {
+	t.Run("sync_settles", func(t *testing.T) {
 		dir := t.TempDir()
 		harness.CopyFile(t, src, filepath.Join(dir, "producer.bin"))
 
-		first := s.run(t, ctx, "--multipart-chunk-size-mb="+producerChunkMB,
-			"sync", dir+"/", s.uri("hyphen-sync")+"/")
+		first := s.run(t, ctx, "--multipart-chunk-size-mb="+producerChunkMB, "sync", dir+"/", s.uri("hyphen-sync")+"/")
 		require.Truef(t, first.OK(), "the first sync failed:\n%s", first.Combined)
-		require.Contains(t, first.Stdout, "upload:", "the first sync transferred nothing")
 
-		second := s.run(t, ctx, "--multipart-chunk-size-mb="+producerChunkMB,
-			"sync", dir+"/", s.uri("hyphen-sync")+"/")
-		require.Truef(t, second.OK(), "the second sync failed:\n%s", second.Combined)
-		require.NotContains(t, second.Stdout, "upload:",
-			"s3cmd re-uploaded an unchanged file whose entity tag carries a hyphen")
+		second := s.run(t, ctx, "--multipart-chunk-size-mb="+producerChunkMB, "sync", dir+"/", s.uri("hyphen-sync")+"/")
+		verdicts.Want(t, harness.Case{
+			ID:       "S2d",
+			Endpoint: ep.name,
+			What:     "sync that object up twice",
+			Wants:    "transfer nothing on the second run",
+		}, second.OK() && !containsStr(second.Stdout, "upload:"), s.says(second))
 	})
 }

@@ -99,16 +99,19 @@ own black-box claim. The migration immediately paid for itself — the shared
 assertion checks all four metadata keys of ADR 0009, and the Velero copy had been
 checking three.
 
-These suites needed a shape D4 did not anticipate, and it is worth stating
-because it is the alternative to a skip. A case that exercises a defect the
-product has not yet answered asserts **the behaviour the product has today**,
-together with the defect that expectation pins, and it fails in both directions:
-an unexpected refusal is a regression, an unexpected acceptance means the product
-moved under an open decision and the ADR has to move with it. So the suite is
-green while the question is open, nothing is skipped or disabled, and when the
-decision lands the diff is the expectation flipping. Each run also writes a
-verdict table, one row per case per endpoint in the client's own words, which is
-the evidence ADR 0006 D5 and D7 ask a support claim to name.
+**Amended 2026-09-13, and the amendment is a correction.** These suites first
+shipped with every open defect recorded as an *expected* refusal: a case stated
+the answer the product gives today, so the suite was green while the product was
+broken, and the release gate reported that a product two named clients can
+neither upload to nor download from was ready to merge. That is the opposite of
+what D1 and D4 are for. **A test states the behaviour the product is supposed to
+have.** If the product does not have it, the test is red, it is committed red,
+and it stays red until the product is fixed — a red suite is a correct suite, and
+a defect recorded as an expectation is a defect filed rather than surfaced.
+
+Each run writes a verdict table naming what is still broken, and the job puts the
+same list in its step summary, so a red check says which defects are open without
+anyone opening an artifact or reading the test tree.
 
 **Both suites gate the release** (decision of 2026-09-13, same terms as the
 Velero gate): `e2e-rclone` and `e2e-s3cmd` are on `semantic-release`'s `needs:`

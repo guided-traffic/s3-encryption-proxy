@@ -4,6 +4,7 @@ package s3cmd
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -29,53 +30,24 @@ func TestS4_Sync(t *testing.T) {
 			src := harness.WriteRandomFile(t, dir, "small.bin", singlePartSize)
 			dest := s.uri("s4") + "/"
 
-			t.Run("the_first_run_uploads_and_is_refused", func(t *testing.T) {
-				r := s.run(t, ctx, "sync", dir+"/", dest)
-				require.Falsef(t, r.OK(), "S1's premise changed: the sync upload succeeded:\n%s", r.Combined)
-				require.Contains(t, r.Combined, "MD5 Sums don't match!")
-				// Refused and stored, exactly as in S1.
-				require.Len(t, harness.ListStored(t, ctx, harness.BackendClient(t), s.bucket, "s4/small.bin"), 1)
-			})
+			// The first run is the upload; whether it is accepted is S1's
+			// assertion. This case is about what the SECOND run decides.
+			s.run(t, ctx, "sync", dir+"/", dest)
+			require.Len(t, harness.ListStored(t, ctx, harness.BackendClient(t), s.bucket, "s4/small.bin"), 1,
+				"the first sync stored nothing, so there is nothing to compare against")
 
-			t.Run("every_further_run_uploads_it_again", func(t *testing.T) {
-				// The object is already there, unchanged, the same size. A sync
-				// that compared size alone would stop here.
-				r := s.run(t, ctx, "sync", dir+"/", dest)
+			second := s.run(t, ctx, "sync", dir+"/", dest)
 
-				verdicts.Record(t, harness.Case{
-					ID:       "S4",
-					Endpoint: ep.name,
-					What:     "sync the same unchanged 1 MiB file up twice",
-					Expect:   harness.Refuses,
-					Defect: "the listing's entity tag is a digest of the STORED bytes and carries no hyphen, so " +
-						"s3cmd never issues the HEAD that would read its own x-amz-meta-s3cmd-attrs; it compares " +
-						"against that tag, decides an unchanged file has changed, re-uploads it on every run, and " +
-						"the re-upload is then refused by the same tag (ADR 0010 D12)",
-				}, outcome(r), s.says(r))
-
-				require.Contains(t, r.Combined, "MD5 Sums don't match!",
-					"the second sync did not even attempt the upload; the suite assumed it re-uploads")
-			})
-
-			t.Run("no_check_md5_settles_it_by_comparing_size_alone", func(t *testing.T) {
-				// The documented escape, and what it costs: --no-check-md5 drops
-				// the digest from the sync comparison AND from the attrs header
-				// s3cmd writes, so from then on nothing about the content is
-				// compared at either end — a changed file of unchanged length is
-				// not transferred.
-				r := s.run(t, ctx, "--no-check-md5", "sync", dir+"/", dest)
-				require.Truef(t, r.OK(), "--no-check-md5 did not settle the sync:\n%s", r.Combined)
-				require.NotContains(t, r.Stdout, "upload:",
-					"--no-check-md5 still re-uploaded the unchanged file")
-
-				verdicts.Record(t, harness.Case{
-					ID:       "S4b",
-					Endpoint: ep.name,
-					What:     "sync the same unchanged file with --no-check-md5",
-					Expect:   harness.Accepts,
-				}, harness.Accepts,
-					"nothing was transferred, at the cost of comparing size alone from then on")
-			})
+			verdicts.Want(t, harness.Case{
+				ID:       "S4",
+				Endpoint: ep.name,
+				What:     "sync the same unchanged 1 MiB file up twice",
+				Wants: "transfer nothing on the second run. s3cmd compares size and MD5, takes the remote MD5 " +
+					"from the listing's entity tag, and only issues the HEAD that would read its own " +
+					"x-amz-meta-s3cmd-attrs when that tag carries a hyphen — so against a tag shaped like a " +
+					"content digest it decides an unchanged file has changed, on every run, forever " +
+					"(ADR 0010 D12)",
+			}, second.OK() && !strings.Contains(second.Stdout, "upload:"), s.says(second))
 
 			t.Run("sync_down_returns_the_plaintext", func(t *testing.T) {
 				out := filepath.Join(s.work, "down")

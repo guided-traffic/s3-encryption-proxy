@@ -229,7 +229,7 @@ make build-keygen && ./build/s3ep-keygen
 - **rclone**: `make test-e2e-rclone`, cases R1-R7. **s3cmd**: `make test-e2e-s3cmd`, cases S1-S7. Same `//go:build e2e` tag, one package each, every case over both proxy endpoints
 - Environment is the demo stack, not a cluster: `make e2e-rclone-up` / `make e2e-s3cmd-up` install the pinned client and hand the stack to `./start-demo.sh`; either `*-down` target stops it, because there is one demo stack and not one per suite. There is deliberately no target that runs both. Seconds, not minutes: 5s and 8s on a warm stack (2026-09-13)
 - The clients are real pinned binaries, installed by the up-scripts into `test/e2e/rclone/bin/` and `test/e2e/s3cmd/venv/` (both gitignored) and overridable with `RCLONE_BIN` / `S3CMD_BIN`. Versions live in each suite's `versions.env`, tracked by Renovate as the group "client e2e" and never automerged: a client release can change the verdict, and that is the finding
-- **A case that reproduces a defect asserts the defect, and fails in both directions.** Each records what the client is expected to make of it today plus the defect that expectation pins, so the suite is green while the answer is open, an unexpected refusal is a regression, and an unexpected acceptance means the product moved under a decision still being taken. When a decision lands, the diff is the expectation flipping
+- **Every case asserts the target behaviour**, so both suites are RED today: 13 of 28 rclone cases and 10 of 19 s3cmd cases fail, and they stay red until the entity-tag question of ADR 0010 D12 and the two routing gaps are answered. That is the suites working — see *A test asserts the TARGET behaviour* below
 - Each run writes `test-results/e2e-<client>-verdicts.md`: one row per case per endpoint with the client's own sentence. That table is the evidence behind what this project claims about these clients (ADR 0006 D5, D7)
 - The no-skip rule covers both suites, and `e2e-rclone` and `e2e-s3cmd` are release gates alongside `e2e-velero` — one CI job each
 - Shared helpers are `test/e2e/harness/` (the demo-stack coordinates, the process runner, the backend client, the at-rest assertion, the verdict recorder). `test/e2e/harness/demo-stack.env` is read by both the bash up-scripts and the Go suites, so a port or a credential cannot drift between them
@@ -237,15 +237,32 @@ make build-keygen && ./build/s3ep-keygen
 
 #### Maintaining the e2e suites — read this before you touch one
 
-**A case that pins an open defect fails in two directions, and they mean opposite things.**
-`harness.Case` records the outcome the client is expected to reach today plus, when that
-outcome is `Refuses`, the defect the expectation pins (the recorder refuses a `Refuses`
-case with no `Defect`). On a failure, read which direction it went:
-- *expected accepts, got refuses* — a regression. Fix the product, not the case.
-- *expected refuses, got accepts* — the product now answers something that was open. Do
-  **not** just flip the case: flip it **and** amend the ADR it names **and** say so in the
-  release notes. A silent flip turns a decision into an accident.
-The `Defect` string cites an ADR and never a ticket — nothing outside `docs/tickets/` may.
+**A test asserts the TARGET behaviour of the software, never the behaviour it has
+today.** This is not a style preference, it is the rule:
+
+- Write what the product is *supposed* to do. If it does not do that yet, the test is
+  **red, and it stays red until the product is fixed**. A red suite is a correct suite.
+- **Committing a red test is allowed and wanted** — before a fix, alongside a bug report,
+  as the record of a defect nobody has got to yet. Do not wait for the fix to land the test.
+- **Never encode the current, broken behaviour as the expectation.** Not with an "expected
+  failure" marker, not with a table of known defects, not with a comment saying "today it
+  answers X". Each of those turns a broken product into a green pipeline, and a green
+  pipeline says "this may be merged" — which is the one thing it must not say while the
+  defect is open.
+- Never `t.Skip` a case to make a suite green either. Skipping and pinning are the same
+  mistake wearing different clothes (ADR 0019).
+
+**This was got wrong once, on 2026-09-13, and it is why the rule is written out here.** The
+rclone and s3cmd suites first shipped with every open defect recorded as an *expected*
+refusal. Both suites were green, the release gate was green, and the pipeline reported that
+a product which cannot upload *or download* a single-request object through two named
+clients was ready to merge. The defects were in a generated table nobody opens when the
+check is green. Tests exist to surface a problem, not to file it.
+
+**How to know what is still broken:** run the suites and read what fails. Each run also
+writes `test-results/e2e-<client>-verdicts.md` with a `Still broken` section, and the CI
+job puts the same list in its step summary — so a red check names the defects without
+anyone opening an artifact or grepping the test tree.
 
 **A change to `test/e2e/harness/` is a change to all three suites.** Compiling and running
 the two client suites proves two of them. The Velero suite has to be run for real before

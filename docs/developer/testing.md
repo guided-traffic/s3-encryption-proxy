@@ -293,17 +293,19 @@ virtual environment at `test/e2e/s3cmd/venv/`, and both then call
 tracked, and `RCLONE_BIN` / `S3CMD_BIN` override the installed binary. Measured
 2026-09-13 against a warm stack: rclone 5.4s, s3cmd 8.3s.
 
-**What a client suite asserts is not the answer we want — it is the answer the
-product gives today.** Each case records the outcome the client is expected to
-reach and, when that outcome is a refusal, the defect the expectation pins. The
-assertion fails in *both* directions: an unexpected refusal is a regression, and
-an unexpected acceptance means the product moved under a decision that is still
-open, and the ADR has to move with it. That is what lets a suite be green while
-the question it documents is unanswered, instead of red or skipped — and both of
-those would be worth nothing (ADR 0019). Each run writes
-`test-results/e2e-<client>-verdicts.md`, one row per case per endpoint with the
-client's own sentence; that table is the evidence behind every claim this
-project makes about these two clients (ADR 0006 D5 and D7).
+**A client suite asserts the behaviour the product is supposed to have, never
+the behaviour it has.** Both suites are red today, and that is them working: 13 of
+28 rclone cases and 10 of 19 s3cmd cases fail on the entity-tag question of
+ADR 0010 D12 and on two routing gaps. They are committed red and stay red until
+the product is fixed. Encoding the current answer as the expectation — which is
+how they first shipped, on 2026-09-13 — makes a broken product report a green
+pipeline, and a green pipeline says "this may be merged".
+
+Each run writes `test-results/e2e-<client>-verdicts.md`, which opens with a
+**Still broken** section: one entry per failing case with what the product is
+supposed to do and the client's own sentence about what it does instead. The CI
+job writes the same list into its step summary, so a red check names the defects
+on the pull request itself.
 
 ## Coverage
 

@@ -14,38 +14,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Outcome is what a client made of a round trip: it either accepted the
-// operation or refused it. "Refused" covers every way a client says no — a
-// non-zero exit, a reported corruption, a hash it will not vouch for.
-type Outcome string
-
-const (
-	// Accepts: the client completed the operation and stood behind the result.
-	Accepts Outcome = "accepts"
-	// Refuses: the client reported the operation as failed or corrupted.
-	Refuses Outcome = "refuses"
-)
-
-// Case is one row of a client's verdict table: what was run, over which
-// endpoint, what the client is expected to make of it today, and — when that
-// expectation is Refuses — the defect that expectation pins.
+// Case is one thing a client is driven to do, and the behaviour the product is
+// supposed to show when it does it.
 //
-// A case whose Expect is Refuses is a defect this product has not answered yet.
-// It is recorded rather than skipped: skipping hides it, asserting the answer we
-// want makes the suite red on a decision that has not been taken, and neither is
-// evidence. When the decision lands, the expectation flips to Accepts and that
-// one-line diff is what the release notes point at.
+// Wants is the TARGET, never the answer the product gives today. A case whose
+// target is not met fails, and it keeps failing until the product is fixed — a
+// red suite is a correct suite, and it is allowed to be committed and to stay
+// red. Encoding the current behaviour as the expectation would make a broken
+// product report a green pipeline, and a green pipeline says "this may be
+// merged", which is the one thing it must not say while the defect is open.
 type Case struct {
 	ID       string
 	Endpoint string
-	What     string
-	Expect   Outcome
-	// Defect names what keeps this case at Refuses, in one line, and cites the
-	// ADR the answer belongs in. Required when Expect is Refuses.
-	Defect string
+	// What the case does, in the user's vocabulary.
+	What string
+	// Wants is the behaviour the product must have, in one line, citing the ADR
+	// the rule belongs to. It is what a reader of a failure is owed.
+	Wants string
 }
 
-// Recorder collects the verdicts of one suite and writes them as a table.
+// Recorder collects what every case observed and writes the table, so a run
+// answers "what is still broken" without anyone reading the test tree.
 type Recorder struct {
 	client string
 	mu     sync.Mutex
@@ -54,60 +43,43 @@ type Recorder struct {
 
 type row struct {
 	Case
-	Got     Outcome
+	Met     bool
 	Message string
 }
 
-// NewRecorder returns the recorder for one client suite. client names the
-// binary ("rclone", "s3cmd") and decides the report's file name.
+// NewRecorder returns the recorder for one client suite.
 func NewRecorder(client string) *Recorder { return &Recorder{client: client} }
 
-// Record asserts that the client made of this case exactly what the case says
-// it makes of it today, and keeps the client's own words for the report.
+// Want records the observation and then requires that the case's target was met.
+// It records BEFORE asserting on purpose: a failing case has to reach the
+// report, which is the list of what is left to fix.
 //
-// It fails in BOTH directions on purpose. An unexpected refusal is a regression.
-// An unexpected acceptance means the product moved under a decision that is
-// still open, and the table and the ADR have to move with it — a
-// silently-passing case would let that happen unnoticed.
-func (r *Recorder) Record(t *testing.T, c Case, got Outcome, message string) {
+// met is the caller's judgement that the product did what Wants says. message is
+// the client's own words, which is what a failure quotes rather than a
+// paraphrase of it.
+func (r *Recorder) Want(t *testing.T, c Case, met bool, message string) {
 	t.Helper()
 	require.NotEmptyf(t, c.ID, "a case needs an id")
-	if c.Expect == Refuses {
-		require.NotEmptyf(t, c.Defect, "case %s expects a refusal and must name the defect it pins", c.ID)
-	}
+	require.NotEmptyf(t, c.Wants, "case %s must say what the product is supposed to do", c.ID)
 
 	r.mu.Lock()
-	r.rows = append(r.rows, row{Case: c, Got: got, Message: oneLine(message)})
+	r.rows = append(r.rows, row{Case: c, Met: met, Message: oneLine(message)})
 	r.mu.Unlock()
 
-	if c.Expect == Refuses {
-		t.Logf("KNOWN DEFECT %s (%s): %s\n  the client says: %s", c.ID, c.Endpoint, c.Defect, oneLine(message))
-	}
-
-	require.Equalf(t, c.Expect, got,
-		"case %s over %s: %s\nexpected the client to %s, it %s.\n%s\nThe client said:\n%s",
-		c.ID, c.Endpoint, c.What, c.Expect, got,
-		expectationHint(c), message)
+	require.Truef(t, met,
+		"%s over %s — %s\n\nthe product is supposed to: %s\n\nthe client said:\n%s",
+		c.ID, c.Endpoint, c.What, c.Wants, message)
 }
 
-func expectationHint(c Case) string {
-	if c.Expect == Refuses {
-		return "This case pins a known defect: " + c.Defect +
-			"\nIf the product now answers it, that is the decision landing: flip this case to Accepts, " +
-			"update the ADR it names, and say so in the release notes."
-	}
-	return "This case asserts behaviour the product is supposed to have. A refusal here is a regression."
-}
-
-// Report writes the verdict table. It is called from TestMain after the run, so
-// the table describes the whole suite and not whichever case finished last.
-func (r *Recorder) Report(dir string) (string, error) {
+// Report writes the verdict table and returns how many cases did not meet their
+// target, so TestMain can say plainly what is still broken.
+func (r *Recorder) Report(dir string) (string, int, error) {
 	r.mu.Lock()
 	rows := append([]row(nil), r.rows...)
 	r.mu.Unlock()
 
 	if len(rows) == 0 {
-		return "", nil
+		return "", 0, nil
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
 		if rows[i].ID != rows[j].ID {
@@ -116,38 +88,84 @@ func (r *Recorder) Report(dir string) (string, error) {
 		return rows[i].Endpoint < rows[j].Endpoint
 	})
 
-	var b strings.Builder
-	fmt.Fprintf(&b, "# %s end-to-end verdicts\n\n", r.client)
-	fmt.Fprintf(&b, "What %s makes of this proxy, one row per case per endpoint, in the client's own words.\n"+
-		"Generated by `make test-e2e-%s`; not committed.\n\n", r.client, r.client)
-	b.WriteString("| Case | Endpoint | What it does | Expected | Observed | The client's words |\n")
-	b.WriteString("|---|---|---|---|---|---|\n")
+	var broken []row
 	for _, x := range rows {
-		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s |\n",
-			x.ID, x.Endpoint, escapePipes(x.What), x.Expect, x.Got, escapePipes(x.Message))
-	}
-
-	var defects []string
-	seen := map[string]bool{}
-	for _, x := range rows {
-		if x.Expect == Refuses && !seen[x.ID+x.Defect] {
-			seen[x.ID+x.Defect] = true
-			defects = append(defects, fmt.Sprintf("- **%s** — %s", x.ID, x.Defect))
+		if !x.Met {
+			broken = append(broken, x)
 		}
 	}
-	if len(defects) > 0 {
-		b.WriteString("\n## Defects these rows pin\n\n")
-		b.WriteString(strings.Join(defects, "\n") + "\n")
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "# %s end-to-end verdicts\n\n", r.client)
+	fmt.Fprintf(&b, "What %s makes of this proxy, one row per case per endpoint, in the client's own\n"+
+		"words. Every row states the behaviour the product is supposed to have; a row that is\n"+
+		"not met is a defect that is still open, never an accepted deviation.\n"+
+		"Generated by `make test-e2e-%s`; not committed.\n\n", r.client, r.client)
+
+	if len(broken) > 0 {
+		fmt.Fprintf(&b, "## Still broken — %d of %d cases\n\n", len(broken), len(rows))
+		for _, x := range broken {
+			fmt.Fprintf(&b, "- **%s** (%s) — %s\n  - supposed to: %s\n  - %s said: %s\n",
+				x.ID, x.Endpoint, x.What, x.Wants, r.client, x.Message)
+		}
+		b.WriteString("\n")
+	} else {
+		fmt.Fprintf(&b, "## All %d cases met their target\n\n", len(rows))
+	}
+
+	b.WriteString("## Every case\n\n")
+	b.WriteString("| Case | Endpoint | What it does | Supposed to | Met | The client's words |\n")
+	b.WriteString("|---|---|---|---|---|---|\n")
+	for _, x := range rows {
+		met := "yes"
+		if !x.Met {
+			met = "**NO**"
+		}
+		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s |\n",
+			x.ID, x.Endpoint, escapePipes(x.What), escapePipes(x.Wants), met, escapePipes(x.Message))
 	}
 
 	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return "", err
+		return "", len(broken), err
 	}
 	path := filepath.Join(dir, "e2e-"+r.client+"-verdicts.md")
 	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
-		return "", err
+		return "", len(broken), err
 	}
-	return path, nil
+	return path, len(broken), nil
+}
+
+// Summary is the short list a continuous-integration step summary carries, so a
+// red check names the defects without anyone opening an artifact.
+func (r *Recorder) Summary() string {
+	r.mu.Lock()
+	rows := append([]row(nil), r.rows...)
+	r.mu.Unlock()
+
+	var broken []row
+	for _, x := range rows {
+		if !x.Met {
+			broken = append(broken, x)
+		}
+	}
+	if len(broken) == 0 {
+		return fmt.Sprintf("### %s end-to-end: all %d cases met their target\n", r.client, len(rows))
+	}
+	sort.SliceStable(broken, func(i, j int) bool {
+		if broken[i].ID != broken[j].ID {
+			return broken[i].ID < broken[j].ID
+		}
+		return broken[i].Endpoint < broken[j].Endpoint
+	})
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "### %s end-to-end: %d of %d cases still broken\n\n", r.client, len(broken), len(rows))
+	b.WriteString("| Case | Endpoint | Supposed to | What it does instead |\n|---|---|---|---|\n")
+	for _, x := range broken {
+		fmt.Fprintf(&b, "| %s | %s | %s | %s |\n",
+			x.ID, x.Endpoint, escapePipes(x.Wants), escapePipes(x.Message))
+	}
+	return b.String()
 }
 
 // oneLine collapses a client's multi-line output to the single line a table can
@@ -166,3 +184,20 @@ func oneLine(s string) string {
 }
 
 func escapePipes(s string) string { return strings.ReplaceAll(s, "|", `\|`) }
+
+// WriteStepSummary appends text to the continuous-integration step summary when
+// one is set, so a red check names the defects on the pull request itself
+// instead of only in an artifact. A no-op outside CI.
+func WriteStepSummary(text string) {
+	path := os.Getenv("GITHUB_STEP_SUMMARY")
+	if path == "" {
+		return
+	}
+	// #nosec G703 -- the path is the runner's own GITHUB_STEP_SUMMARY, not input
+	fh, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o600)
+	if err != nil {
+		return
+	}
+	defer func() { _ = fh.Close() }()
+	_, _ = fmt.Fprintf(fh, "%s\n", text)
+}

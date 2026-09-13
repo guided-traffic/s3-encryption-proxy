@@ -32,11 +32,23 @@ var verdicts = harness.NewRecorder("rclone")
 
 func TestMain(m *testing.M) {
 	code := m.Run()
-	if path, err := verdicts.Report(reportDir()); err != nil {
+
+	path, broken, err := verdicts.Report(reportDir())
+	switch {
+	case err != nil:
 		fmt.Fprintf(os.Stderr, "could not write the verdict table: %v\n", err)
-	} else if path != "" {
+	case path != "":
 		fmt.Fprintf(os.Stderr, "\nverdict table: %s\n", path)
 	}
+	if broken > 0 {
+		// The list, on stderr, where a failing run already is. A defect this
+		// suite found must not need an artifact to be read.
+		fmt.Fprintf(os.Stderr, "\n%s\n", verdicts.Summary())
+	}
+	// And into the continuous-integration step summary, so a red check names
+	// the defects on the pull request itself.
+	harness.WriteStepSummary(verdicts.Summary())
+
 	os.Exit(code)
 }
 
@@ -223,15 +235,6 @@ func pickVerdictLine(r harness.Result) string {
 		}
 	}
 	return r.Combined
-}
-
-// outcome maps an exit code to what the client made of the operation. rclone
-// exits non-zero on any error it reported, and a checksum refusal is one.
-func outcome(r harness.Result) harness.Outcome {
-	if r.OK() {
-		return harness.Accepts
-	}
-	return harness.Refuses
 }
 
 func rcloneBin(t *testing.T) string {

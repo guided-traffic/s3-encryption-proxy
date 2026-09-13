@@ -4,6 +4,7 @@ package rclone
 
 import (
 	"fmt"
+	"regexp"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -13,12 +14,9 @@ import (
 
 const (
 	// singlePartSize stays far below optimizations.streaming_segment_size, so
-	// the object is written by the single-request PUT path and the backend
-	// answers a bare 32-hex entity tag — the one shape S3 reserves for a content
-	// digest.
+	// the object is written by the single-request PUT path.
 	singlePartSize = 1 << 20 // 1 MiB
-	// multiPartSize with a 5 MiB chunk is three parts, so the completion answers
-	// the <hex>-N shape instead.
+	// multiPartSize with a 5 MiB chunk is three parts.
 	multiPartSize = 12 << 20 // 12 MiB
 )
 
@@ -26,17 +24,13 @@ const (
 // far above multiPartSize, so without these the case would silently be R1 again.
 var multipartFlags = []string{"--s3-upload-cutoff", "5M", "--s3-chunk-size", "5M"}
 
-// etagIsCiphertextDigest is what R1 and R4/R5's single-part rows pin. The
-// wording stays on the product's side of the boundary: what the client does is
-// the observation, this is the cause.
-const etagIsCiphertextDigest = "the entity tag of a single-request PUT is the backend's MD5 of the STORED bytes " +
-	"in the exact shape S3 reserves for a content digest, so a client that verifies its upload compares it with " +
-	"the digest of its plaintext and they never agree (ADR 0010 D12 leaves this open; ADR 0012's residual risk " +
-	"that no examined client verifies the entity tag is refuted by this case)"
+// contentDigestShape is the one entity-tag shape S3 reserves for a digest of the
+// object's content: 32 lower-case hex digits and nothing else. Every client that
+// verifies an upload keys off it.
+var contentDigestShape = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
-// TestR1_SinglePartUpload is the single-part verdict: what a user gets
-// from `rclone copy` with a remote configured the documented way and no flag at
-// all.
+// TestR1_SinglePartUpload: a user copies a file up with a remote configured the
+// documented way and no flags. It has to work.
 func TestR1_SinglePartUpload(t *testing.T) {
 	ctx := preflight(t)
 
@@ -47,71 +41,66 @@ func TestR1_SinglePartUpload(t *testing.T) {
 
 			r := s.run(t, ctx, "copy", src, s.remotePath(remotes[0], ep, "r1")+"/")
 
-			verdicts.Record(t, harness.Case{
+			verdicts.Want(t, harness.Case{
 				ID:       "R1",
 				Endpoint: ep.name,
 				What:     "copy a 1 MiB file up, remote with provider defaults, no flags",
-				Expect:   harness.Refuses,
-				Defect:   etagIsCiphertextDigest,
-			}, outcome(r), s.says(r))
+				Wants: "accept the upload. rclone compares the entity tag with the MD5 of the file it sent, " +
+					"so the tag a single-request PUT answers must not be a digest of the STORED bytes in the " +
+					"shape S3 reserves for a content digest (ADR 0010 D12)",
+			}, r.OK(), s.says(r))
 
-			// Not just "it failed": it failed for the reason this case is about,
-			// and it took the object with it. A refusal for any other reason is a
-			// different defect wearing this one's clothes.
-			require.Contains(t, r.Combined, "corrupted on transfer: md5 hashes differ",
-				"rclone refused the upload, but not over the entity tag")
-			require.Contains(t, r.Combined, "Removing failed copy",
-				"rclone did not remove the object it had just uploaded")
-
-			require.Empty(t, harness.ListStored(t, ctx, harness.BackendClient(t), s.bucket, "r1/"),
-				"rclone reported the transfer as corrupted and still left an object behind")
+			stored := harness.ListStored(t, ctx, harness.BackendClient(t), s.bucket, "r1/")
+			require.Len(t, stored, 1, "the upload reported success but stored nothing")
+			require.Equal(t, harness.SHA256File(t, src),
+				harness.SHA256Bytes(harness.ReadViaProxy(t, ctx, s.bucket, "r1/one-part.bin")),
+				"what was stored is not what rclone sent")
 		})
 	}
 }
 
-// TestR1b_SinglePartETagIsNotStable is the half of the single-part finding that
-// no probe recorded: the entity tag of one unchanged file is a different value
-// on every upload, because the data key is fresh per object (ADR 0002). A client
-// that uses the entity tag to decide whether something changed — which is what
-// the shape invites — sees every object as changed, every time.
-func TestR1b_SinglePartETagIsNotStable(t *testing.T) {
+// TestR1b_EntityTagIsNotAContentDigest: the data key is fresh per object
+// (ADR 0002), so the entity tag of a single-request PUT cannot be a stable
+// digest of the content — it changes on every upload of identical bytes. It must
+// therefore not be answered in the shape that promises one.
+func TestR1b_EntityTagIsNotAContentDigest(t *testing.T) {
 	ctx := preflight(t)
-	ep := endpoints(t)[1] // TLS: the path a modern client actually takes
+	ep := endpoints(t)[1] // TLS: the path a modern client takes
 
 	s := newSuite(t, ctx, "r1b")
 	src := harness.WriteRandomFile(t, s.work, "one-part.bin", singlePartSize)
 
 	seen := map[string]bool{}
+	var tags []string
 	const uploads = 3
 	for i := 0; i < uploads; i++ {
-		// A distinct key each time: rclone skips a destination whose size and
-		// modification time already match, so re-copying to one key would upload
-		// once and compare one entity tag with itself.
 		key := fmt.Sprintf("r1b/upload-%d.bin", i)
-		// --ignore-checksum: rclone cannot write a single-part object through
-		// this proxy at all (R1), and the point here is the value, not the verdict.
+		// --ignore-checksum only so this case measures the VALUE; whether the
+		// upload is accepted at all is R1's assertion, not this one's.
 		r := s.run(t, ctx, "--ignore-checksum", "copyto", src, s.remotePath(remotes[0], ep, key))
 		require.Truef(t, r.OK(), "the upload itself failed:\n%s", r.Combined)
-		seen[harness.ProxyETag(t, ctx, s.bucket, key)] = true
+		tag := harness.ProxyETag(t, ctx, s.bucket, key)
+		seen[tag] = true
+		tags = append(tags, tag)
 	}
 
+	// The premise: a fresh data key per object means the tag is not stable.
 	require.Lenf(t, seen, uploads,
-		"the entity tag repeated across %d uploads of identical bytes; the suite assumed a fresh data key per object", uploads)
-	require.NotContainsf(t, seen, harness.MD5File(t, src),
-		"the entity tag equalled the plaintext MD5, which would mean the object was not encrypted")
+		"the entity tag repeated across %d uploads of identical bytes; this case assumed a fresh data key per object", uploads)
 
-	verdicts.Record(t, harness.Case{
+	shaped := contentDigestShape.MatchString(tags[0])
+	verdicts.Want(t, harness.Case{
 		ID:       "R1b",
 		Endpoint: ep.name,
-		What:     "upload identical bytes three times, compare the entity tag each time",
-		Expect:   harness.Refuses,
-		Defect: "the entity tag of a single-request PUT changes on every upload of unchanged bytes, because the " +
-			"data key is fresh per object (ADR 0002), while its shape promises a content digest (ADR 0010 D12)",
-	}, harness.Refuses, "three uploads of one unchanged file produced three different entity tags")
+		What:     "upload identical bytes three times and look at the entity tag",
+		Wants: "answer an entity tag that is NOT 32 bare hex digits. That shape promises a digest of the " +
+			"content, and this value changes on every upload of unchanged bytes because the data key is " +
+			"fresh per object (ADR 0002, ADR 0010 D12)",
+	}, !shaped, "three uploads of one unchanged file produced three different tags, all shaped like a content digest: "+tags[0])
 }
 
-// TestR2_MultipartUpload is the multipart verdict, per provider
-// default, and whether rclone's own setting is the answer.
+// TestR2_MultipartUpload: the same file uploaded in parts has to work too, and
+// with the provider a user of this backend would actually configure.
 func TestR2_MultipartUpload(t *testing.T) {
 	ctx := preflight(t)
 
@@ -119,29 +108,27 @@ func TestR2_MultipartUpload(t *testing.T) {
 		id     string
 		remote remote
 		what   string
-		expect harness.Outcome
-		defect string
+		wants  string
 	}{
 		{
 			id:     "R2a",
 			remote: remotes[0], // provider = Minio, defaults
 			what:   "copy a 12 MiB file up in 5 MiB parts, provider = Minio defaults",
-			expect: harness.Refuses,
-			defect: "under a provider whose default verifies it, the entity tag of a completed multipart upload is " +
-				"the backend's formula over the SEALED parts, and the client computes the same formula over its " +
-				"plaintext parts; the part count agrees and the digest cannot (ADR 0010 D12)",
+			wants: "accept the upload. rclone computes S3's multipart formula over its plaintext parts and " +
+				"compares it with what CompleteMultipartUpload answered, which the backend computed over the " +
+				"SEALED parts (ADR 0010 D12)",
 		},
 		{
 			id:     "R2b",
 			remote: remotes[1], // provider = Other, defaults
 			what:   "copy a 12 MiB file up in 5 MiB parts, provider = Other defaults",
-			expect: harness.Accepts,
+			wants:  "accept the upload",
 		},
 		{
 			id:     "R2c",
 			remote: remotes[2], // provider = Minio, use_multipart_etag = false
 			what:   "copy a 12 MiB file up in 5 MiB parts, provider = Minio with use_multipart_etag = false",
-			expect: harness.Accepts,
+			wants:  "accept the upload",
 		},
 	}
 
@@ -154,25 +141,12 @@ func TestR2_MultipartUpload(t *testing.T) {
 				args := append([]string{"copy", src, s.remotePath(c.remote, ep, c.id) + "/"}, multipartFlags...)
 				r := s.run(t, ctx, args...)
 
-				verdicts.Record(t, harness.Case{
-					ID: c.id, Endpoint: ep.name, What: c.what, Expect: c.expect, Defect: c.defect,
-				}, outcome(r), s.says(r))
+				verdicts.Want(t, harness.Case{
+					ID: c.id, Endpoint: ep.name, What: c.what, Wants: c.wants,
+				}, r.OK(), s.says(r))
 
-				if c.expect == harness.Refuses {
-					require.Contains(t, r.Combined, "multipart upload corrupted: Etag differ",
-						"rclone refused the upload, but not over the entity tag")
-					// Unlike the single-part case the object stays. That is what
-					// lets a retry report success over an upload whose entity tag
-					// never matched, which is why every case here runs --retries 1.
-					require.NotEmpty(t, harness.ListStored(t, ctx, harness.BackendClient(t), s.bucket, c.id+"/"),
-						"the suite assumed a refused multipart upload leaves its object behind")
-					return
-				}
-
-				// An accepted upload has to be a correct one. Byte equality is
-				// asserted through the proxy in R3; here it is enough that the
-				// object exists, is stored encrypted, and is the size it should be.
-				stored := harness.AssertEncryptedAtRest(t, ctx, harness.BackendClient(t), s.bucket, c.id+"/", storedFormat(t))
+				stored := harness.AssertEncryptedAtRest(t, ctx, harness.BackendClient(t),
+					s.bucket, c.id+"/", storedFormat(t))
 				require.Len(t, stored, 1)
 			})
 		}

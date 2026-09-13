@@ -64,10 +64,10 @@ func TestR6_Lifecycle(t *testing.T) {
 			"rclone purge left the bucket behind; it removes the bucket as well as its contents")
 	})
 
-	verdicts.Record(t, harness.Case{
+	verdicts.Want(t, harness.Case{
 		ID:       "R6",
 		Endpoint: ep.name,
 		What:     "mkdir, copy, delete, purge — the lifecycle a user drives",
-		Expect:   harness.Accepts,
-	}, harness.Accepts, "every lifecycle verb was accepted")
+		Wants:    "accept every lifecycle verb rclone issues",
+	}, true, "every lifecycle verb was accepted")
 }

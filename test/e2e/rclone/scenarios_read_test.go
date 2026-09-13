@@ -15,11 +15,15 @@ import (
 )
 
 // corpus is the pair of objects the read cases need: one written by a single
-// request, one written in parts. Both have to be placed in spite of R1 and R2a,
-// so each uses the narrowest escape its own case identified — --ignore-checksum
-// for the single-part object, use_multipart_etag = false for the other. Using
-// the narrowest escape is deliberate: a corpus placed with a blanket
-// --ignore-checksum would hide which of the two defects is which.
+// request, one written in parts.
+//
+// Placing them needs escape flags today — --ignore-checksum for the single-part
+// object, use_multipart_etag = false for the other — because the write defects
+// R1 and R2a are open. That is setup working around a defect, not an assertion
+// about it: the read cases have to be able to run and fail on their own reasons
+// while the write side is broken. **When R1 and R2a pass, these flags come out**,
+// and the narrowest one is used for each so a blanket --ignore-checksum cannot
+// hide which defect is which.
 //
 // Each object sits alone in a directory on both sides, because rclone's own
 // comparison verbs (check, sync) take directories, not files.
@@ -59,19 +63,9 @@ func seedCorpus(t *testing.T, ctx context.Context, s *suite, ep endpoint) corpus
 	return c
 }
 
-// TestR3_Download is the read side, and it is where this suite parts company
-// with what was believed before it existed.
-//
-// rclone verifies a download the same way it verifies an upload: against the
-// entity tag. For the multipart object that tag carries a hyphen, rclone knows
-// not to read it as a digest, and the download succeeds. For the single-request
-// object it is a bare 32-hex value, rclone compares it with the MD5 of the bytes
-// it just wrote to disk, calls the transfer corrupted and DELETES the partial
-// file it had already written.
-//
-// So the defect is not confined to the upload leg: with a remote configured the
-// documented way, an object written through this proxy cannot be fetched back by
-// rclone at all.
+// TestR3_Download is the read side: what a user pulls back has to be, byte for
+// byte, what went in — for an object written by one request as much as for one
+// written in parts.
 func TestR3_Download(t *testing.T) {
 	ctx := preflight(t)
 
@@ -80,71 +74,47 @@ func TestR3_Download(t *testing.T) {
 			s := newSuite(t, ctx, "r3-"+ep.name)
 			c := seedCorpus(t, ctx, s, ep)
 
-			t.Run("multipart_object_comes_back_byte_identical", func(t *testing.T) {
+			t.Run("multipart_object", func(t *testing.T) {
 				out := filepath.Join(s.work, "down", multiName)
 				r := s.run(t, ctx, "copyto", s.remotePath(remotes[0], ep, c.multiKey), out)
-				require.Truef(t, r.OK(), "the download was refused:\n%s", r.Combined)
-				require.Equal(t, harness.SHA256File(t, c.multiSrc), harness.SHA256File(t, out),
-					"what came back is not what went in")
 
-				verdicts.Record(t, harness.Case{
+				verdicts.Want(t, harness.Case{
 					ID:       "R3a",
 					Endpoint: ep.name,
-					What:     "copy a multipart object down, SHA-256 against the source",
-					Expect:   harness.Accepts,
-				}, harness.Accepts, "the object round-tripped byte-identical")
+					What:     "copy a multipart object down",
+					Wants:    "serve the object and let the client verify it",
+				}, r.OK(), s.says(r))
+
+				require.Equal(t, harness.SHA256File(t, c.multiSrc), harness.SHA256File(t, out),
+					"what came back is not what went in")
 			})
 
-			t.Run("single_part_object_cannot_be_downloaded", func(t *testing.T) {
+			t.Run("single_part_object", func(t *testing.T) {
 				out := filepath.Join(s.work, "down", singleName)
 				r := s.run(t, ctx, "copyto", s.remotePath(remotes[0], ep, c.singleKey), out)
 
-				verdicts.Record(t, harness.Case{
+				verdicts.Want(t, harness.Case{
 					ID:       "R3b",
 					Endpoint: ep.name,
 					What:     "copy a single-part object down",
-					Expect:   harness.Refuses,
-					Defect: "rclone verifies a download against the entity tag too, so the bare 32-hex tag of a " +
-						"single-request object makes it call an intact transfer corrupted and delete the file it " +
-						"had written; with a remote configured the documented way such an object cannot be " +
-						"fetched back at all (ADR 0010 D12)",
-				}, outcome(r), s.says(r))
+					Wants: "serve the object and let the client verify it. rclone verifies a download against " +
+						"the entity tag the same way it verifies an upload, so a tag shaped like a content " +
+						"digest makes it call an intact transfer corrupted and delete the file it wrote — with " +
+						"a remote configured the documented way such an object is unreachable in both " +
+						"directions (ADR 0010 D12)",
+				}, r.OK(), s.says(r))
 
-				require.Contains(t, r.Combined, "corrupted on transfer: md5 hashes differ",
-					"the download was refused, but not over the entity tag")
-				require.NoFileExists(t, out,
-					"rclone kept the file it called corrupted; the suite assumed it removes it")
-
-				// The bytes are whole. Only rclone's comparison is wrong, and the
-				// proof has to come from somewhere that does not use rclone.
-				require.Equal(t, harness.SHA256File(t, c.singleSrc),
-					harness.SHA256Bytes(harness.ReadViaProxy(t, ctx, s.bucket, c.singleKey)),
-					"the object rclone calls corrupted really is corrupt, which is a different defect")
-			})
-
-			t.Run("the_escape_works_and_what_it_costs", func(t *testing.T) {
-				// --ignore-checksum is the only flag that gets the object down.
-				// It is global: from then on rclone verifies nothing at all, on
-				// any transfer in that invocation, including against real
-				// corruption. That is the cost the README would have to state.
-				out := filepath.Join(s.work, "down-forced", singleName)
-				r := s.run(t, ctx, "--ignore-checksum", "copyto",
-					s.remotePath(remotes[0], ep, c.singleKey), out)
-				require.Truef(t, r.OK(), "even --ignore-checksum did not get the object down:\n%s", r.Combined)
-				require.Equal(t, harness.SHA256File(t, c.singleSrc), harness.SHA256File(t, out))
+				require.Equal(t, harness.SHA256File(t, c.singleSrc), harness.SHA256File(t, out),
+					"what came back is not what went in")
 			})
 		})
 	}
 }
 
-// TestR5_ReportedHashes asks which digest rclone reports for an
-// object, and where it got it.
-//
-// The two objects answer differently, and that is the finding. rclone writes its
-// own X-Amz-Meta-Md5chksum on a multipart upload and reads it back, so a
-// multipart object reports the plaintext MD5. It writes no such header for a
-// single-request upload, so there it falls back to the entity tag — and reports
-// the MD5 of bytes the user has never held, as though it were the file's.
+// TestR5_ReportedHashes: whatever digest rclone reports for an object has to be
+// the digest of that object's content. Reporting a different value as the
+// object's md5 is worse than reporting none: a user who compares it concludes
+// their data is corrupt.
 func TestR5_ReportedHashes(t *testing.T) {
 	ctx := preflight(t)
 
@@ -153,36 +123,29 @@ func TestR5_ReportedHashes(t *testing.T) {
 			s := newSuite(t, ctx, "r5-"+ep.name)
 			c := seedCorpus(t, ctx, s, ep)
 
-			t.Run("multipart_object_reports_the_plaintext_md5", func(t *testing.T) {
+			t.Run("multipart_object", func(t *testing.T) {
 				got := hashsum(t, ctx, s, ep, c.multiKey)
-				require.Equal(t, harness.MD5File(t, c.multiSrc), got,
-					"rclone did not report the plaintext MD5 for the multipart object")
-
-				verdicts.Record(t, harness.Case{
+				want := harness.MD5File(t, c.multiSrc)
+				verdicts.Want(t, harness.Case{
 					ID:       "R5a",
 					Endpoint: ep.name,
 					What:     "hashsum md5 of a multipart object",
-					Expect:   harness.Accepts,
-				}, harness.Accepts, "rclone reported the plaintext MD5, read back from X-Amz-Meta-Md5chksum")
+					Wants:    "report the plaintext MD5, or no hash at all — never a different value",
+				}, got == "" || got == want, "rclone reported "+got+"; the file's md5 is "+want)
 			})
 
-			t.Run("single_part_object_reports_the_ciphertext_digest", func(t *testing.T) {
+			t.Run("single_part_object", func(t *testing.T) {
 				got := hashsum(t, ctx, s, ep, c.singleKey)
 				want := harness.MD5File(t, c.singleSrc)
-				require.NotEqualf(t, want, got,
-					"rclone reported the plaintext MD5 for a single-part object; the suite assumed it cannot")
-				require.Equalf(t, harness.ProxyETag(t, ctx, s.bucket, c.singleKey), got,
-					"rclone reported %q, which is neither the plaintext MD5 nor the entity tag", got)
-
-				verdicts.Record(t, harness.Case{
+				verdicts.Want(t, harness.Case{
 					ID:       "R5b",
 					Endpoint: ep.name,
 					What:     "hashsum md5 of a single-part object",
-					Expect:   harness.Refuses,
-					Defect: "rclone writes X-Amz-Meta-Md5chksum only on a multipart upload, so for a " +
-						"single-request object it falls back to the entity tag and reports the MD5 of the STORED " +
-						"bytes as the object's md5 — a wrong answer rather than no answer (ADR 0010 D12)",
-				}, harness.Refuses, "rclone reported the entity tag "+got+" as the object's md5; the file's is "+want)
+					Wants: "report the plaintext MD5, or no hash at all. rclone writes X-Amz-Meta-Md5chksum " +
+						"only on a multipart upload, so for a single-request object it falls back to the entity " +
+						"tag and reports the MD5 of the STORED bytes as the object's md5 — a wrong answer " +
+						"rather than no answer (ADR 0010 D12)",
+				}, got == "" || got == want, "rclone reported "+got+"; the file's md5 is "+want)
 			})
 
 			t.Run("lsjson_carries_the_same_hash_and_the_proxy_metadata_is_not_visible", func(t *testing.T) {

@@ -31,11 +31,23 @@ var verdicts = harness.NewRecorder("s3cmd")
 
 func TestMain(m *testing.M) {
 	code := m.Run()
-	if path, err := verdicts.Report(reportDir()); err != nil {
+
+	path, broken, err := verdicts.Report(reportDir())
+	switch {
+	case err != nil:
 		fmt.Fprintf(os.Stderr, "could not write the verdict table: %v\n", err)
-	} else if path != "" {
+	case path != "":
 		fmt.Fprintf(os.Stderr, "\nverdict table: %s\n", path)
 	}
+	if broken > 0 {
+		// The list, on stderr, where a failing run already is. A defect this
+		// suite found must not need an artifact to be read.
+		fmt.Fprintf(os.Stderr, "\n%s\n", verdicts.Summary())
+	}
+	// And into the continuous-integration step summary, so a red check names
+	// the defects on the pull request itself.
+	harness.WriteStepSummary(verdicts.Summary())
+
 	os.Exit(code)
 }
 
@@ -90,6 +102,8 @@ func endpoints(t *testing.T) []endpoint {
 		{name: "tls", host: stripScheme(e.Get(t, "S3EP_TLS_ENDPOINT")), https: true},
 	}
 }
+
+func containsStr(haystack, needle string) bool { return strings.Contains(haystack, needle) }
 
 func stripScheme(url string) string {
 	url = strings.TrimPrefix(url, "https://")
@@ -202,18 +216,6 @@ func pickVerdictLine(r harness.Result) string {
 		}
 	}
 	return r.Combined
-}
-
-// outcome maps an exit code to what the client made of the operation.
-//
-// s3cmd's transfer commands do not stop on the first failure: a refused upload
-// is EX_PARTIAL (2), not a general error, and the run continues. That is the
-// code a refusal produces here; --stop-on-error would make it EX_DATAERR (65).
-func outcome(r harness.Result) harness.Outcome {
-	if r.OK() {
-		return harness.Accepts
-	}
-	return harness.Refuses
 }
 
 func s3cmdBin(t *testing.T) string {
