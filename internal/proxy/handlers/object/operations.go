@@ -288,6 +288,7 @@ func (h *Handler) writeGetObjectResponse(w http.ResponseWriter, output *s3.GetOb
 		w.Header().Set("x-amz-checksum-crc32c", checksum)
 	}
 	writeVersionHeaders(w, output.VersionId, nil)
+	WriteSSEHeaders(w, output.ServerSideEncryption, output.SSEKMSKeyId)
 	writeEntityHeaders(w, storedEntityHeaders{
 		ContentEncoding:    output.ContentEncoding,
 		ContentDisposition: output.ContentDisposition,
@@ -478,6 +479,7 @@ func (h *Handler) putObjectSegmented(
 
 	w.Header().Set("ETag", aws.ToString(putOutput.ETag))
 	writeVersionHeaders(w, putOutput.VersionId, nil)
+	WriteSSEHeaders(w, putOutput.ServerSideEncryption, putOutput.SSEKMSKeyId)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -534,7 +536,7 @@ func (h *Handler) handleHeadObject(w http.ResponseWriter, r *http.Request, bucke
 				ContentLanguage:    tail.output.ContentLanguage,
 				CacheControl:       tail.output.CacheControl,
 				Expires:            tail.output.ExpiresString,
-			}, tail.output.Metadata)
+			}, tail.output.ServerSideEncryption, tail.output.SSEKMSKeyId, tail.output.Metadata)
 		return
 	}
 
@@ -585,7 +587,7 @@ func (h *Handler) handleHeadObject(w http.ResponseWriter, r *http.Request, bucke
 			ContentLanguage:    output.ContentLanguage,
 			CacheControl:       output.CacheControl,
 			Expires:            output.ExpiresString,
-		}, output.Metadata)
+		}, output.ServerSideEncryption, output.SSEKMSKeyId, output.Metadata)
 }
 
 // writeHeadResponse emits the headers of a HEAD answer. HEAD is documented to
@@ -595,7 +597,8 @@ func (h *Handler) handleHeadObject(w http.ResponseWriter, r *http.Request, bucke
 func (h *Handler) writeHeadResponse(
 	w http.ResponseWriter, contentType, etag *string, lastModified *time.Time,
 	contentLength *int64, checksum string, versionID *string,
-	entity storedEntityHeaders, metadata map[string]string,
+	entity storedEntityHeaders, sseAlgorithm types.ServerSideEncryption, sseKMSKeyID *string,
+	metadata map[string]string,
 ) {
 	if contentType != nil {
 		w.Header().Set("Content-Type", *contentType)
@@ -615,6 +618,7 @@ func (h *Handler) writeHeadResponse(
 		w.Header().Set("x-amz-checksum-crc32c", checksum)
 	}
 	writeVersionHeaders(w, versionID, nil)
+	WriteSSEHeaders(w, sseAlgorithm, sseKMSKeyID)
 	writeEntityHeaders(w, entity)
 
 	// The proxy's own namespace never leaves the proxy.

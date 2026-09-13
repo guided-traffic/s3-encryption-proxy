@@ -294,12 +294,7 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	if finalVersionID != "" {
 		w.Header().Set("x-amz-version-id", finalVersionID)
 	}
-	if result.ServerSideEncryption != "" {
-		w.Header().Set("x-amz-server-side-encryption", string(result.ServerSideEncryption))
-	}
-	if result.SSEKMSKeyId != nil {
-		w.Header().Set("x-amz-server-side-encryption-aws-kms-key-id", *result.SSEKMSKeyId)
-	}
+	object.WriteSSEHeaders(w, result.ServerSideEncryption, result.SSEKMSKeyId)
 
 	writeXMLDocument(w, h.logger, completeMultipartUploadResult{
 		Location: completionLocation(r),

@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 // objectVersionID returns the versionId query parameter of an object request.
@@ -32,6 +33,23 @@ func writeVersionHeaders(w http.ResponseWriter, versionID *string, deleteMarker 
 	}
 	if aws.ToBool(deleteMarker) {
 		w.Header().Set("x-amz-delete-marker", "true")
+	}
+}
+
+// WriteSSEHeaders restates what the backend reported about its own encryption of
+// the stored object. The client asked for it — the proxy forwards
+// x-amz-server-side-encryption and its KMS key id on every write path — and
+// without this proxy in the path S3 would answer it directly.
+//
+// It is restated, never proxied: a header describing the backend service passes
+// through, a header describing the stored bytes does not, because the stored
+// bytes are ciphertext and the client receives plaintext (ADR 0008 D1).
+func WriteSSEHeaders(w http.ResponseWriter, algorithm types.ServerSideEncryption, kmsKeyID *string) {
+	if algorithm != "" {
+		w.Header().Set("x-amz-server-side-encryption", string(algorithm))
+	}
+	if v := aws.ToString(kmsKeyID); v != "" {
+		w.Header().Set("x-amz-server-side-encryption-aws-kms-key-id", v)
 	}
 }
 

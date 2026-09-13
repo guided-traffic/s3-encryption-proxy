@@ -63,17 +63,16 @@ the bucket listing and the two multipart listings name the requesting client as 
 Whether an access-control document can be brought under the rule at all — the proxy has no
 truthful substitute for a grantee it did not grant — is undecided.
 
-**Amended 2026-09-13: D13 added, and none of its work is built.** A documentation audit read
+**Amended 2026-09-13: D13 added, and it landed the same day.** A documentation audit read
 D1 as forbidding the restatement of *any* single backend value and filed the server-side-encryption
 confirmation on a completed multipart upload as a violation of it. It is not one — D1 forbids
 handing the backend's response object through as a whole, not restating one typed value — and the
 misreading cost a round of work, which is the evidence that the rule as written did not carry its
-own boundary. D13 writes that boundary in. Decided 2026-09-12 with the owner, recorded 2026-09-13;
-**as of 2026-09-13 none of its work is built**: the confirmation reaches the client on the
-completed-multipart path alone. A single-request upload forwards the client's server-side-encryption
-request headers to the backend and then drops the backend's answer to them; a whole-object read and
-a metadata request carry no such request header at all, and the backend's confirmation is dropped
-there too.
+own boundary. D13 writes that boundary in. Decided 2026-09-12 with the owner, recorded and built
+2026-09-13: the confirmation now reaches the client on all four paths D13 names — a single-request
+upload, a completed multipart upload, a whole-object read and a metadata request — from one writer
+they all call, so a fifth path cannot be added that quietly drops it. A ranged read and a client
+part upload stay silent, deliberately, and stay named under Residual risks.
 
 ## Context
 

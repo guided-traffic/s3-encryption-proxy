@@ -14,6 +14,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -495,4 +496,36 @@ func TestObjMiscCopyWithPooledBufferPropagatesWriteErrors(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, int64(10), n)
 	assert.Len(t, w.got, 10)
+}
+
+// ---------------------------------------------------------------------------
+// WriteSSEHeaders.
+// ---------------------------------------------------------------------------
+
+// The server-side-encryption confirmation describes the backend service, not the
+// bytes the client receives, so it is restated rather than recomputed - and it is
+// restated on every object path that has one (ADR 0008 D13). An absent value must
+// not turn into an empty header: a client reading x-amz-server-side-encryption: ""
+// is told the backend answered something it did not.
+func TestObjMiscWriteSSEHeaders(t *testing.T) {
+	t.Run("both set", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		WriteSSEHeaders(rr, types.ServerSideEncryptionAwsKms, aws.String("arn:aws:kms:eu-central-1:1:key/abc"))
+		assert.Equal(t, "aws:kms", rr.Header().Get("x-amz-server-side-encryption"))
+		assert.Equal(t, "arn:aws:kms:eu-central-1:1:key/abc",
+			rr.Header().Get("x-amz-server-side-encryption-aws-kms-key-id"))
+	})
+
+	t.Run("algorithm without a key id", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		WriteSSEHeaders(rr, types.ServerSideEncryptionAes256, nil)
+		assert.Equal(t, "AES256", rr.Header().Get("x-amz-server-side-encryption"))
+		assert.Empty(t, rr.Header().Values("x-amz-server-side-encryption-aws-kms-key-id"))
+	})
+
+	t.Run("a backend that encrypts nothing writes nothing", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		WriteSSEHeaders(rr, "", aws.String(""))
+		assert.Empty(t, rr.Header())
+	})
 }
