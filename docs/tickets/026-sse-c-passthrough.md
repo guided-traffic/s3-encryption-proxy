@@ -2,7 +2,7 @@
 
 ## Status (2026-09-11)
 
-**Open, after [013](013-storage-format-v2.md), and additive from here on.** The
+**Open, after [013](archive/013-storage-format-v2.md), and additive from here on.** The
 refusal D-35 depends on shipped on 2026-09-11: the three customer-key headers are
 answered `501 NotImplemented` naming the header, in a middleware in front of
 every S3 route, and the storage-header forwarding helper this ticket extends is

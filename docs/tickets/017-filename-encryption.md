@@ -5,7 +5,7 @@
 **Open, blocked.** This ticket carries the "Filename encryption" decision of the
 Velero path review (item 6 in its order of work; see the
 [label index](README.md#label-index)). It **must not start before storage format v2**
-([ticket 013](013-storage-format-v2.md)) has landed, and it should follow the
+([ticket 013](archive/013-storage-format-v2.md)) has landed, and it should follow the
 `ListObjectsV2` rewrite that D-11 schedules after v2
 ([ticket 018](018-listobjectsv2-document.md)), because that ticket is
 what makes `start-after`, `encoding-type` and a real `ListBucketResult`

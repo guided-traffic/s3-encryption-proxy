@@ -42,7 +42,7 @@ The local baseline suite exists and has run.
   (ADR 0020 D13).
 
 The **pre-v2 baseline is recorded** under `perf-baseline/`. It is the "before" column
-that [013](013-storage-format-v2.md) is judged against, and re-running the same command
+that [013](archive/013-storage-format-v2.md) is judged against, and re-running the same command
 on the post-change commit is the "after".
 
 ## Open — leftovers of the cancelled gate

@@ -91,7 +91,7 @@ scripts/
 docs/
   adr/                   every decision, permanent, with no references into the code
   developer/             the pages above
-  tickets/               work lists, deleted when the work lands
+  tickets/               work lists; archive/ holds the finished ones
 ```
 
 File-level detail is [package-map.md](docs/developer/package-map.md).
@@ -354,12 +354,14 @@ waits on a check that never reports.
   codes) is not a code reference and must be exact.
 - **A ticket is a work list and nothing else.** It lives in
   [docs/tickets/](docs/tickets/) while work is outstanding and is closed by
-  **deleting the file**. Move anything durable out of it first: the decision into
-  an ADR, the user-facing consequence into `README.md` or
-  `SECURITY_ARCHITECTURE.md`.
+  **moving the file to [docs/tickets/archive/](docs/tickets/archive/)**. Move
+  anything durable out of it first: the decision into an ADR, the user-facing
+  consequence into `README.md` or `SECURITY_ARCHITECTURE.md`. The extraction is
+  the close; an archived file is history, never a source of a current rule.
 - **Nothing outside `docs/tickets/` may reference a ticket** — not a code
   comment, not a commit message, not a pull request. Cite the ADR instead. `git
-  grep` the number before deleting a ticket.
+  grep` the number before archiving a ticket; an archived ticket is as uncitable
+  as a deleted one.
 - **English everywhere**: code, comments, documentation, commit messages.
 - **Never reflect a raw error string into a response body.** The client-facing
   wording per S3 error code is fixed; see [errors.md](docs/developer/errors.md).

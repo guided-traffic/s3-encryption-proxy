@@ -15,7 +15,7 @@ made it; where the tree and an ADR disagree, that is written down as the finding
 
 **Every row in this file is now worked.** Rows 1 to 5 landed with the ticket; the
 rest landed on 2026-09-12 in the wave described below. What is left before the
-file can be deleted is running the suites that need a backend — the integration,
+file can be archived is running the suites that need a backend — the integration,
 TLS, conformance and Velero runs — because several rows change paths they
 exercise.
 
@@ -475,4 +475,4 @@ against: it asserts exact released-byte counts rather than "an error arrived".
 - [ ] The suites that need a backend are green: `make test-integration`,
       `make test-integration-tls`, `./scripts/conformance-run.sh minio` and
       `make e2e-velero`
-- [ ] `git grep 030` is empty outside this directory, and this file is deleted
+- [ ] `git grep 030` is empty outside this directory, and this file is archived

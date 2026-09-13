@@ -183,9 +183,9 @@ body, which is what the marker inspection above judges.
 | What an operator or a client needs | [README.md](README.md) |
 | The threat model and residual risks | [SECURITY_ARCHITECTURE.md](SECURITY_ARCHITECTURE.md) |
 
-Work still outstanding lives in a work list that is deleted when the work lands,
+Work still outstanding lives in a work list that is archived when the work lands,
 and nothing outside that directory may reference one — cite the ADR instead (ADR
-[0022](docs/adr/0022-tickets-are-work-lists-that-get-deleted.md)).
+[0022](docs/adr/0022-tickets-are-work-lists-that-get-archived.md)).
 
 ## Architecture
 

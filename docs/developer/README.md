@@ -11,7 +11,7 @@ hard-won knowledge from a defect that was expensive to find.
 
 **What does not:** decisions (those are [ADRs](../adr/), and an ADR carries no
 references into the code so that it stays true when the tree moves), work lists
-(those are [tickets](../tickets/), and they are deleted when the work lands),
+(those are [tickets](../tickets/), and they are archived when the work lands),
 user-facing reference (that is [README.md](../../README.md)), and the security
 design (that is [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md)).
 

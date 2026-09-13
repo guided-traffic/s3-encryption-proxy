@@ -238,4 +238,4 @@ suites; it is rebuilt in its own approved change and never unprompted.
       are green on the branch head.
 - [ ] The two items under *Open, and not in the list above* are each done or
       decided and recorded.
-- [ ] `git grep 035` is empty outside this directory, and this file is deleted.
+- [ ] `git grep 035` is empty outside this directory, and this file is archived.

@@ -88,7 +88,7 @@ the honest third point of the triangle, not because it looks good.
 1. **Does anybody read whole objects in the 64 KiB … 1 MiB band?** This is the
    question that decides the rest. Velero's volume data goes through kopia, which
    reads ranged; its metadata objects are small. If the band is empty for the
-   deployments in scope, the answer is A and this ticket is deleted. Needs a
+   deployments in scope, the answer is A and this ticket is archived. Needs a
    size distribution from a real deployment, not a guess.
 2. **How much does C alone buy, measured?** The quarter-millisecond above is
    arithmetic, not a measurement. If C closes enough of the gap on its own, B and
@@ -130,7 +130,7 @@ the honest third point of the triangle, not because it looks good.
 The evaluation is done when the answer to question 1 exists as data, questions 2
 and 3 exist as measurements, and the outcome is recorded — either as an amendment
 to ADR 0003 D14 naming the new window and why, or as a decision to keep the
-constant, with the numbers that made it the right one. Then this file is deleted.
+constant, with the numbers that made it the right one. Then this file is archived.
 
 **Not done when:** the window is changed because the number looked better in one
 run.

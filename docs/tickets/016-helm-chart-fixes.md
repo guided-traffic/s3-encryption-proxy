@@ -61,7 +61,7 @@ long as it has existed. Owner decision 2026-09-11: it ships in 5.0.0, as
 [ADR 0026](../adr/0026-the-proxy-terminates-tls-at-its-own-service.md), and the
 e2e now runs the whole suite through it.
 
-**This ticket can be deleted.**
+**This ticket can be archived.**
 
 ## Before you start
 
@@ -80,7 +80,7 @@ e2e now runs the whole suite through it.
   go.mod one — so the helm-unittest manager is the eleventh. Verified today:
   `python3 -c "import json;print(len(json.load(open('renovate.json'))['customManagers']))"` → 10.
 - **`D-nn` labels no longer resolve.** Decisions live in `docs/adr/`
-  ([ADR 0022](../adr/0022-tickets-are-work-lists-that-get-deleted.md)); every
+  ([ADR 0022](../adr/0022-tickets-are-work-lists-that-get-archived.md)); every
   citation in this ticket has been rewritten to the ADR or to the code comment
   that carries the reasoning.
 

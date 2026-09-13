@@ -129,4 +129,4 @@ because B is the first mechanism that separates clients at all.
 - [ ] The decision is in ADR 0011, and H-12 and the 4.2 bullet are on the branch
 - [ ] Under B: `make test-unit`, `make test-unit-race` and `make test-integration`
       are green with the new tests in them
-- [ ] `git grep 031` is empty outside this directory, and this file is deleted
+- [ ] `git grep 031` is empty outside this directory, and this file is archived

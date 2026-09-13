@@ -12,16 +12,16 @@ configuration keys no longer exist), and on this HEAD `go build ./...`,
 clean (run 2026-09-10). The one defect this ticket had opened — the forged
 pass-through fingerprint, item 4b — is closed: `ProviderManager.DecryptDEK`
 special-cases no fingerprint at all
-([providers.go:224-227](../../internal/orchestration/providers.go#L224)), and the
+([providers.go:224-227](../../../internal/orchestration/providers.go#L224)), and the
 provider a forged one now resolves to answers both key operations with
 `ErrExitProviderKeyUse`
-([exit.go:34-46](../../pkg/encryption/keyencryption/exit.go#L34)).
+([exit.go:34-46](../../../pkg/encryption/keyencryption/exit.go#L34)).
 
 What is left, with the one row that closed since at the top:
 
 | # | What | State |
 |---|---|---|
-| 4b | A backend-supplied pass-through fingerprint forged a readable object under an encrypting provider | **Closed 2026-09-10** by the exit provider ([ADR 0025](../adr/0025-leaving-is-a-supported-mode.md)): no fingerprint is special-cased on the read path and the exit provider refuses to unwrap, so the forgery has no door left |
+| 4b | A backend-supplied pass-through fingerprint forged a readable object under an encrypting provider | **Closed 2026-09-10** by the exit provider ([ADR 0025](../../adr/0025-leaving-is-a-supported-mode.md)): no fingerprint is special-cased on the read path and the exit provider refuses to unwrap, so the forgery has no door left |
 | 2d | The sealed checksum on the read side: `x-amz-checksum-crc32c`, tail-first GET and HEAD | **Closed 2026-09-11** |
 | 4a | A client metadata key inside the proxy prefix is dropped, not refused | **Closed 2026-09-11**: refused with `400 InvalidArgument` naming the key, on all three write paths, through one shared collector |
 | 10 | `ListParts` from the part table, `ListMultipartUploads` forwarded | **Closed 2026-09-11** |
@@ -38,7 +38,7 @@ decision, not the sentence. Wave 4 deliberately left it alone: both of those for
 end at the object's end, so the window they plan always carries the trailer and
 the range reader already checks the planned length against it. The extra `HEAD` a
 ranged read costs under the exit provider is a separate, decided cost
-([ADR 0025](../adr/0025-leaving-is-a-supported-mode.md)).
+([ADR 0025](../../adr/0025-leaving-is-a-supported-mode.md)).
 
 **The Velero e2e gate has run on the format**: 13 scenarios green in 577s on
 2026-09-11, after wave 4, against the branch head.
@@ -64,7 +64,7 @@ the record of why the format looks the way it does.
   known. v2 ships as a **major release** whose release notes state that objects
   written by earlier versions are not readable. No read-only v1 path is built.
   The release is **5.0.0**, collected on `feat/major-v5` together with the other
-  migration-forcing tickets — [ticket 023](023-major-v5.md) is the bundle.
+  migration-forcing tickets — [ticket 023](../023-major-v5.md) is the bundle.
   (It was going to be 4.0.0; `v4.0.0` was cut on 2026-09-07 from the coverage
   round, PR #331, and carries none of this ticket — D-30 and D-22 were its only
   breaking changes. Objects written by 3.x and by 4.0.x are equally unreadable
@@ -86,7 +86,7 @@ the record of why the format looks the way it does.
   [Success criteria](#success-criteria) and the two buffer bounds in
   [write path 3](#3-client-driven-multipart).
 
-**Decided 2026-09-07 (repository owner, D-32, [023](023-major-v5.md) decision 2):**
+**Decided 2026-09-07 (repository owner, D-32, [023](../023-major-v5.md) decision 2):**
 
 - **The `rsa` provider type is removed in 5.0.0.** It requires both PEMs, so the
   one property asymmetry could add (an encrypt-only writer) does not exist; it
@@ -111,7 +111,7 @@ the record of why the format looks the way it does.
   least 16 distinct byte values; the error names `s3ep-keygen` and says that
   base64 of a hex string is refused too. Names `aes` and `aes_key` stay.
 - Vault is unaffected: a KMS-backed KEK stays a separate provider type
-  ([025](025-tink-kms-hcvault.md), after v5), and the local key can be injected
+  ([025](../025-tink-kms-hcvault.md), after v5), and the local key can be injected
   from Vault through `${S3EP_AES_KEY}` today.
 - **The bucket stays out of the AAD (D-33).** The owner's rule: the bucket name
   plays no role in encryption or decryption. Risk 8 below is the accepted
@@ -187,29 +187,29 @@ the tree today):
 - A ranged read of an `aes-ctr` object returns bytes the proxy cannot
   authenticate. The whole-object HMAC in `s3ep-hmac` covers the whole object, so
   a partial read is checked against nothing
-  ([rangeread.go:39](../../internal/orchestration/rangeread.go#L39) documents this
+  ([rangeread.go:39](../../../internal/orchestration/rangeread.go#L39) documents this
   as a deliberate tradeoff). kopia — the uploader Velero uses for volume data —
   reads its pack blobs with small ranged GETs, so **every Velero volume restore
   consists of unauthenticated reads** (D-1, P-1).
 - Integrity is separable from decryption, so the backend can strip one metadata
   key to switch it off. `integrity_verification: hybrid` accepts an object
   without `s3ep-hmac` as legacy
-  ([hmac_manager.go:116](../../internal/validation/hmac_manager.go#L116) — the
+  ([hmac_manager.go:116](../../../internal/validation/hmac_manager.go#L116) — the
   branch is unreachable, see [open question 12](#risks-and-open-questions)); `lax`
   delivers data whose verification failed
-  ([hmac_manager.go:142](../../internal/validation/hmac_manager.go#L142)) (N-2).
+  ([hmac_manager.go:142](../../../internal/validation/hmac_manager.go#L142)) (N-2).
 - Worse: an object with **no** proxy metadata at all is handed to the client as
   plaintext, under an encrypting provider
-  ([manager.go:186](../../internal/orchestration/manager.go#L186),
+  ([manager.go:186](../../../internal/orchestration/manager.go#L186),
   `isNoneProviderData` at
-  [singlepart.go:327](../../internal/orchestration/singlepart.go#L327), and the
-  range path at [range.go:141](../../internal/proxy/handlers/object/range.go#L141)).
+  [singlepart.go:327](../../../internal/orchestration/singlepart.go#L327), and the
+  range path at [range.go:141](../../../internal/proxy/handlers/object/range.go#L141)).
   A hostile backend strips the metadata and substitutes the body (N-1).
 - Re-uploading a multipart part would reuse the AES-CTR keystream. The CTR
   counter is derived from the sequential byte offset
-  ([multipart.go:300](../../internal/orchestration/multipart.go#L300)), so a second
+  ([multipart.go:300](../../../internal/orchestration/multipart.go#L300)), so a second
   encryption of part *n* is a two-time pad. Today the retry hangs instead
-  ([multipart.go:290](../../internal/orchestration/multipart.go#L290), a `select`
+  ([multipart.go:290](../../../internal/orchestration/multipart.go#L290), a `select`
   with no context case), so the reuse is latent, not absent (N-3, P-2).
 
 Documentation does not close any of this. The only construction that keeps both
@@ -262,7 +262,7 @@ never extended to require a multiple of 64 KiB; that is what is left of item 12.
 - D-19 — per-chunk signatures in aws-chunked uploads stay unverified; v2 does
   not change that leg.
 - N-8 — the 30 s `ReadTimeout` / `WriteTimeout`
-  ([server.go:115-116](../../internal/proxy/server.go#L115)). Not touched here.
+  ([server.go:115-116](../../../internal/proxy/server.go#L115)). Not touched here.
 
 ---
 
@@ -284,7 +284,7 @@ object has been re-encrypted:
   `aes-ctr`, in `strict` semantics only (no `lax`, no `hybrid`, no
   pass-through — N-1 and N-2 still apply);
 - ranged reads of v1 objects are served by full decryption
-  ([range.go:200](../../internal/proxy/handlers/object/range.go#L200)), i.e. the
+  ([range.go:200](../../../internal/proxy/handlers/object/range.go#L200)), i.e. the
   D-1 gap is closed by making v1 ranged reads slow rather than unverified;
 - writes are v2 only, from day one;
 - the v1 path is deleted in a follow-up ticket once a documented re-encryption
@@ -298,14 +298,14 @@ confirmed case.
 ## The format
 
 **Shipped 2026-09-10 and unchanged since.** The authority for it is now
-[ADR 0003](../adr/0003-objects-are-an-authenticated-segment-chain.md) and
+[ADR 0003](../../adr/0003-objects-are-an-authenticated-segment-chain.md) and
 `docs/developer/storage-format.md`; this section is the specification the code
 was built from and is kept for the record. The one part of it that is **not** in
 the tree is the client-facing checksum and the tail-first read — item 2d.
 
 One object = a chain of segments followed by a trailer, all under one random
 per-object DEK, envelope-wrapped by the KEK exactly as today
-([providers.go:160](../../internal/orchestration/providers.go#L160)).
+([providers.go:160](../../../internal/orchestration/providers.go#L160)).
 
 | Element | Layout | Size |
 |---|---|---|
@@ -399,16 +399,16 @@ than the arithmetic:
 
 - *After Complete, by self-copy* — the mechanism the proxy uses today to attach
   the late-bound HMAC
-  ([operations.go:1326](../../internal/proxy/handlers/object/operations.go#L1326)
+  ([operations.go:1326](../../../internal/proxy/handlers/object/operations.go#L1326)
   on the auto-multipart path,
-  [complete.go:234](../../internal/proxy/handlers/multipart/complete.go#L234) on
+  [complete.go:234](../../../internal/proxy/handlers/multipart/complete.go#L234) on
   the client-driven one). It is a full server-side rewrite of every multipart
   object and it carries the >5 GiB hard failure ([ticket
-  012](012-performance-audit-round2.md) Tier 3.1). This ticket deletes it;
+  012](../012-performance-audit-round2.md) Tier 3.1). This ticket deletes it;
   storing a layout that way would keep it.
 - *In object tags* — new machinery on both sides: the proxy answers all three
   object-tagging verbs with 501 today
-  ([tagging.go:64](../../internal/proxy/handlers/object/tagging.go#L64)). The
+  ([tagging.go:64](../../../internal/proxy/handlers/object/tagging.go#L64)). The
   recorded reason against it is that object tagging is not supported by several
   S3-compatible targets; that claim is not verified against a named target in
   this repository.
@@ -426,12 +426,12 @@ the backend can lie about.
 Correct on paper, and it re-breaks ranged reads for every S3 client that issues
 them: kopia reads its pack blobs with small ranged GETs, so every Velero volume
 restore fails — the code says so at the point where the tradeoff was made
-([rangeread.go:42](../../internal/orchestration/rangeread.go#L42)). It would also
+([rangeread.go:42](../../../internal/orchestration/rangeread.go#L42)). It would also
 require `strict` to stop being what the shipped configuration recommends: every
 encrypting example sets `integrity_verification: "strict"`
-([README.md:416](../../README.md#L416),
-[config/aes-example.yaml:100](../../config/aes-example.yaml#L100)) while the code
-default is `off` ([config.go:357](../../internal/config/config.go#L357)). An
+([README.md:416](../../../README.md#L416),
+[config/aes-example.yaml:100](../../../config/aes-example.yaml#L100)) while the code
+default is `off` ([config.go:357](../../../internal/config/config.go#L357)). An
 integrity guarantee that holds only in one configuration, and only if that
 configuration diverges from the examples the project ships, is rule 2 of the
 Context above.
@@ -455,20 +455,20 @@ retired anyway.
 
 All four are known at `PutObject` and at `CreateMultipartUpload` time, because
 the DEK is generated before the backend call and `EncryptDEK`
-([providers.go:160](../../internal/orchestration/providers.go#L160)) takes only the
+([providers.go:160](../../../internal/orchestration/providers.go#L160)) takes only the
 DEK and the object key, never the ciphertext. **That is what removes the
 self-`CopyObject`.**
 
 Gone: `aes-iv` (there is no per-object IV any more; each segment carries its own
 nonce) and `hmac` (integrity is not separable from decryption). Both must be
 removed from `BuildMetadataForEncryption`
-([metadata.go:41](../../internal/orchestration/metadata.go#L41), the `aes-iv` write
-at [metadata.go:57](../../internal/orchestration/metadata.go#L57)), from `GetIV`
-([metadata.go:177](../../internal/orchestration/metadata.go#L177)), from
+([metadata.go:41](../../../internal/orchestration/metadata.go#L41), the `aes-iv` write
+at [metadata.go:57](../../../internal/orchestration/metadata.go#L57)), from `GetIV`
+([metadata.go:177](../../../internal/orchestration/metadata.go#L177)), from
 `GetHMAC`/`SetHMAC`/`HasHMAC`
-([metadata.go:220](../../internal/orchestration/metadata.go#L220)), and from the
+([metadata.go:220](../../../internal/orchestration/metadata.go#L220)), and from the
 `IsEncryptionMetadata` filter list
-([metadata.go:305](../../internal/orchestration/metadata.go#L305)) — the filter is
+([metadata.go:305](../../../internal/orchestration/metadata.go#L305)) — the filter is
 what keeps proxy metadata out of client responses, so the two keys have to
 leave it together with everything else. `CLAUDE.md`'s metadata list is updated
 in the same change.
@@ -484,8 +484,8 @@ with `C` the stored object length. Derivation: `C = 40 + 28n + P` and
 `(n-1)·S < P ≤ n·S`. An empty object stores `C = 40`, `n = 0`, `P = 0`.
 
 This replaces `ComputePlaintextSize` / `ComputeCiphertextSize`
-([ciphertext_size.go:13](../../pkg/encryption/ciphertext_size.go#L13)) and is what
-lets HEAD ([operations.go:754](../../internal/proxy/handlers/object/operations.go#L754)),
+([ciphertext_size.go:13](../../../pkg/encryption/ciphertext_size.go#L13)) and is what
+lets HEAD ([operations.go:754](../../../internal/proxy/handlers/object/operations.go#L754)),
 GET and — with D-11 later — LIST report the plaintext length **without a
 per-object round trip**.
 
@@ -532,17 +532,17 @@ verify the GCM tag with the AAD built from its own index, and slice
   segment back until both pass.
 - D-10 disappears: there is no algorithm for which a ranged read costs a second
   backend request. `handleGetObjectRange`
-  ([range.go:115](../../internal/proxy/handlers/object/range.go#L115)) loses its
+  ([range.go:115](../../../internal/proxy/handlers/object/range.go#L115)) loses its
   `algorithm != "aes-ctr"` branch
-  ([range.go:150](../../internal/proxy/handlers/object/range.go#L150)) and
-  `serveRangeByFullDecryption` ([range.go:200](../../internal/proxy/handlers/object/range.go#L200))
+  ([range.go:150](../../../internal/proxy/handlers/object/range.go#L150)) and
+  `serveRangeByFullDecryption` ([range.go:200](../../../internal/proxy/handlers/object/range.go#L200))
   is deleted.
 - The GET handler loses its algorithm fork
-  ([operations.go:93](../../internal/proxy/handlers/object/operations.go#L93)):
+  ([operations.go:93](../../../internal/proxy/handlers/object/operations.go#L93)):
   `handleGetObjectStreamingDecryption`
-  ([operations.go:108](../../internal/proxy/handlers/object/operations.go#L108))
+  ([operations.go:108](../../../internal/proxy/handlers/object/operations.go#L108))
   and `handleGetObjectMemoryDecryption`
-  ([operations.go:269](../../internal/proxy/handlers/object/operations.go#L269))
+  ([operations.go:269](../../../internal/proxy/handlers/object/operations.go#L269))
   collapse into one path.
 
 ### Whole-object GET and HEAD: tail first (decided 2026-09-09) — **open, item 2d**
@@ -572,7 +572,7 @@ both, and pin MinIO's answer in the integration suite.
 A foreign object is refused on GET, HEAD and ranged GET; the pass-through
 decision is `Manager.IsExitProvider()`, the configured provider, at
 `operations.go:68`, `operations.go:348` (HEAD) and `range.go:172` (the symbol was
-`IsNoneProvider` until [ADR 0025](../adr/0025-leaving-is-a-supported-mode.md)).
+`IsNoneProvider` until [ADR 0025](../../adr/0025-leaving-is-a-supported-mode.md)).
 The fingerprint half of the same rule closed with it — item 4b.
 
 Under an **encrypting** provider, an object that does not carry the proxy's
@@ -589,21 +589,21 @@ pass-through, and **no opt-out knob** — a knob here is rule 2 exactly.
   error on GET) — decided 2026-09-06, so the README documents the proxy's
   meaning of the code, not a status deviation.
 - Applies wherever `extractEncryptionMetadata`
-  ([helpers.go:35](../../internal/proxy/handlers/object/helpers.go#L35)) returns
+  ([helpers.go:35](../../../internal/proxy/handlers/object/helpers.go#L35)) returns
   `false` today, and replaces the pass-through at
-  [operations.go:63](../../internal/proxy/handlers/object/operations.go#L63),
-  [range.go:141](../../internal/proxy/handlers/object/range.go#L141) and
-  [manager.go:186](../../internal/orchestration/manager.go#L186).
+  [operations.go:63](../../../internal/proxy/handlers/object/operations.go#L63),
+  [range.go:141](../../../internal/proxy/handlers/object/range.go#L141) and
+  [manager.go:186](../../../internal/orchestration/manager.go#L186).
 - An object whose `dek-algorithm` is not `s3ep-gcm-seg-v2` gets the same
   treatment.
 - Only the `exit` provider passes an object through, and it does **not** pass
   through everything the way D-13's `none` did: the decision is per object, so an
   object this proxy encrypted earlier is still decrypted and one written plainly
   is served plainly
-  ([operations.go:61-74](../../internal/proxy/handlers/object/operations.go#L61)).
+  ([operations.go:61-74](../../../internal/proxy/handlers/object/operations.go#L61)).
   `type: "none"` is refused at startup by name
-  ([config.go:575-579](../../internal/config/config.go#L575)). The decision is
-  [ADR 0025](../adr/0025-leaving-is-a-supported-mode.md).
+  ([config.go:575-579](../../../internal/config/config.go#L575)). The decision is
+  [ADR 0025](../../adr/0025-leaving-is-a-supported-mode.md).
 - A bucket holding pre-existing plaintext objects is never read in place, and
   there is no migration procedure (owner, 2026-09-09): the content is uploaded
   through the proxy from its source.
@@ -616,7 +616,7 @@ client-driven multipart upload, was stored as a segment chain with its data key
 in the clear beside it. A bucket inspected at rest looked encrypted while the
 key sat next to the object.
 
-Closed by [ADR 0025](../adr/0025-leaving-is-a-supported-mode.md), which answered
+Closed by [ADR 0025](../../adr/0025-leaving-is-a-supported-mode.md), which answered
 the question this item left open — what `none` means — rather than patching the
 split. The provider is now `exit`: it stores plaintext on **all three** write
 paths, and it keeps decrypting what this proxy encrypted earlier, which the old
@@ -638,11 +638,11 @@ full metadata set exist before the first backend byte is sent, in all three.
 
 Read plaintext, emit segments as they fill, append the trailer, one pass, no
 buffering beyond one segment. Replaces both `putObjectDirect`
-([operations.go:537](../../internal/proxy/handlers/object/operations.go#L537)) and
+([operations.go:537](../../../internal/proxy/handlers/object/operations.go#L537)) and
 `putObjectStreamingReader`
-([operations.go:609](../../internal/proxy/handlers/object/operations.go#L609)),
+([operations.go:609](../../../internal/proxy/handlers/object/operations.go#L609)),
 and with them the whole size-based routing block at
-[operations.go:446-524](../../internal/proxy/handlers/object/operations.go#L446)
+[operations.go:446-524](../../../internal/proxy/handlers/object/operations.go#L446)
 including the `streaming_threshold` comparisons and the forced-CTR content-type
 special cases. The stored length is known in advance from the plaintext length,
 so `Content-Length` on the backend PUT stays exact.
@@ -650,7 +650,7 @@ so `Content-Length` on the backend PUT stays exact.
 Routing after the change: today auto-multipart is entered on an unknown
 `Content-Length` **or** on "HMAC enabled and plaintext >= 5 MiB under an
 encrypting provider"
-([operations.go:482-489](../../internal/proxy/handlers/object/operations.go#L482)).
+([operations.go:482-489](../../../internal/proxy/handlers/object/operations.go#L482)).
 The HMAC half of that condition goes with the HMAC, so what is left is: unknown
 `Content-Length`, or a plaintext above `streaming_segment_size`, goes to
 auto-multipart — a single PutObject needs a known length and a >5 GiB object
@@ -659,19 +659,19 @@ needs multipart regardless.
 ### 2. Auto-multipart (large single PutObject from any client — kopia's path, for example)
 
 `putObjectAutoMultipart`
-([operations.go:1212](../../internal/proxy/handlers/object/operations.go#L1212))
+([operations.go:1212](../../../internal/proxy/handlers/object/operations.go#L1212))
 keeps its shape — the proxy picks the backend part size from
 `streaming_segment_size` (12 MiB default, validated to be a multiple of S) — and
 loses:
 
 - the `CreateMultipartUpload` without metadata: the four metadata keys now go
   into `CreateMultipartUploadInput.Metadata`
-  ([create.go:61](../../internal/proxy/handlers/multipart/create.go#L61) for the
+  ([create.go:61](../../../internal/proxy/handlers/multipart/create.go#L61) for the
   client-driven twin);
 - the self-`CopyObject` at
-  [operations.go:1505](../../internal/proxy/handlers/object/operations.go#L1505),
+  [operations.go:1505](../../../internal/proxy/handlers/object/operations.go#L1505),
   and with it the full-object server-side rewrite on every multipart upload and
-  the **>5 GiB hard failure** ([ticket 012](012-performance-audit-round2.md)
+  the **>5 GiB hard failure** ([ticket 012](../012-performance-audit-round2.md)
   Tier 3.1, "item 5" in the findings doc);
 - the sequential-encryption constraint. Segments are independent, so parts can
   be encrypted in parallel and the pipeline no longer needs encryption to be
@@ -741,7 +741,7 @@ the object. Two cases, and the second is the one the findings doc's one-line
   - **Across sessions, a global cap on buffered short-part bytes.** Sessions
     are client-controlled and the proxy caps neither their number nor their
     memory today — there is only an idle TTL
-    ([manager.go:578](../../internal/orchestration/manager.go#L578)) — so "5 MiB
+    ([manager.go:578](../../../internal/orchestration/manager.go#L578)) — so "5 MiB
     per session" alone means "5 MiB times whatever the client opens". The
     proxy keeps one counter of buffered short-part bytes; a short part that
     would push it past the cap is answered with `SlowDown` (503), which every
@@ -756,7 +756,7 @@ the object. Two cases, and the second is the one the findings doc's one-line
 
 Either way the proxy builds `CompletedMultipartUpload` **from its own part
 table**, not from the ETags in the client's XML
-([complete.go:149-168](../../internal/proxy/handlers/multipart/complete.go#L149)) —
+([complete.go:149-168](../../../internal/proxy/handlers/multipart/complete.go#L149)) —
 the client's ETags are over ciphertext the proxy produced, and after a trailer
 re-upload one of them is stale. The client XML is still parsed and validated;
 it is the part *set* that is checked against the table, and a mismatch is
@@ -782,7 +782,7 @@ drives it with a DEK it holds.
 Two things from this section are load-bearing and stayed:
 
 - **One unwrap per read, and it is cached.** `Manager.codecFor`
-  ([segmented.go:243](../../internal/orchestration/segmented.go#L243)) unwraps
+  ([segmented.go:243](../../../internal/orchestration/segmented.go#L243)) unwraps
   once through `ProviderManager.DecryptDEK`; the envelope layer that unwrapped a
   second time is deleted. The *measurement* item 15 owes for it is still open.
 - **The cached DEK is cache-owned and read-only.** `DecryptDEK` says so in its
@@ -792,7 +792,7 @@ Two things from this section are load-bearing and stayed:
 
 **[Ticket 011](011-dek-cache-stale-on-reupload.md) — dissolved as a bug, its fix
 survives as a property.** Option A shipped: the DEK cache key includes a digest
-of the wrapped DEK (`buildDEKCacheKey`, [providers.go:339](../../internal/orchestration/providers.go#L339)),
+of the wrapped DEK (`buildDEKCacheKey`, [providers.go:339](../../../internal/orchestration/providers.go#L339)),
 so a re-upload cannot return a stale DEK. v2 does not reintroduce the problem
 and does not remove the guard — the cache is still keyed the same way, and the
 regression test
@@ -801,18 +801,18 @@ to pass. What *does* disappear is the symptom the ticket described: with v2 a
 stale DEK fails the first segment tag instead of failing a whole-object HMAC at
 the end of the stream.
 
-**[Ticket 012](012-performance-audit-round2.md) — item by item.** Every row
+**[Ticket 012](../012-performance-audit-round2.md) — item by item.** Every row
 marked "dissolved" below is dissolved in the tree as of 2026-09-10; the rows
 marked "survives" are 012's work, not this ticket's.
 
 | 012 item | Fate under v2 |
 |---|---|
-| 1.1 SDK flexible checksums | Already done (F-4): `WhenRequired` at [server.go:147-148](../../internal/proxy/server.go#L147). Untouched. |
-| 1.2 / N-8 30 s Read/WriteTimeout | **Survives.** Still 30 s at [server.go:115-116](../../internal/proxy/server.go#L115). v2 does not touch the listener. Own work. |
-| 1.3 dead code + per-GET Info logs | **Mostly dissolved** — every dead symbol it names is in this ticket's deletion list, and the five Info logs sit in code that goes. Not covered by the deletions: the constant-false `%T` sniff in `writeGetObjectResponse` ([operations.go:359](../../internal/proxy/handlers/object/operations.go#L359)), which item 3 below deletes with the GET fork. |
-| 2.1 stream the UploadPart handler | **Half landed, and the other half is now deliberate.** The ciphertext `io.ReadAll` is gone — a part is sealed as the backend pulls it (`Codec.NewPartEncryptReader`). The plaintext is still read whole at [upload.go:76](../../internal/proxy/handlers/multipart/upload.go#L76), and it has to be: a short or unaligned part is held for Complete, and ADR 0024 D5 retains an in-flight part until the backend acknowledges it. So one client-driven part costs one plaintext copy per in-flight request, by design. 012 keeps the row; this ticket does not. |
+| 1.1 SDK flexible checksums | Already done (F-4): `WhenRequired` at [server.go:147-148](../../../internal/proxy/server.go#L147). Untouched. |
+| 1.2 / N-8 30 s Read/WriteTimeout | **Survives.** Still 30 s at [server.go:115-116](../../../internal/proxy/server.go#L115). v2 does not touch the listener. Own work. |
+| 1.3 dead code + per-GET Info logs | **Mostly dissolved** — every dead symbol it names is in this ticket's deletion list, and the five Info logs sit in code that goes. Not covered by the deletions: the constant-false `%T` sniff in `writeGetObjectResponse` ([operations.go:359](../../../internal/proxy/handlers/object/operations.go#L359)), which item 3 below deletes with the GET fork. |
+| 2.1 stream the UploadPart handler | **Half landed, and the other half is now deliberate.** The ciphertext `io.ReadAll` is gone — a part is sealed as the backend pulls it (`Codec.NewPartEncryptReader`). The plaintext is still read whole at [upload.go:76](../../../internal/proxy/handlers/multipart/upload.go#L76), and it has to be: a short or unaligned part is held for Complete, and ADR 0024 D5 retains an in-flight part until the backend acknowledges it. So one client-driven part costs one plaintext copy per in-flight request, by design. 012 keeps the row; this ticket does not. |
 | 2.2 destructive body-sniff | Already done (F-1): header-based detection, `readAllSized`, `aws_chunked_decoder.go` deleted. |
-| 2.3 exact-size part buffers | **Dissolved on the client-driven route** (`processPartOrdered`'s 12 MiB pre-size at [multipart.go:245](../../internal/orchestration/multipart.go#L245) goes with the function). The auto-multipart buffer pool is still worth doing and is folded into this ticket's write path. |
+| 2.3 exact-size part buffers | **Dissolved on the client-driven route** (`processPartOrdered`'s 12 MiB pre-size at [multipart.go:245](../../../internal/orchestration/multipart.go#L245) goes with the function). The auto-multipart buffer pool is still worth doing and is folded into this ticket's write path. |
 | 3.1 metadata at initiate, self-copy removal, >5 GiB failure | **Dissolved.** Done here, and without the `PutObjectTagging` scheme 012 proposed — v2 has no late-bound HMAC, so all metadata fits at initiate. |
 | 3.2 Range GET | Already shipped (F-6); v2 replaces the implementation and closes the integrity gap it shipped with. |
 | 3.3 HEAD/List size | HEAD already fixed (F-7); v2 changes the size function it calls. List is D-11, after v2. |
@@ -909,7 +909,7 @@ key-rotation path.
 
 ### Next, in order
 
-**Wave 4 of the release ([023](023-major-v5.md)) closed this ticket's format
+**Wave 4 of the release ([023](../023-major-v5.md)) closed this ticket's format
 work on 2026-09-11**: item 4a, the reserved trailer part number (ADR 0011 D4),
 item 10 and item 2d. What is left is neither format work nor client-visible:
 
@@ -932,12 +932,12 @@ checklist is one list:
 
 | What | Owner | Why it blocks |
 |---|---|---|
-| ~~The listing document and plaintext sizes~~ | ADR 0010, ticket [018](018-listobjectsv2-document.md) | **Landed** (commit `d696763`): both listings are S3 documents and state the plaintext size. No longer blocking |
-| The remaining dead configuration keys | ADR 0013, ticket [015](015-configuration-hygiene.md) | A key that reads as a control and is not |
+| ~~The listing document and plaintext sizes~~ | ADR 0010, ticket [018](../018-listobjectsv2-document.md) | **Landed** (commit `d696763`): both listings are S3 documents and state the plaintext size. No longer blocking |
+| The remaining dead configuration keys | ADR 0013, ticket [015](../015-configuration-hygiene.md) | A key that reads as a control and is not |
 | The storage headers a PUT drops, and six plain-text refusals | ADR 0007, ADR 0008, the S3-surface ticket | A refusal with no S3 error code cannot be acted on |
 | ~~Client checksum verification~~ | ADR 0012 | **Landed 2026-09-11**: every declared checksum is verified against the plaintext. No longer blocking |
 | The hard-coded 30 s shutdown deadline that overrides `shutdown_timeout` | ADR 0015 | A configured value that cannot do what it says |
-| Release notes and the upgrade rehearsal | ADR 0017, ticket [023](023-major-v5.md) item 8 | A break nobody is warned about is the failure this rule exists to prevent |
+| Release notes and the upgrade rehearsal | ADR 0017, ticket [023](../023-major-v5.md) item 8 | A break nobody is warned about is the failure this rule exists to prevent |
 
 ## Work breakdown
 
@@ -987,7 +987,7 @@ items carry the work and nothing else.
       `IsExitProvider()` (`IsNoneProvider` until ADR 0025). The fingerprint half
       of the same rule closed separately — item 4b.
 - [x] **4b. The forged pass-through fingerprint.** Closed 2026-09-10 by the exit
-      provider ([ADR 0025](../adr/0025-leaving-is-a-supported-mode.md), commit
+      provider ([ADR 0025](../../adr/0025-leaving-is-a-supported-mode.md), commit
       `0ccface`) — not by the fix this item specified, but by removing the
       short-circuit it exploited. What it was, reproduced 2026-09-10 at the
       `Manager` level: an object whose metadata said `dek-algorithm:
@@ -997,12 +997,12 @@ items carry the work and nothing else.
       `aes` provider, because `DecryptDEK` returned the metadata's own
       `encrypted-dek` verbatim as the data key. What closed it: `DecryptDEK`
       special-cases no fingerprint at all
-      ([providers.go:224-227](../../internal/orchestration/providers.go#L224)), so
+      ([providers.go:224-227](../../../internal/orchestration/providers.go#L224)), so
       a fingerprint either resolves through `factory.GetKeyEncryptor` or it
       resolves to nothing, and the exit provider — which is what
       `exit-provider-fingerprint` resolves to when it is configured — answers both
       `EncryptDEK` and `DecryptDEK` with `ErrExitProviderKeyUse`
-      ([exit.go:34-46](../../pkg/encryption/keyencryption/exit.go#L34)). Pinned by
+      ([exit.go:34-46](../../../pkg/encryption/keyencryption/exit.go#L34)). Pinned by
       `TestOrcMetaForgedExitFingerprintIsRefused`
       (`internal/orchestration/providers_coverage_test.go:544`, both provider
       configurations) and at the handler by
@@ -1109,19 +1109,19 @@ items carry the work and nothing else.
       validation and every shipped YAML, and
       `internal/config/integrity_verification_test.go` is deleted;
       `multipart_short_part_buffer_size` exists with its default (67108864),
-      its ≥ 5 MiB check ([config.go:646-651](../../internal/config/config.go#L646))
+      its ≥ 5 MiB check ([config.go:646-651](../../../internal/config/config.go#L646))
       and the accessor the session reads
-      ([segmented_session.go:74](../../internal/orchestration/segmented_session.go#L74)).
+      ([segmented_session.go:74](../../../internal/orchestration/segmented_session.go#L74)).
       Line numbers re-verified 2026-09-10.
       Two pieces did not land:
       - **`streaming_segment_size` is not checked against the 64 KiB multiple.**
         `validateOptimizations` checks only the 5 MiB / 5 GiB bounds
-        ([config.go:636-643](../../internal/config/config.go#L636)) while
+        ([config.go:636-643](../../../internal/config/config.go#L636)) while
         `README.md:363` and the callout at `README.md:379-386` state the
         multiple as a rule. The rule is real: a non-final part that does not
         cover whole segments is refused at runtime by
         `SegmentedUpload.SealPart` with `ErrPartNotAligned`
-        ([segmented.go:120-126](../../internal/orchestration/segmented.go#L120)),
+        ([segmented.go:120-126](../../../internal/orchestration/segmented.go#L120)),
         so today a misconfigured value passes startup and fails every multi-part
         PUT instead. That is rule 2 of the Context, in this ticket's own tree.
       - **`multipart_short_part_buffer_size` is in no shipped file.** Still true
@@ -1175,7 +1175,7 @@ items carry the work and nothing else.
         most of that content now also lives in `docs/developer/`. Shrink them to
         a pointer.
       - Release notes are **not** this item's: they are ADR 0017's and ticket
-        [023](023-major-v5.md) item 8, which carries the skeleton. What this
+        [023](../023-major-v5.md) item 8, which carries the skeleton. What this
         ticket owes that list is its content — objects written by 3.x and 4.0.x
         are unreadable; `kek-fingerprint` values change; `integrity_verification`,
         `streaming_threshold`, `streaming_buffer_size` and
@@ -1239,7 +1239,7 @@ before. The **"before" column exists**: the local baseline suite was run on the 
 `make perf-baseline` again on the post-change commit, on the same machine, and
 `make perf-compare` between the two. The instruments and how to read them are in
 `test/perf/README.md`; the rules are
-[ADR 0020](../adr/0020-performance-is-measured-before-and-after.md) D17 to D22.
+[ADR 0020](../../adr/0020-performance-is-measured-before-and-after.md) D17 to D22.
 **Read `perf-baseline/<the pre-v2 run>/FINDINGS.md` before starting** — it states which of
 the numbers below support a claim, which only suggest one, what the run cannot answer, and
 the two measurement bugs that were fixed before it was taken.
@@ -1322,7 +1322,7 @@ gives 1.96× at 8 MiB (one part), 1.61× at 24 MiB, 1.55× at 64 MiB, 1.43× at 
 256 MiB. At 256 MiB the four backend calls are amortised to a few percent while the deficit still
 stands at 1.45×, so **the cost is per byte, not per request**: it is the store-and-forward
 structure itself. That is the evidence behind
-[ADR 0024](../adr/0024-an-upload-forwards-while-it-receives.md). It is attribution by
+[ADR 0024](../../adr/0024-an-upload-forwards-while-it-receives.md). It is attribution by
 substitution, not by profile; if the rewrite does not move the comparison, the blocking profile
 nobody has taken is the next step.
 
@@ -1336,7 +1336,7 @@ benchmark.
 **Decided 2026-09-10 (owner): the producer restructuring joins 5.0.0 and is part of items 6 and
 7.** They are written to overlap receiving with sending, which is what the streaming path already
 does and what makes it faster than the backend it writes to. The rule is
-[ADR 0024](../adr/0024-an-upload-forwards-while-it-receives.md): forward while receiving, retain
+[ADR 0024](../../adr/0024-an-upload-forwards-while-it-receives.md): forward while receiving, retain
 a part until the backend acknowledges it so a retry never asks the client for the same bytes
 twice, keep the in-flight memory at `multipart_upload_concurrency × streaming_segment_size`, and
 claim no upload speed-up until the three-leg comparison has been re-run and has moved.
@@ -1367,7 +1367,7 @@ The parts:
       `test/integration/performance-test/performance_test.go`, via
       `make test-integration-performance`) **does not regress on upload or on
       download** against the numbers recorded before the change. Protocol as in
-      [ticket 012](012-performance-audit-round2.md): fresh proxy from
+      [ticket 012](../012-performance-audit-round2.md): fresh proxy from
       `./start-demo.sh`, 3 runs, report the median, compare against a baseline
       measured on the same machine on the pre-v2 commit (v4.0.0 or the `main`
       commit `feat/major-v5` forks from) — not against the figures written in
@@ -1377,7 +1377,7 @@ The parts:
       1, 16 and 64 KiB and concurrency 1, 8 and 32. Note before starting that the
       proxy's GET request rate is already flat across concurrency at roughly
       1800–2400 operations per second while the backend behind it reaches 8300
-      ([012](012-performance-audit-round2.md) item 6.3, measured 2026-09-09).
+      ([012](../012-performance-audit-round2.md) item 6.3, measured 2026-09-09).
       That ceiling is not this ticket's to fix, but it is what a small-object
       number will be dominated by, so a flat result there means "unchanged", not
       "no gain available".
@@ -1402,7 +1402,7 @@ The parts:
       of `TestPerformanceComparison` against an `rsa` provider, the ~1067 to ~533
       GETs/s ceiling — is dropped with the provider. This
       criterion is the obligation D-28 attached to deferring the interim fix, and
-      [025](025-tink-kms-hcvault.md) success criterion 5 — "one Vault round-trip or
+      [025](../025-tink-kms-hcvault.md) success criterion 5 — "one Vault round-trip or
       zero, never two" — cannot be checked until it is met.
 - [ ] **Memory footprint is held by a test, not by a measurement** (owner
       requirement, 2026-09-06). **Still open, and it is the last thing standing
@@ -1413,7 +1413,7 @@ The parts:
       are what has to be written on top of it. **Still open, and the baseline
       suite does not close it:**
       the local baseline records resident memory but deliberately asserts nothing, so
-      [ADR 0020](../adr/0020-performance-is-measured-before-and-after.md) D14 is not
+      [ADR 0020](../../adr/0020-performance-is-measured-before-and-after.md) D14 is not
       satisfied by it. What the baseline contributes is the pre-v2 numbers the bound can
       be set against — cold 22.4 MiB, settled idle 97.7 MiB, peak under load 124.1 MiB,
       against a 512 MiB container limit. The asserting test below is still to be written,
@@ -1421,12 +1421,12 @@ The parts:
       limit, so a bound picked from it will be loose. A new test in
       `test/integration/performance-test/` scrapes
       `process_resident_memory_bytes` from the proxy's monitoring endpoint —
-      available today: [server.go:31](../../internal/monitoring/server.go#L31)
+      available today: [server.go:31](../../../internal/monitoring/server.go#L31)
       serves the default Prometheus registry, which carries the process
       collector, and the demo maps `9090:9090` (verified live 2026-09-06). Add
       `S3EP_TEST_METRICS_ENDPOINT`, default `http://127.0.0.1:9090/metrics`,
       next to `S3EP_TEST_PROXY_ENDPOINT`
-      ([minio_test_helper.go:40](../../test/integration/minio_test_helper.go#L40)).
+      ([minio_test_helper.go:40](../../../test/integration/minio_test_helper.go#L40)).
       The test samples idle RSS first, polls every 100 ms during each
       scenario, and **fails** on a hard bound — no logging-only:
       1. 1 GB PutObject (auto-multipart), then 1 GB GET:
@@ -1576,13 +1576,13 @@ The parts:
     **The KEK fingerprint stays a plain hash of the key unless this ticket
     changes it — H-8, and this is the only ticket that can.**
     `AESProvider.Fingerprint()` returns `hex(SHA-256(KEK))`
-    ([aes.go:162-166](../../pkg/encryption/keyencryption/aes.go#L162)) and the
+    ([aes.go:162-166](../../../pkg/encryption/keyencryption/aes.go#L162)) and the
     metadata table above writes it to every object in the clear
-    ([metadata.go:52](../../internal/orchestration/metadata.go#L52)). For a key
+    ([metadata.go:52](../../../internal/orchestration/metadata.go#L52)). For a key
     from `s3ep-keygen` that leaks nothing; for a low-entropy or published key it
     is an offline verification oracle, and two buckets carrying the same value
     prove they share a KEK.
-    [SECURITY_ARCHITECTURE.md H-8](../../SECURITY_ARCHITECTURE.md#h-8-the-aes-kek-fingerprint-is-a-plain-hash-of-the-key)
+    [SECURITY_ARCHITECTURE.md H-8](../../../SECURITY_ARCHITECTURE.md#h-8-the-aes-kek-fingerprint-is-a-plain-hash-of-the-key)
     carries the finding and names this ticket as the cheap place to fix it,
     because the metadata block is rewritten here anyway; nothing else owns it.
     **Decided 2026-09-06 (owner): derive the identifier as
@@ -1593,10 +1593,10 @@ The parts:
     its own value from its own key, which is what decrypt-time provider
     selection needs
     (`DecryptDEK`,
-    [providers.go:209](../../internal/orchestration/providers.go#L209) →
+    [providers.go:209](../../../internal/orchestration/providers.go#L209) →
     `factory.GetKeyEncryptor`; `GetProviderByFingerprint` is the encrypt side
     only, plus the self-check at
-    [aes.go:134](../../pkg/encryption/keyencryption/aes.go#L134))
+    [aes.go:134](../../../pkg/encryption/keyencryption/aes.go#L134))
     — and it touches no other part of the format, so it is work item 2 and
     nothing more. It is free because the [precondition](#precondition-rule-3)
     holds: a changed identifier makes every stored object unselectable, which
@@ -1629,7 +1629,7 @@ The parts:
     while writing it, all verified in the tree and none of them in 024:
 
     - The scope line is drawn by the **stored `dek-algorithm`**, not by size
-      ([operations.go:95](../../internal/proxy/handlers/object/operations.go#L95)). With
+      ([operations.go:95](../../../internal/proxy/handlers/object/operations.go#L95)). With
       integrity verification on, a plaintext of 5 MiB or more (`multipartMinSize`) goes
       to auto-multipart, but anything from `streaming_threshold` up to that still takes
       CTR through `putObjectStreamingReader`, so the CTR boundary is
@@ -1637,17 +1637,17 @@ The parts:
       size, and the `application/x-s3ep-force-aes-ctr` content type puts sub-1 KiB
       bodies on CTR.
     - **A missing `s3ep-hmac` is skipped silently in every mode, `strict` included**
-      ([singlepart.go:510](../../internal/orchestration/singlepart.go#L510) for CTR,
-      [:237](../../internal/orchestration/singlepart.go#L237) for GCM). The old H-5 said
+      ([singlepart.go:510](../../../internal/orchestration/singlepart.go#L510) for CTR,
+      [:237](../../../internal/orchestration/singlepart.go#L237) for GCM). The old H-5 said
       that downgrade was specific to `hybrid`. It is not, and the
       `"expected HMAC is empty"` branch of `VerifyIntegrity` is unreachable because both
       call sites require `len(expectedHMAC) > 0`. This is a fourth route to the same
       outcome and v2 must close it with the other three.
     - **A correct reader already exists and has no production caller.**
       `hmacGatedDecryptionReader` verifies before emitting its last chunk
-      ([streaming_io.go:317-378](../../internal/orchestration/streaming_io.go#L317)), but
+      ([streaming_io.go:317-378](../../../internal/orchestration/streaming_io.go#L317)), but
       its only entry point `DecryptMultipartWithHMACVerification`
-      ([multipart.go:762](../../internal/orchestration/multipart.go#L762)) is called from
+      ([multipart.go:762](../../../internal/orchestration/multipart.go#L762)) is called from
       tests only. `shouldValidateHMACEarly` is inert as well — it returns `false`
       unconditionally. v2 deletes all three rather than wiring them up, but whoever does
       the work should know the tree contains a working reader that nothing reaches.
@@ -1660,7 +1660,7 @@ The parts:
     the fallback is removed in the same release: `aes_key` is base64 of exactly 32 bytes,
     and anything else is a startup error naming the field. `keygen` already emits base64
     and all three example configs use it. A second format break later would be a second
-    migration, which is why it rides on [023](023-major-v5.md) with this ticket.
+    migration, which is why it rides on [023](../023-major-v5.md) with this ticket.
 
 14. **Half closed: one unwrap, not yet measured.** The second unwrap is gone
     with the envelope layer; the measurement D-28 attached to deferring the fix is
@@ -1671,7 +1671,7 @@ The parts:
     halves the GET ceiling for the RSA provider. This ticket rewrites that path; the
     obligation it inherits is to **measure single-unwrap cost after**, with the
     performance suite, and to record the number. It is also the reason
-    [025](025-tink-kms-hcvault.md) is sequenced after this ticket: with a KMS-backed KEK
+    [025](../025-tink-kms-hcvault.md) is sequenced after this ticket: with a KMS-backed KEK
     every unwrap is a network round-trip.
 
 ---
@@ -1739,7 +1739,7 @@ same short-circuit was reached through `Manager.codecFor`, and a forged object
 that names `s3ep-gcm-seg-v2` was served under a live `aes` provider. The note
 below predicted exactly this ("v2 opens it unless item 4 closes it"); item 4
 closed the handler half only, and
-[ADR 0025](../adr/0025-leaving-is-a-supported-mode.md) closed this half by
+[ADR 0025](../../adr/0025-leaving-is-a-supported-mode.md) closed this half by
 deleting the short-circuit rather than guarding it — see item 4b in the work
 breakdown.
 

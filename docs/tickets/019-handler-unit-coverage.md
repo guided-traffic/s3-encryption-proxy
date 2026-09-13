@@ -84,7 +84,7 @@ calls these suites the product.
       replaces this; update together". That format landed and those tests did
       not move with it, because the code they pin is the previous format's and
       is reachable from no handler. They go with that code — see the deletion
-      items in [013](013-storage-format-v2.md).
+      items in [013](archive/013-storage-format-v2.md).
 
 ## Success criteria
 

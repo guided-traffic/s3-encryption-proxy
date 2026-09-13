@@ -1322,4 +1322,4 @@ Recommendation: **delete**, with the README row. Cost: minutes.
       or a "kept, and why" line here, before this file goes.
 - [ ] [023](023-major-v5.md)'s rows for this ticket are closed and the release
       notes carry the entity-tag paragraph.
-- [ ] `git grep 034` is empty outside this directory, and this file is deleted.
+- [ ] `git grep 034` is empty outside this directory, and this file is archived.

@@ -409,10 +409,16 @@ the box below already names.
 
 ### Tickets
 
-- [ ] Delete **011**, **013**, **015** and **016** — all four landed, and 015 and
-      016 say so in their own text. Move anything durable out first.
+- [x] **011 and 013 are archived** (2026-09-13), under the amended ADR 0022: a
+      closed ticket moves to `docs/tickets/archive/` instead of being deleted.
+      Nothing durable was left in either — 011's rule is ADR 0002 and its
+      regression is pinned by a test, 013's every row is closed and the one
+      question that outlives it is ADR 0003 D9's.
+- [ ] **015 and 016** are landed and not yet archived. 015 ties its own close to
+      this merge, so it goes with the cut. 016's chart decisions have no home
+      outside the ticket yet, and extraction is the close.
 - [ ] **028**'s status block still claims nothing is committed; its work is on the
-      branch. It is deleted at the cut, with this file.
+      branch. It is archived at the cut, with this file.
 - [ ] **`docs/tickets/README.md`**, the index, is behind the directory it indexes.
 - [ ] **`010-performance-improvements.md` and the five `010-*` directories** have
       no verdict anywhere. Their status block is dated 2026-04-25 and describes
@@ -420,10 +426,12 @@ the box below already names.
 - [ ] **012**'s item table is stale in both directions, and one item is real: a
       client-driven part the proxy cannot stream is still buffered without a bound.
 - [ ] **019** still carries six verified items, which this file elsewhere says can
-      be deleted without loss. One of the two is wrong.
+      be archived without loss. One of the two is wrong.
 - [ ] **021**'s six continuous-integration leftovers of the cancelled performance
       gate are all still in the tree.
-- [ ] **024** is closed by decision 3 and can be deleted with the others.
+- [x] **024 is archived** (2026-09-13). Decision 3 answered its last row, S-3;
+      its status block now records the answer and every decision it produced is
+      an ADR.
 - [ ] The ticket-reference grep is clean in source and documentation. It is not
       clean in the committed `graphify-out/`, which carries some six hundred
       references and eleven wiki articles named after tickets — generated output,
@@ -545,7 +553,7 @@ set of behaviour changes weeks later:
    **full pre-v2 performance baseline** ([021](021-relative-performance-thresholds.md),
    ADR 0020 D17) — recorded locally, on one machine, with the complete instrument set.
    **The baseline is done (2026-09-09); the Helm chart round is not started.**
-2. **[013](013-storage-format-v2.md)** first on the branch — it deletes the code
+2. **[013](archive/013-storage-format-v2.md)** first on the branch — it deletes the code
    the others would otherwise be written against, and it is the largest change.
 3. **[015](015-configuration-hygiene.md)** — after 013, so the example
    configurations and values files are edited once for both.
@@ -598,10 +606,10 @@ The performance baseline of [021](021-relative-performance-thresholds.md) is **r
 Forked from `main` at `2727ecc`. As of that date, design work only — **overtaken 2026-09-09**,
 see the block dated 2026-09-09/10: the branch now carries the segment codec:
 
-- **ADR 0003 amended** (D12a, D13a) — see [013](013-storage-format-v2.md) for
+- **ADR 0003 amended** (D12a, D13a) — see [013](archive/013-storage-format-v2.md) for
   what they decide and why.
 - **The segment-codec API is designed** (013 item 1), recorded in
-  [013](013-storage-format-v2.md) under "Codec API — design outcome".
+  [013](archive/013-storage-format-v2.md) under "Codec API — design outcome".
 
 ### The 013 item 1 blocker is settled (2026-09-09)
 
@@ -612,7 +620,7 @@ at end-of-stream. **Settled 2026-09-09 (owner):** CRC32C in the 40-byte trailer
 GET and HEAD by a tail-first read (ADR 0003 D14), no configuration key; ranged
 reads carry none and the read path stays open for a bounded one (ADR 0012). The
 codec API and the trailer layout can be frozen; the details are in
-[013](013-storage-format-v2.md) under "Decided 2026-09-09".
+[013](archive/013-storage-format-v2.md) under "Decided 2026-09-09".
 
 ## Progress (2026-09-09)
 
@@ -622,13 +630,13 @@ work item. Delete this block when the rows below are all in flight.
 
 | Decision | Recorded in |
 |---|---|
-| CRC32C in the 40-byte trailer; `x-amz-checksum-crc32c` on whole-object GET and HEAD, served tail-first, no configuration key; ranged reads none, path kept open | ADR 0003 D2/D6/D9/D12a/D13/D14, ADR 0012 D10, ADR 0010 D5; [013](013-storage-format-v2.md) items 1, 2d, 3, 5 |
+| CRC32C in the 40-byte trailer; `x-amz-checksum-crc32c` on whole-object GET and HEAD, served tail-first, no configuration key; ranged reads none, path kept open | ADR 0003 D2/D6/D9/D12a/D13/D14, ADR 0012 D10, ADR 0010 D5; [013](archive/013-storage-format-v2.md) items 1, 2d, 3, 5 |
 | A `;` in the raw query is refused with `InvalidArgument` | ADR 0007 D13; the S3-surface ticket item 23 |
 | Every declared upload checksum is verified, `Content-MD5` included; no `verify_upload_digests` key; `DeleteObjects` requires a digest | ADR 0012 D3/D4/D14; [015](015-configuration-hygiene.md) |
 | `metadata_key_prefix` must match `^[a-z0-9][a-z0-9-]{2,}-$` | ADR 0009 D2; [015](015-configuration-hygiene.md) item 14 |
-| `streaming_buffer_size` and `enable_adaptive_buffering` are deleted | ADR 0013 D9; [015](015-configuration-hygiene.md) items 3 and 8, [013](013-storage-format-v2.md) item 12 |
+| `streaming_buffer_size` and `enable_adaptive_buffering` are deleted | ADR 0013 D9; [015](015-configuration-hygiene.md) items 3 and 8, [013](archive/013-storage-format-v2.md) item 12 |
 | No migration of any kind; data is uploaded again from its source; one proxy version at a time | ADR 0017 D3/D5/D6, ADR 0001 D5, ADR 0003 D10; release notes below |
-| `optimizations.multipart_short_part_buffer_size`, default 64 MiB, minimum 5 MiB; copy refusal stays unconditional under `none` | ADR 0011 D5/D9, ADR 0020 D14; [013](013-storage-format-v2.md) items 9 and 12 |
+| `optimizations.multipart_short_part_buffer_size`, default 64 MiB, minimum 5 MiB; copy refusal stays unconditional under `none` | ADR 0011 D5/D9, ADR 0020 D14; [013](archive/013-storage-format-v2.md) items 9 and 12 |
 | 4.0.x and earlier are end-of-life at 5.0.0; a version dry run on every pull request; the full performance baseline before 013 | ADR 0018 D6/D11, ADR 0020 D17; [021](021-relative-performance-thresholds.md), step 1 of the order |
 
 Measured on 2026-09-09 (Apple M5 Pro, one core, 64 KiB blocks, Go 1.27, standard
@@ -649,7 +657,7 @@ the rule that nothing about performance is allowed to make the pipeline longer t
 value it returns there.
 
 The suite is built and has produced the pre-v2 baseline that
-[013](013-storage-format-v2.md) will be judged against. What remains of
+[013](archive/013-storage-format-v2.md) will be judged against. What remains of
 [021](021-relative-performance-thresholds.md) is the continuous-integration leftovers of
 the cancelled gate — a disarming switch with nothing left to disarm, a duplicate
 measurement run, a shared-runner module-cache wipe, an uncleaned comparison bucket, and a
@@ -657,7 +665,7 @@ summary line that does not name what it measures. None of them block the branch.
 
 **Step 1 is therefore down to the Helm chart round**
 ([016](016-helm-chart-fixes.md), not started), which blocks nothing, so
-[013](013-storage-format-v2.md) can begin.
+[013](archive/013-storage-format-v2.md) can begin.
 
 ### What the baseline found, and where each finding now lives
 
@@ -668,12 +676,12 @@ day and its consequence turned out to be the opposite of what is written here.
 
 | Finding | Consequence | Recorded in |
 |---|---|---|
-| The cipher alone is **3.4× faster** than the path it replaces. **The shipped codec, with its CRC32C, is 1.74× faster** — measured after item 1 landed, and the pre-v2 prediction for a serial checksum was 1.9×. The proxy's own profile agrees on where today's cost sits: SHA-256 is 17.3 % of samples against 5.2 % for AES-CTR | The format change is a performance gain on the crypto, but a much smaller one than the primitive suggests. It is **not** where the end-to-end win comes from | [013](013-storage-format-v2.md) success criteria |
-| Upload falls from 72 % to 59 % of the direct backend at exactly the 5 MiB threshold and stays there; **download is already at parity** from 5 MiB up | **Superseded 2026-09-10.** The cliff is the auto-multipart producer, not the cipher and not the self-copy. See the findings below and item 2.0 of [012](012-performance-audit-round2.md) | [013](013-storage-format-v2.md), [012](012-performance-audit-round2.md) |
-| At 1 MiB and 8 MiB ranges the proxy is at 86–103 % today and an **unaligned offset costs nothing**, because AES-CTR seeks to any byte | The one row the segment chain can plausibly make worse. It now has a "before" | [013](013-storage-format-v2.md) |
+| The cipher alone is **3.4× faster** than the path it replaces. **The shipped codec, with its CRC32C, is 1.74× faster** — measured after item 1 landed, and the pre-v2 prediction for a serial checksum was 1.9×. The proxy's own profile agrees on where today's cost sits: SHA-256 is 17.3 % of samples against 5.2 % for AES-CTR | The format change is a performance gain on the crypto, but a much smaller one than the primitive suggests. It is **not** where the end-to-end win comes from | [013](archive/013-storage-format-v2.md) success criteria |
+| Upload falls from 72 % to 59 % of the direct backend at exactly the 5 MiB threshold and stays there; **download is already at parity** from 5 MiB up | **Superseded 2026-09-10.** The cliff is the auto-multipart producer, not the cipher and not the self-copy. See the findings below and item 2.0 of [012](012-performance-audit-round2.md) | [013](archive/013-storage-format-v2.md), [012](012-performance-audit-round2.md) |
+| At 1 MiB and 8 MiB ranges the proxy is at 86–103 % today and an **unaligned offset costs nothing**, because AES-CTR seeks to any byte | The one row the segment chain can plausibly make worse. It now has a "before" | [013](archive/013-storage-format-v2.md) |
 | The proxy's **GET request rate does not scale with client concurrency** — flat at roughly 1770–2360 ops/s while the backend reaches 8300 | Not this release's to fix, but it is what any small-object number will be dominated by | [012](012-performance-audit-round2.md) item 6.3 |
 | Settled resident memory is **98 MiB against a 512 MiB limit** (peak under load 124 MiB, cold 22 MiB), so the planned 400 MiB runtime limit — roughly 80 % of the container limit, not yet set in the chart or compose — is never approached | The predicted 3–5 % gain from `GOMEMLIMIT` has no mechanism on this workload. It may ship as an out-of-memory guard claiming no throughput benefit — the last row of "the minimum" above should be read with that in mind | ADR 0020 residual risks |
-| An RSA-4096 unwrap is **3.8 ms** against 146 ns for AES-256 | The measurement behind dropping the `rsa` provider type | [013](013-storage-format-v2.md) item 15 |
+| An RSA-4096 unwrap is **3.8 ms** against 146 ns for AES-256 | The measurement behind dropping the `rsa` provider type | [013](archive/013-storage-format-v2.md) item 15 |
 
 One defect and one asymmetry were found in passing, neither in this release's scope: the
 defect is that `HeadBucket` answers 200 for a bucket that does not exist
@@ -696,7 +704,7 @@ generated report.
   continuous integration, comparisons are local, D18–D22 added). What remains of
   [021](021-relative-performance-thresholds.md) is continuous-integration cleanup that blocks
   nothing.
-- **[013](013-storage-format-v2.md) item 1, the segment codec**, on the branch: format and
+- **[013](archive/013-storage-format-v2.md) item 1, the segment codec**, on the branch: format and
   associated data, trailer, size functions, writer, sequential reader, window planner, ranged
   reader. 30 tests, `gosec` clean, mutation-tested.
 - **Two instruments that did not exist**: the backend self-copy harness and the three-leg upload
@@ -764,7 +772,7 @@ skeleton below.
 ### Open questions for the owner
 
 1. ~~**Does the producer restructuring join 5.0.0?**~~ **Decided 2026-09-10 (owner): yes.** It is
-   folded into [013](013-storage-format-v2.md) items 6 and 7, which rewrite those paths for the
+   folded into [013](archive/013-storage-format-v2.md) items 6 and 7, which rewrite those paths for the
    format change anyway, and the rule it follows is
    [ADR 0024](../adr/0024-an-upload-forwards-while-it-receives.md): an upload forwards while it
    receives, a part is retained until the backend acknowledges it, and no speed-up is claimed
@@ -809,7 +817,7 @@ taken from this table.
 
 The format is live on every path and **all gates pass on HEAD**: `make test-unit`,
 `make test-integration`, `make test-integration-tls`, `make lint` and `gosec`.
-[013](013-storage-format-v2.md) carries the detail; this is what changed about
+[013](archive/013-storage-format-v2.md) carries the detail; this is what changed about
 the release itself.
 
 **Four defects found and fixed after the format landed**, none of them in the
@@ -872,11 +880,11 @@ release-blocking. Ordered by how much it costs a client to live without:
 
 ## Progress (2026-09-10, afternoon) — the format is live
 
-[013](013-storage-format-v2.md) items 1, 2, 2b, 2c, 3, 4, 5, 6, 7, 7a, 8, 9 and 11
+[013](archive/013-storage-format-v2.md) items 1, 2, 2b, 2c, 3, 4, 5, 6, 7, 7a, 8, 9 and 11
 are done and on the branch. The proxy writes and reads the segment chain on every
 path; the demo stack runs on it. Unit tests and `gosec` are green, and the
 integration suites are green except the eleven multipart and single-part tests
-that still assert the old format. [013](013-storage-format-v2.md) carries the
+that still assert the old format. [013](archive/013-storage-format-v2.md) carries the
 detail, the four defects the session found, and the order of what is left.
 
 **Two things that change what this release says about itself:**
@@ -895,7 +903,7 @@ detail, the four defects the session found, and the order of what is left.
 
 ### Next steps, in order
 
-1. **[013](013-storage-format-v2.md) item 2d — the sealed checksum on the write paths.** The
+1. **[013](archive/013-storage-format-v2.md) item 2d — the sealed checksum on the write paths.** The
    codec already produces and verifies the trailer; this wires the per-part fold for the
    client-driven path and the tail-first read for `HEAD` and whole-object `GET`. It is the next
    item with no open decision in front of it.
@@ -954,10 +962,10 @@ Also removed because nothing called them: 17 methods of the backend interface,
 accessors on `Config`, `Manager`, `MetadataManager` and `ProviderManager`.
 
 This closes [015](015-configuration-hygiene.md) items 1, 3, 7, 8 and 13a,
-[013](013-storage-format-v2.md) items 13 and 14 and the deletion half of item 12,
+[013](archive/013-storage-format-v2.md) items 13 and 14 and the deletion half of item 12,
 [025](025-tink-kms-hcvault.md) work-list item 1, [012](012-performance-audit-round2.md)
 item 1.3, and the `CS-2`, `CS-3` and `S-4` findings of
-[024](024-coverage-round-findings.md).
+[024](archive/024-coverage-round-findings.md).
 
 ### Two things that were not deletions
 
@@ -1003,7 +1011,7 @@ needs an answer here rather than in its own ticket.
 |---|---|---|
 | [016](016-helm-chart-fixes.md) items 6 and 9 | The chart round was scheduled out of the bundle, but two of its items are breaking: item 6 flips a default install's metadata prefix, and every object already stored then reads back as `InvalidObjectState`; item 9 is the certificate/ingress consistency guard, which refuses a configuration that installs today | **Recommended: the two items move into the bundle**, the rest of the chart round stays out. Not yet decided by the owner. Item 6 has to move `metadata_key_prefix` without changing the shipped default, or it is a data-loss change dressed as a chart fix |
 | [025](025-tink-kms-hcvault.md) work-list 1 | Deleting the Tink stub removes a provider type an operator can write today | **Done this session.** The type is gone from the tree and from `go.mod`; configuration still refuses `type: "tink"` with a named error |
-| [024](024-coverage-round-findings.md) X-2a | `WriteXML` commits `200` before marshalling can fail, so a marshalling failure reaches the client as a truncated body behind a success status. Fixing it turns that into a `500` | **Recommended: in.** It is one function, it sits in the same file the listing rewrite of [018](018-listobjectsv2-document.md) touches, and shipping a truncated body behind a `200` into a major that rewrites every XML document would be hard to defend. Not yet decided by the owner |
+| [024](archive/024-coverage-round-findings.md) X-2a | `WriteXML` commits `200` before marshalling can fail, so a marshalling failure reaches the client as a truncated body behind a success status. Fixing it turns that into a `500` | **Recommended: in.** It is one function, it sits in the same file the listing rewrite of [018](018-listobjectsv2-document.md) touches, and shipping a truncated body behind a `200` into a major that rewrites every XML document would be hard to defend. Not yet decided by the owner |
 | the S3-surface ticket's unfolded item 3 | Two XML writers produce different bytes for the same structure; unifying them changes the response bytes of roughly twenty bucket sub-resource documents | **Open question 4 below.** The ticket says "record it, do not start it here", but a byte-level response change is exactly what a major is for, and the next major after this one is unscheduled |
 
 Two further breaking items resolve themselves and need no decision:
@@ -1042,7 +1050,7 @@ off a ticket's status line.
 4. **The rest of [015](015-configuration-hygiene.md)**: the clock skew that the
    header-signed path ignores, the pre-signed ceiling, the plain-HTTP backend
    refusal, and the prefix shape rule. The deletion half is done.
-5. **[013](013-storage-format-v2.md)'s remainder**: the sealed checksum on the
+5. **[013](archive/013-storage-format-v2.md)'s remainder**: the sealed checksum on the
    read side (item 2d), the write-side prefix refusal (4a), `ListParts` from the
    part table (10), the size function everywhere (11), and the performance
    after-column (15).
@@ -1246,9 +1254,9 @@ carrying decided-but-unbuilt rules. Ordered as the work will be taken:
 |---|---|---|
 | 0 | Lint, the `;` refusal, key material, the stale ADR statuses | **Done 2026-09-11** |
 | 1 | Configuration and startup: [015](015-configuration-hygiene.md) items 2, 4, 5, 6, 8b, 9, 10, 14, 15, and the wall clocks and shutdown deadline (ADR 0015, [012](012-performance-audit-round2.md) items 1.2 and 4.1) | **Done 2026-09-11.** [015](015-configuration-hygiene.md) has one item left, its own verification pass |
-| 2 | The S3 surface: the S3-surface ticket and [024](024-coverage-round-findings.md) as **one** package — they overlap so heavily that splitting them creates the ownership holes below | **Done 2026-09-11.** 022 is deleted; 024 keeps one row, S-3, which needs a decision |
+| 2 | The S3 surface: the S3-surface ticket and [024](archive/024-coverage-round-findings.md) as **one** package — they overlap so heavily that splitting them creates the ownership holes below | **Done 2026-09-11.** 022 is deleted; 024 keeps one row, S-3, which needs a decision |
 | 3 | Client checksum verification (ADR 0012) — nothing of it exists | **Done 2026-09-11.** 014 is deleted; two pre-existing defects were found on the way in and fixed |
-| 4 | The format remainder ([013](013-storage-format-v2.md)): 4a, the reserved trailer part, `ListParts`, and item 2d with ADR 0003 D14 | **Done 2026-09-11.** ADR 0003, ADR 0009, ADR 0011 and ADR 0012 are fully implemented; 013 keeps the after-column and the documentation, which are wave 5 |
+| 4 | The format remainder ([013](archive/013-storage-format-v2.md)): 4a, the reserved trailer part, `ListParts`, and item 2d with ADR 0003 D14 | **Done 2026-09-11.** ADR 0003, ADR 0009, ADR 0011 and ADR 0012 are fully implemented; 013 keeps the after-column and the documentation, which are wave 5 |
 | 5 | The chart ([016](016-helm-chart-fixes.md)), the release notes, the upgrade rehearsal, the performance after-column | **Mostly done 2026-09-11.** The chart is 20 of 21 items, the after column exists, the two configuration remainders and the documentation are closed. Left: the upgrade rehearsal, the release notes, the label, and one undecided chart item |
 
 ### Ownership holes — closed by wave 2, except one
@@ -1434,7 +1442,7 @@ version and commit, active connections, and
 
 So the sensitive part is narrow — the licensee's name and company, plus a
 deployment fingerprint. **No ADR answers this**, which is why it is the one row
-keeping [024](024-coverage-round-findings.md) alive. Two options were put to the
+keeping [024](archive/024-coverage-round-findings.md) alive. Two options were put to the
 owner: leave the listener unauthenticated (what every Prometheus exporter is, and
 what makes a Kubernetes scrape work) and drop the two identifying labels, keeping
 the expiry gauges an operator alarms on; or give it real authentication, which
@@ -1587,7 +1595,7 @@ The crash itself was the removal working: the pod refused to start with
 ## Progress (2026-09-11, night) — wave 4, the format remainder
 
 **Four ADRs are fully implemented for the first time: 0003, 0009, 0011 and
-0012.** What is left of [013](013-storage-format-v2.md) is the performance
+0012.** What is left of [013](archive/013-storage-format-v2.md) is the performance
 after-column and the documentation, both wave 5, and neither is format work.
 
 ### What landed
@@ -1725,9 +1733,9 @@ owner has not decided.
   of using the one published in Velero's source, and scans the Velero-side backup
   and restore logs, which nothing was reading.
 - **`DEVELOPER.md` exists** and `CLAUDE.md` is 265 lines shorter for it
-  ([013](013-storage-format-v2.md) item 16). Two documents had disagreed about
+  ([013](archive/013-storage-format-v2.md) item 16). Two documents had disagreed about
   whether the file should exist at all.
-- **The after column exists** ([013](013-storage-format-v2.md) item 15):
+- **The after column exists** ([013](archive/013-storage-format-v2.md) item 15):
   `perf-baseline/20260911T103132Z-cc62c05/`, every instrument at `ok`, with a
   written `FINDINGS.md`. ADR 0020 and ADR 0024 record it; the upload claim this
   release has been holding may now be made.
@@ -2320,8 +2328,10 @@ refused afterwards like any other. An `rsa` deployment configures an `aes` key f
       0005 (no KMS provider), 0023 (filename encryption), 0016's shared token,
       0019's single client, 0020's continuous-integration half, and 0008 D9's
       exit-provider metadata leak, which is an open question below.
-- [ ] Each ticket listed here is **deleted** when its work lands, and
-      `git grep` shows nothing outside `docs/tickets/` referencing it.
+- [ ] Each ticket listed here is **archived** — moved to `docs/tickets/archive/`
+      — when its work lands, and `git grep` shows nothing outside
+      `docs/tickets/` referencing it. **011, 013 and 024 went on 2026-09-13**;
+      the rest of the table below is what is left.
 
       **The sweep, deferred to immediately before the merge (decided 2026-09-13).**
       Verified against the code and against each ticket's own status table on
@@ -2330,10 +2340,10 @@ refused afterwards like any other. An `rsa` deployment configures an `aes` key f
       | Ticket | State | Move out first |
       |---|---|---|
       | 010 | Complete since 2026-04-25. Every code link in it is dead — `aes_ctr.go`, `streaming_io.go`, `singlepart.go`, `multipart.go`, `hmac_calculator.go` are all gone | The measurement tables and the before/after rule belong in ADR 0020 |
-      | 011 | Done | The rule is ADR 0002 |
-      | 016 | All twenty-one items done; the ticket asks to be deleted | The chart decisions: partly ADR 0026, the rest has no home yet |
-      | 024 | Its own deletion condition — the S-3 decision — was met 2026-09-12 | Already ADRs per the index |
-      | 015 | Every item landed, but 015 ties its own deletion to this merge | Honour its condition; it goes with the rest |
+      | 011 | **Archived 2026-09-13** | Nothing owed: the rule is ADR 0002 |
+      | 016 | All twenty-one items done; the ticket asks to be closed | The chart decisions: partly ADR 0026, the rest has no home yet |
+      | 024 | **Archived 2026-09-13**; the S-3 decision of 2026-09-12 met its own condition | Nothing owed: already ADRs per the index |
+      | 015 | Every item landed, but 015 ties its own close to this merge | Honour its condition; it goes with the cut |
 
       The two stray directories go with 010: `docs/tickets/010-tier1.3/` and
       `010-tier4.1/` hold `go tool pprof -top` text and test logs with no README
@@ -2341,6 +2351,7 @@ refused afterwards like any other. An `rsa` deployment configures an `aes` key f
       them can be reopened; what was worth keeping are the tables in 010, which
       move to ADR 0020.
 
-      **Extraction is the work, not `git rm`.** A ticket is deleted only after the
-      durable part of it has a permanent home — that is what ADR 0022 asks for,
-      and three of these five are still cited as evidence today.
+      **Extraction is the work, not `git mv`.** A ticket is archived only after
+      the durable part of it has a permanent home — that is what ADR 0022 D4
+      asks for, and the archive does not soften it: a rule found in an archived
+      file is the same process defect as a rule found in a live one.

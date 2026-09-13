@@ -7,7 +7,7 @@ one format: an authenticated AES-256-GCM segment chain closed by a sealed traile
 under one random data key per object that is wrapped by the configured key encryption key
 (ADR 0002). There is no second cipher, no configurable integrity mode and no format switch.
 
-## Decisions live in ADRs; tickets are work lists that get deleted
+## Decisions live in ADRs; tickets are work lists that get archived
 
 **Every design decision of this project is recorded as an ADR** under
 [docs/adr/](docs/adr/) — see [docs/adr/README.md](docs/adr/README.md) for the
@@ -19,18 +19,22 @@ package names) so it stays true when the tree moves. The product's own vocabular
 algorithm names — is not a code reference and must be exact.
 
 **A ticket is a work list and nothing else.** It lives in `docs/tickets/`, it
-exists while work is outstanding, and it is closed by **deleting the file** when
-the work lands. Before deleting it, move anything durable out of it: the decision
-into an ADR, the user-facing consequence into `README.md` or
-`SECURITY_ARCHITECTURE.md`. Finish, document, delete — a backlog that outlives
-its work costs focus.
+exists while work is outstanding, and it is closed by **moving the file to
+`docs/tickets/archive/`** when the work lands. Before moving it, move anything
+durable out of it: the decision into an ADR, the user-facing consequence into
+`README.md` or `SECURITY_ARCHITECTURE.md`. Finish, document, archive — a backlog
+that outlives its work costs focus. **The extraction is the close**, not the
+move: an archived file is history and is never a source of a current rule, so a
+rule found there is the same process defect as a rule found in a live ticket
+(ADR 0022).
 
 **Nothing outside `docs/tickets/` may reference a ticket.** Not `README.md`, not
 `SECURITY_ARCHITECTURE.md`, not this file, not a code comment, not a commit
 message, not a pull request. Cite the ADR instead; ADRs may be referenced from
 anywhere. A code comment that has to point at a pending change points at its ADR
-("the segmented format, ADR 0003"), never at a ticket number. Before deleting a
-ticket, `git grep` for its number and clear whatever is left.
+("the segmented format, ADR 0003"), never at a ticket number. Before archiving a
+ticket, `git grep` for its number and clear whatever is left — archiving does not
+soften this, an archived ticket is as uncitable as a deleted one.
 
 ## Developer documentation lives in `docs/developer/`
 
@@ -51,7 +55,7 @@ Where a durable insight belongs:
 | How a subsystem works, an invariant, a hard-won detail | [docs/developer/](docs/developer/) |
 | What an operator or a client needs | [README.md](README.md) |
 | The threat model and residual risks | [SECURITY_ARCHITECTURE.md](SECURITY_ARCHITECTURE.md) |
-| Work still outstanding | a [ticket](docs/tickets/), deleted when the work lands |
+| Work still outstanding | a [ticket](docs/tickets/), archived when the work lands |
 
 Do not let implementation detail accumulate in `README.md`; that page is for
 operators and clients. If you catch yourself explaining the code there, the
@@ -543,7 +547,7 @@ than 16 distinct byte values — that is a passphrase, not a key. Generate one w
 - End-to-end suites: one package per client under `test/e2e/<client>/`, tag `//go:build e2e`, an `e2e-up.sh`/`e2e-down.sh` pair and a `versions.env` beside the tests; shared helpers in `test/e2e/harness/`
 - Config examples: `config/{provider}-example.yaml` (aes-example.yaml, aes-tls-example.yaml, multi-example.yaml, exit-example.yaml)
 - ADRs: `docs/adr/NNNN-<kebab-title>.md`, index in `docs/adr/README.md` — permanent
-- Tickets: `docs/tickets/NNN-<slug>.md` — work lists, deleted when the work lands, referenced from nowhere else
+- Tickets: `docs/tickets/NNN-<slug>.md` — work lists, moved to `docs/tickets/archive/` when the work lands, referenced from nowhere else
 
 ## Common Development Tasks
 

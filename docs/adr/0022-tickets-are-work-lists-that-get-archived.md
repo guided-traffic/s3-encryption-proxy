@@ -1,8 +1,19 @@
-# ADR 0022: Tickets are work lists that get deleted; decisions live in ADRs
+# ADR 0022: Tickets are work lists that get archived; decisions live in ADRs
 
 ## Status
 
 Accepted. Date: 2026-09-07.
+
+**Amended 2026-09-13: a closed ticket is archived, not deleted.** D4 and D10 now move the
+file into an archive subdirectory of the ticket directory instead of removing it, and the
+alternative this ADR rejected on 2026-09-07 — *Archive closed tickets in a subdirectory* — is
+superseded below. What did **not** change is the work that closing costs: everything durable
+still moves out before the file is archived, and a file that arrives in the archive with a
+rule in it that no ADR holds is the same defect it always was. Two things carried the
+reversal. The referencing objection does not apply to an archive inside the ticket directory,
+because D5 forbids a reference from outside it either way, and the archive is inside it. And
+version control keeping the history is true and useless: nobody reads a deleted file, so the
+closed history the residual risk below has never found a home for had nowhere to go at all.
 
 **Partly implemented.** Implemented today: this directory exists, its format and ground rules are
 written down, the contributor instructions carry the rule, and the decisions taken between
@@ -93,10 +104,13 @@ lands. A decision is a decision before it is code.
 it up. It is not the decision record, not the threat model, not the release note, not an archive
 of verification runs.
 
-**D4.** A ticket is closed by **deleting the file**. Before deleting it, everything durable moves
-out: the decision into an ADR, the operator-facing consequence into the user-facing README or the
-security architecture document, the contributor-facing one into the developer guide. Finish,
-document, delete.
+**D4.** A ticket is closed by **moving the file into the `archive` subdirectory of the ticket
+directory**. Before moving it, everything durable moves out: the decision into an ADR, the
+operator-facing consequence into the user-facing README or the security architecture document,
+the contributor-facing one into the developer guide. Finish, document, archive. **The
+extraction is the close**; the move is what is left of it afterwards. An archived file is
+history and is never a source of a current rule: a reader who finds a rule there has found a
+defect in the process, exactly as a reader who finds one in a live ticket has.
 
 **D5.** Nothing outside the ticket directory references a ticket. Not the README, not the security
 architecture, not the contributor instructions, not a source comment, not a commit message, not a
@@ -119,8 +133,10 @@ section states the new rule, the `Status` section records the amendment with its
 superseded rule is marked as superseded rather than deleted. A reader never finds an old rule
 stated as current. A reversal amends the ADR; it does not become a new row in a work list.
 
-**D10.** Before a ticket file is deleted, the repository is searched for its number and for the
+**D10.** Before a ticket file is archived, the repository is searched for its number and for the
 labels it defined, and every remaining reference is cleared or rewritten to point at the ADR.
+The archive changes nothing about this: a reference to an archived ticket is a reference to a
+work list that ended, and D5 forbids it wherever it stands.
 
 **D11.** The `Status` section of every ADR says plainly what is implemented and what is only
 decided. The `Decision` section is written in the present tense either way, because it is the rule
@@ -129,14 +145,20 @@ the product follows from the moment the decision is taken.
 ## Consequences
 
 * Closing a change costs more at the end than it used to: write or amend the ADR, update the
-  user-facing documents, search for stale references, then delete the ticket. That is the point.
+  user-facing documents, search for stale references, then archive the ticket. That is the point.
   The record that survives is the one a later reader needs, and the backlog stays small enough to
   stay focused.
 * There are now two places to look and a discipline to keep them apart. A rule found in a ticket
   is a defect in the process, not a shortcut.
-* Deleting a file feels like throwing away history. Version control keeps it, but nobody will go
-  looking. Whatever is worth reading later has to be moved out deliberately, at the moment of
-  deletion, by the person who still knows what mattered.
+* The archive keeps what version control kept in name only, and that is its whole benefit: a
+  finished work list stays readable without a commit hash. It buys nothing for the durable
+  record, because whatever is worth citing later still has to be moved out deliberately, at
+  the moment of archiving, by the person who still knows what mattered.
+* An archive grows without bound and is read by almost nobody — the objection this ADR first
+  accepted, now carried rather than avoided. It is kept survivable by two things and no more:
+  the extraction duty of D4, which is what stops a live rule living there, and keeping the
+  archive out of the knowledge-graph corpus, so a stale plan cannot be surfaced as an answer
+  about the product.
 * The existing backlog does not migrate itself. Over a hundred labels and thousands of lines have
   to be either lifted into an ADR or consciously accepted as lost, one ticket at a time, before
   any of those files can be removed.
@@ -162,10 +184,21 @@ linkage and not the mixing: the decision would still live in a document written 
 reader inside the directory still cannot tell a rule from a proposal, and the question of when a
 ticket may be deleted is left unanswered — which is the question that made the directory grow.
 
-**Archive closed tickets in a subdirectory instead of deleting them.** Rejected. An archive is a
+**Archive closed tickets in a subdirectory instead of deleting them.** ~~Rejected. An archive is a
 place where everything is kept and nothing is read. It preserves exactly the ambiguity that hurt —
 a stale plan sitting one directory away from a live rule — and it re-creates the referencing
-problem at the new location.
+problem at the new location.~~ **Superseded 2026-09-13: this is what D4 now does.** The
+referencing half of the objection was wrong — the archive sits inside the ticket directory, and
+D5 already forbids a reference from outside it, so there is no new location to cite. The
+ambiguity half was right and is accepted as a cost, held down by the extraction duty D4 keeps
+and by leaving the archive out of the knowledge-graph corpus.
+
+**Delete the file and rely on version control for the history.** Superseded 2026-09-13, and it
+is what this ADR did between 2026-09-07 and that date. The history survives and is not read:
+recovering a finished work list means knowing it existed, finding the commit that removed it
+and reading it out of a diff. That is enough for an audit and not enough for the question the
+material actually gets asked — why does this look the way it does — which is the question the
+residual risk below has never had a home for.
 
 **Record decisions only in the user-facing documents.** Rejected. Those state what the product
 does now. They have no room for the alternatives, the rejected option and the accepted cost, which
@@ -185,13 +218,20 @@ references that outlive the ticket, and they are the ones that made deletion imp
 
 ## Residual risks
 
-* **Open: where closed history goes.** The label index holds settled material no ADR claims — the
-  defects already repaired, the findings that were investigated and refuted, and the reasons
-  several pieces of code look the way they do. It is worth keeping and it is not a decision. No
-  home has been chosen, and today it exists as a section of the ticket directory's own index
-  page — which is not deleted with a ticket, so nothing forces the question, and outside the
-  security findings, which the security architecture document restates as its hardening checklist,
-  nothing else holds the material.
+* **Narrowed 2026-09-13: where closed history goes.** The archive is now the home for one half of
+  it — the finished work list itself, with its verification notes and the reasons a piece of code
+  looks the way it does, readable without a commit hash. It is not a home for the other half: the
+  label index still defines over a hundred identifiers no ADR claims, it lives on the ticket
+  directory's own index page, and that page is not archived with any ticket, so nothing forces the
+  question. Outside the security findings, which the security architecture document restates as
+  its hardening checklist, nothing else holds the material.
+* **Accepted 2026-09-13: an archived plan can be read as a current rule.** This is the objection
+  the 2026-09-07 decision avoided by deleting, and it is now carried. Three things hold it down
+  and none of them is a check: D4's extraction duty, which is what keeps a live rule out of the
+  archive in the first place; the archive staying out of the knowledge-graph corpus, so a stale
+  plan is never surfaced as an answer about the product; and D5, unchanged, which keeps every
+  reference to any ticket inside the ticket directory. A reader who opens an archived file
+  directly has no marker in the file itself telling them its age.
 * **Answered for new work, 2026-09-12: where measurement artefacts live.** ADR 0020 settled it
   for anything measured since — a run writes its record and its summary side by side, outside the
   ticket directory, and those records are kept while the profiles they reference are not. What is
