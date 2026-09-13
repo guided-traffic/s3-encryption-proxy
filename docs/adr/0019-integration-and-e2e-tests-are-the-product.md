@@ -102,12 +102,13 @@ checking three.
 **Amended 2026-09-13, and the amendment is a correction.** These suites first
 shipped with every open defect recorded as an *expected* refusal: a case stated
 the answer the product gives today, so the suite was green while the product was
-broken, and the release gate reported that a product two named clients can
-neither upload to nor download from was ready to merge. That is the opposite of
-what D1 and D4 are for. **A test states the behaviour the product is supposed to
-have.** If the product does not have it, the test is red, it is committed red,
-and it stays red until the product is fixed — a red suite is a correct suite, and
-a defect recorded as an expectation is a defect filed rather than surfaced.
+broken, and the release gate reported the product ready to merge while an
+object written by a single request could, through a client configured the
+documented way, be neither uploaded nor fetched back. That is the opposite of
+what D1 and D4 are for. The rule that came out of it — a test states the
+behaviour the product is **supposed** to have, is committed red until the product
+meets it, and a behaviour an ADR decides is itself the target — binds every
+layer, not only the suites this record governs, and is **ADR 0031**.
 
 Each run writes a verdict table naming what is still broken, and the job puts the
 same list in its step summary, so a red check says which defects are open without
@@ -169,8 +170,11 @@ real S3 client through backup and restore in a disposable cluster.
 may be folded into another test that keeps every assertion it carried, and that fold needs the
 repository owner's explicit approval, stated as such.
 
-**D3** Work is not finished until both suites are green. The report on a change names which
-suites ran and against which stack.
+**D3** Work is not finished until both suites tell the truth about the change, and the report on
+a change names which suites ran and against which stack. *(Amended 2026-09-13 by ADR 0031: "until
+both suites are green" was the original wording and is superseded. A suite that is red because it
+states a target the product does not yet meet is finished work — ADR 0031 D2 and D3. What is not
+finished is a suite red for a reason the change introduced.)*
 
 **D4** No environment switch, flag or configuration value disarms an assertion. The only
 legitimate skip is a suite skipping itself when the backend or the proxy it needs is
@@ -228,7 +232,11 @@ a change to that interface breaks the build, and exist once rather than once per
 **D16** A test that pins behaviour a decided change will replace carries an in-source marker
 naming that change, so the churn is localised and greppable and the change and its tests move
 together. Tests are not written against code a decided change deletes; that work is sequenced
-after the change — today that is the storage format change of ADR 0003.
+after the change — today that is the storage format change of ADR 0003. *(Clarified 2026-09-13
+against ADR 0031 D4, which forbids pinning the current answer: the two do not collide. What this D
+sanctions is a test asserting behaviour that is **correct today** and that a decided change will
+replace — the marker says when it moves. It is not licence to assert an answer the product is not
+supposed to give.)*
 
 ## Consequences
 
@@ -343,6 +351,7 @@ chart must move together.
 - ADR 0013 — A configuration key exists only if code reads it, and an unworkable configuration refuses to start
 - ADR 0017 — Stored data compatibility is not owed; a major release may break the format
 - ADR 0018 — A major release is declared by a label, never discovered at merge
+- ADR 0031 — a test states the target and stays red until the product meets it; it generalises D1 and D4 of this record to every test layer and supplies the target-versus-current distinction.
 - ADR 0020 — Performance is measured before and after, never asserted
 - ADR 0021 — Key material and licenses are generated, never committed
 - [README.md](../../README.md) — user-facing reference, including the client configuration the end-to-end environment must run

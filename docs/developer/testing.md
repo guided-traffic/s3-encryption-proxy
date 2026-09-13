@@ -294,7 +294,7 @@ tracked, and `RCLONE_BIN` / `S3CMD_BIN` override the installed binary. Measured
 2026-09-13 against a warm stack: rclone 5.4s, s3cmd 8.3s.
 
 **A client suite asserts the behaviour the product is supposed to have, never
-the behaviour it has.** Both suites are red today, and that is them working: 13 of
+the behaviour it has** ([ADR 0031](../adr/0031-a-test-states-the-target-and-stays-red-until-the-product-meets-it.md))**.** Both suites are red today, and that is them working: 13 of
 28 rclone cases and 10 of 19 s3cmd cases fail on the entity-tag question of
 ADR 0010 D12 and on two routing gaps. They are committed red and stay red until
 the product is fixed. Encoding the current answer as the expectation — which is

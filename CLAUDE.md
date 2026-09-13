@@ -213,7 +213,7 @@ make build-keygen && ./build/s3ep-keygen
 - `test/integration/conformance` is not one of them and is deliberately outside `INTEGRATION_PKGS`: it carries its own `//go:build conformance` tag and asserts what S3 specifies against a proxy pointed at *any* backend — the same binary runs against each, and the difference between two backends is the finding, not a flake (ADR 0027). It is driven by `scripts/conformance-run.sh <backend>` through `make test-conformance` (minio + localstack, free) and `make test-conformance-wasabi` (**billed**), and the `conformance` CI job is a release gate
 - Test helper: `test/integration/minio_test_helper.go` provides `TestContext` with MinIO and proxy clients; `encryption_validation_helper.go` asserts that stored bytes are ciphertext (entropy checks)
 - You are not allowed to disable, skip or remove integration or e2e tests — Velero, rclone or s3cmd — they represent the end-user experience (ADR 0019)
-- Don't call your work done until all integration tests pass
+- Don't call your work done until the suites tell the truth about your change: every test that was green before it is green after, and any test that is red is red for a target the product has not met yet, not for something your change broke (ADR 0031 D2)
 - Integration Test need to be prepared with ./start-demo.sh (it takes 30 seconds to start)
 - If you want to get the recent logs from s3-encryption-proxy container use: docker logs proxy | tail -50 (the TLS listener is a second container, `proxy-tls`)
 - Try integrate new unit-tests into existing files if it makes sense
@@ -238,7 +238,7 @@ make build-keygen && ./build/s3ep-keygen
 #### Maintaining the e2e suites — read this before you touch one
 
 **A test asserts the TARGET behaviour of the software, never the behaviour it has
-today.** This is not a style preference, it is the rule:
+today** (ADR 0031). This is not a style preference, it is the rule:
 
 - Write what the product is *supposed* to do. If it does not do that yet, the test is
   **red, and it stays red until the product is fixed**. A red suite is a correct suite.
