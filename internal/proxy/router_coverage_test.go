@@ -673,3 +673,75 @@ func TestRtPxEveryAnswerStatesARequestID(t *testing.T) {
 		})
 	}
 }
+
+// A bucket addressed with a trailing slash is the same bucket, and every route
+// that answers for "/{bucket}" answers for "/{bucket}/" too.
+//
+// This is the invariant, not a list: fifteen of the sixteen bucket routes had no
+// trailing-slash form, and the symptom was not a routing failure - the request
+// reached the general bucket handler, which does not know the sub-resource and
+// answered 405. A route added without its twin would look exactly the same, so
+// the router is walked rather than a handful of paths spot-checked.
+func TestRtPxEveryBucketRouteAnswersWithATrailingSlashToo(t *testing.T) {
+	_, router := RtPxrouter(t, false)
+
+	type shape struct {
+		methods string
+		queries string
+	}
+	forms := map[string]map[shape]bool{
+		"/{bucket}":  {},
+		"/{bucket}/": {},
+	}
+
+	require.NoError(t, router.Walk(func(route *mux.Route, _ *mux.Router, _ []*mux.Route) error {
+		template, err := route.GetPathTemplate()
+		if err != nil {
+			return nil //nolint:nilerr // not every route has a path
+		}
+		seen, watched := forms[template]
+		if !watched {
+			return nil
+		}
+		methods, _ := route.GetMethods()
+		queries, _ := route.GetQueriesTemplates()
+		sort.Strings(methods)
+		sort.Strings(queries)
+		seen[shape{methods: strings.Join(methods, ","), queries: strings.Join(queries, ",")}] = true
+		return nil
+	}))
+
+	require.NotEmpty(t, forms["/{bucket}"], "the walk reached no bucket route at all")
+	assert.Equal(t, forms["/{bucket}"], forms["/{bucket}/"],
+		"every bucket route must answer both forms; a route registered on one of them is unreachable "+
+			"for any client that writes the other")
+}
+
+// The two verbs a real client was refused on, driven end to end. They are the
+// ones a suite caught; the walk above is what keeps the other thirteen honest.
+func TestRtPxABucketSubResourceWithATrailingSlashReachesItsHandler(t *testing.T) {
+	_, router := RtPxrouter(t, false)
+
+	for _, tc := range []struct{ name, method, target, want string }{
+		{"batch delete", http.MethodPost, "/bucket/?delete=", "object.(*Handler).HandleDeleteObjects"},
+		{"list open uploads", http.MethodGet, "/bucket/?uploads=", "multipart.(*ListHandler).HandleListMultipartUploads"},
+		{"the bucket policy", http.MethodGet, "/bucket/?policy=", "bucket.(*PolicyHandler).Handle"},
+		{"a listing", http.MethodGet, "/bucket/", "bucket.(*Handler).Handle"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Contains(t, RtPxhandlerName(t, router, RtPxsignedRequest(t, tc.method, tc.target)), tc.want)
+		})
+	}
+}
+
+// The trailing slash is a bucket only where there is nothing after it. A key
+// that ends in one is still a key, and the object route still owns it.
+func TestRtPxAKeyEndingInASlashIsStillAKey(t *testing.T) {
+	_, router := RtPxrouter(t, false)
+
+	match := RtPxmatch(t, router, httptest.NewRequest(http.MethodGet, "/bucket/prefix/", nil))
+
+	assert.Equal(t, "bucket", match.Vars["bucket"])
+	assert.Equal(t, "prefix/", match.Vars["key"],
+		"the bucket form must not swallow an object whose key ends in a slash")
+}

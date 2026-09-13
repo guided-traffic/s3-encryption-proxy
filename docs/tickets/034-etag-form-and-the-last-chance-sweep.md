@@ -68,6 +68,10 @@ suite read as the hash.
 
 Both end-to-end suites exist, have run, and have been analysed.
 
+**Both suites are green as of 2026-09-13** — rclone 28 of 28, s3cmd 19 of 19.
+What follows is how that was reached and what it cost; the numbers below are the
+state before the entity-tag marker and the routing fix.
+
 **The defect, in one line.** 23 of 47 e2e rows are red. Two are routing (S6a,
 S6b). The other 21 are the entity tag, and the worst of them is not an upload
 failure: **an object written by a single-request `PUT` is unreachable to rclone in
@@ -333,9 +337,16 @@ four `s3ep-` keys, and each client's own annotation (`X-Amz-Meta-Md5chksum`,
    `s3cmd del --recursive` cannot delete anything, `s3cmd multipart` cannot list
    the uploads S2 leaves behind, and therefore a user cannot remove their own
    bucket without backend credentials. Found only because a real client was
-   driven; no SDK sends the trailing slash. **This is a separate defect and
-   wants its own decision** — it is a routing fix, not a format change, and it
-   is not gated on the entity-tag question.
+   driven; no SDK sends the trailing slash.
+
+   **Fixed 2026-09-13, and it was fifteen doors rather than two.** Counting the
+   router showed sixteen routes on `/{bucket}` and exactly one twin on
+   `/{bucket}/` — every bucket sub-resource was unreachable for a client that
+   writes the slash, not only the two s3cmd drove. Never dangerous: the general
+   bucket handler refuses a sub-resource it does not know rather than running the
+   base operation. Both forms are now registered through one helper, and a test
+   walks the router and refuses any `/{bucket}` route without its twin, because
+   a route added on one form only looks exactly like a deliberate `405`.
 
 #### 4. Does any client parse the number behind the dash and refuse `0`?
 

@@ -5,12 +5,14 @@
 **Accepted.** Date: 2026-09-13.
 
 **Implemented 2026-09-13, the same day it was decided.** Every answer and every inverse
-below is in the tree, with the two suites as the evidence: rclone went from thirteen
-failing cases to two, s3cmd from ten to two, and of the four that remain none is the
-entity tag's shape — two are the trailing-slash routing gap and two are the case D9
-records as a documented limit. The unit, integration and conformance suites are green,
-the last of them driving the inverse end to end: a client sends back the tag a metadata
-request gave it and receives `304`.
+below is in the tree, and both client suites now meet every target they state — rclone 28
+of 28, s3cmd 19 of 19, from fifteen and nine before the marker. The unit, integration and
+conformance suites are green, the last of them driving the inverse end to end: a client
+sends back the tag a metadata request gave it and receives `304`.
+
+The workaround the read cases carried for the single-request upload is gone with the
+defect, which is the other half of that number: those cases now place their object with
+the client's defaults, so a regression on the write side breaks them too.
 
 Two questions this decision creates are open and named under *Residual risks*: what
 replaces the end-to-end digest s3cmd loses, and what the marker costs in per-object
@@ -112,6 +114,13 @@ that removes a false promise while staying invertible.
 multipart object answers the backend's `<hex>-N` over the stored parts, so a client that
 recomputes the formula over its own plaintext parts sees a mismatch. Closing that would require
 storing a plaintext composite, which is D10.
+
+The limit is stated where a user meets it — the client's own configuration section in
+`README.md` carries the one setting it asks for and the reason — and the suite states it as a
+target rather than carrying it as a failure: the case that drives a client's defaults asserts the
+refusal, and the cases that drive the documented setting assert the upload. That case turns red
+the day an upstream client ships a provider entry for this endpoint, which is the day the limit
+can be lifted rather than a regression.
 
 **D10** A plaintext digest sealed in the object is refused for this release and is the only route
 by which the entity tag could ever become a content digest again. It would cost a six-fold

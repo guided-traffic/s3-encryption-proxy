@@ -95,21 +95,21 @@ func (s *Server) setupRoutes(router *mux.Router) {
 	s3Router.HandleFunc("/", rootHandler.HandleListBuckets).Methods("GET")
 
 	// Bucket sub-resources (must be defined BEFORE general bucket operations)
-	s3Router.HandleFunc("/{bucket}", bucketHandler.GetACLHandler().Handle).Methods("GET", "PUT").Queries("acl", "")
-	s3Router.HandleFunc("/{bucket}", bucketHandler.GetCORSHandler().Handle).Methods("GET", "PUT", "DELETE").Queries("cors", "")
-	s3Router.HandleFunc("/{bucket}", bucketHandler.GetPolicyHandler().Handle).Methods("GET", "PUT", "DELETE").Queries("policy", "")
-	s3Router.HandleFunc("/{bucket}", bucketHandler.GetLocationHandler().Handle).Methods("GET").Queries("location", "")
-	s3Router.HandleFunc("/{bucket}", bucketHandler.GetLoggingHandler().Handle).Methods("GET", "PUT").Queries("logging", "")
+	bucketRoute(s3Router, bucketHandler.GetACLHandler().Handle, []string{"GET", "PUT"}, "acl", "")
+	bucketRoute(s3Router, bucketHandler.GetCORSHandler().Handle, []string{"GET", "PUT", "DELETE"}, "cors", "")
+	bucketRoute(s3Router, bucketHandler.GetPolicyHandler().Handle, []string{"GET", "PUT", "DELETE"}, "policy", "")
+	bucketRoute(s3Router, bucketHandler.GetLocationHandler().Handle, []string{"GET"}, "location", "")
+	bucketRoute(s3Router, bucketHandler.GetLoggingHandler().Handle, []string{"GET", "PUT"}, "logging", "")
 
 	// Migrated handlers - using new bucket handler structure
-	s3Router.HandleFunc("/{bucket}", bucketHandler.GetVersioningHandler().Handle).Methods("GET", "PUT").Queries("versioning", "")
-	s3Router.HandleFunc("/{bucket}", bucketHandler.GetNotificationHandler().Handle).Methods("GET", "PUT").Queries("notification", "")
-	s3Router.HandleFunc("/{bucket}", bucketHandler.GetTaggingHandler().Handle).Methods("GET", "PUT", "DELETE").Queries("tagging", "")
-	s3Router.HandleFunc("/{bucket}", bucketHandler.GetLifecycleHandler().Handle).Methods("GET", "PUT", "DELETE").Queries("lifecycle", "")
-	s3Router.HandleFunc("/{bucket}", bucketHandler.GetReplicationHandler().Handle).Methods("GET", "PUT", "DELETE").Queries("replication", "")
-	s3Router.HandleFunc("/{bucket}", bucketHandler.GetWebsiteHandler().Handle).Methods("GET", "PUT", "DELETE").Queries("website", "")
-	s3Router.HandleFunc("/{bucket}", bucketHandler.GetAccelerateHandler().Handle).Methods("GET", "PUT").Queries("accelerate", "")
-	s3Router.HandleFunc("/{bucket}", bucketHandler.GetRequestPaymentHandler().Handle).Methods("GET", "PUT").Queries("requestPayment", "")
+	bucketRoute(s3Router, bucketHandler.GetVersioningHandler().Handle, []string{"GET", "PUT"}, "versioning", "")
+	bucketRoute(s3Router, bucketHandler.GetNotificationHandler().Handle, []string{"GET", "PUT"}, "notification", "")
+	bucketRoute(s3Router, bucketHandler.GetTaggingHandler().Handle, []string{"GET", "PUT", "DELETE"}, "tagging", "")
+	bucketRoute(s3Router, bucketHandler.GetLifecycleHandler().Handle, []string{"GET", "PUT", "DELETE"}, "lifecycle", "")
+	bucketRoute(s3Router, bucketHandler.GetReplicationHandler().Handle, []string{"GET", "PUT", "DELETE"}, "replication", "")
+	bucketRoute(s3Router, bucketHandler.GetWebsiteHandler().Handle, []string{"GET", "PUT", "DELETE"}, "website", "")
+	bucketRoute(s3Router, bucketHandler.GetAccelerateHandler().Handle, []string{"GET", "PUT"}, "accelerate", "")
+	bucketRoute(s3Router, bucketHandler.GetRequestPaymentHandler().Handle, []string{"GET", "PUT"}, "requestPayment", "")
 
 	// Multipart upload operations - refactored
 	s3Router.HandleFunc("/{bucket}/{key:.*}", multipartHandler.GetCreateHandler().Handle).Methods("POST").Queries("uploads", "")
@@ -122,7 +122,7 @@ func (s *Server) setupRoutes(router *mux.Router) {
 	s3Router.HandleFunc("/{bucket}/{key:.*}", multipartHandler.GetCompleteHandler().Handle).Methods("POST").Queries("uploadId", "{uploadId}")
 	s3Router.HandleFunc("/{bucket}/{key:.*}", multipartHandler.GetAbortHandler().Handle).Methods("DELETE").Queries("uploadId", "{uploadId}")
 	s3Router.HandleFunc("/{bucket}/{key:.*}", multipartHandler.GetListHandler().HandleListParts).Methods("GET").Queries("uploadId", "{uploadId}")
-	s3Router.HandleFunc("/{bucket}", multipartHandler.GetListHandler().HandleListMultipartUploads).Methods("GET").Queries("uploads", "")
+	bucketRoute(s3Router, multipartHandler.GetListHandler().HandleListMultipartUploads, []string{"GET"}, "uploads", "")
 
 	// Object operations with sub-resources - refactored
 	s3Router.HandleFunc("/{bucket}/{key:.*}", objectHandler.GetACLHandler().Handle).Methods("GET", "PUT").Queries("acl", "")
@@ -133,14 +133,32 @@ func (s *Server) setupRoutes(router *mux.Router) {
 	s3Router.HandleFunc("/{bucket}/{key:.*}", objectHandler.HandleSelectObjectContent).Methods("POST").Queries("select", "", "select-type", "2")
 
 	// Delete multiple objects - refactored
-	s3Router.HandleFunc("/{bucket}", objectHandler.HandleDeleteObjects).Methods("POST").Queries("delete", "")
+	bucketRoute(s3Router, objectHandler.HandleDeleteObjects, []string{"POST"}, "delete", "")
 
 	// Bucket operations (general - must be after specific sub-resources)
-	s3Router.HandleFunc("/{bucket}", bucketHandler.Handle).Methods("GET", "PUT", "DELETE", "HEAD")
-	s3Router.HandleFunc("/{bucket}/", bucketHandler.Handle).Methods("GET", "PUT", "DELETE", "HEAD")
+	bucketRoute(s3Router, bucketHandler.Handle, []string{"GET", "PUT", "DELETE", "HEAD"})
 
 	// Object operations (main) - refactored
 	s3Router.HandleFunc("/{bucket}/{key:.*}", objectHandler.Handle).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
+}
+
+// bucketRoute registers one bucket route in both forms S3 accepts: "/{bucket}"
+// and "/{bucket}/". A trailing slash on a bucket addresses that bucket - there is
+// no object with an empty key for it to mean instead - and a client that writes
+// one is not asking for something else.
+//
+// It is a helper rather than sixteen hand-written pairs because a route added
+// without its twin is invisible: the request does not fail to route, it reaches
+// the general bucket handler, which does not know the sub-resource and answers
+// 405. That is how fifteen of them were broken at once. A test walks the router
+// and refuses any "/{bucket}" route without a twin.
+func bucketRoute(router *mux.Router, handler http.HandlerFunc, methods []string, queries ...string) {
+	for _, path := range []string{"/{bucket}", "/{bucket}/"} {
+		route := router.HandleFunc(path, handler).Methods(methods...)
+		if len(queries) > 0 {
+			route.Queries(queries...)
+		}
+	}
 }
 
 // isProbeRequest tells a readiness probe from an S3 request for a bucket that

@@ -22,6 +22,18 @@ everything else. That subrouter matches a probe only: unsigned and with no query
 string. A signed `GET /health`, or one carrying listing parameters, is an S3
 request for a bucket of that name and falls through to the S3 routes.
 
+**A bucket answers in both forms, `/{bucket}` and `/{bucket}/`.** Every bucket
+route is registered through one helper that adds both, because a route added on
+one form only does not fail to route — it reaches the general bucket handler,
+which does not know the sub-resource and answers `405`. Fifteen of the sixteen
+were broken that way at once, and the symptom was indistinguishable from a
+deliberate refusal. A test walks the router and refuses any `/{bucket}` route
+without its twin, which is what makes the invariant hold for the next route
+rather than for these sixteen.
+
+The trailing slash is the bucket only where nothing follows it: `/{bucket}/key/`
+is an object whose key ends in a slash, and the object route still owns it.
+
 The router does not clean the path (`SkipClean`): `a//b`, `a/./b` and `a/../b`
 are three distinct keys, and cleaning answered a bodiless `301` to a fourth. A
 method no route declares reaches the router's own refusal instead of mux's bare

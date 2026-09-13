@@ -109,14 +109,26 @@ func TestR2_MultipartUpload(t *testing.T) {
 		remote remote
 		what   string
 		wants  string
+		// refused marks the one case whose target is a refusal, because an ADR
+		// decides it. Every other row here expects the upload to work.
+		refused bool
 	}{
 		{
 			id:     "R2a",
 			remote: remotes[0], // provider = Minio, defaults
 			what:   "copy a 12 MiB file up in 5 MiB parts, provider = Minio defaults",
-			wants: "accept the upload. rclone computes S3's multipart formula over its plaintext parts and " +
-				"compares it with what CompleteMultipartUpload answered, which the backend computed over the " +
-				"SEALED parts (ADR 0010 D12)",
+			// The one refusal in this suite that is a decision rather than a
+			// defect. rclone rebuilds S3's multipart formula from the MD5s of
+			// its own plaintext parts and compares the whole string against the
+			// entity tag; the parts this proxy stores are ciphertext, so no
+			// value of any shape satisfies that comparison. The entity tag is
+			// not a content digest here by decision (ADR 0032 D1), and D9
+			// records this consequence as a documented limit under ADR 0006 D2.
+			// R2b and R2c drive the two configurations that do work.
+			refused: true,
+			wants: "be refused with rclone's defaults for this provider, which is the documented limit of " +
+				"ADR 0032 D9: set use_multipart_etag = false, as R2c does. This row turns red the day " +
+				"rclone ships a provider quirk for this endpoint, and that is the day the limit can go",
 		},
 		{
 			id:     "R2b",
@@ -143,7 +155,13 @@ func TestR2_MultipartUpload(t *testing.T) {
 
 				verdicts.Want(t, harness.Case{
 					ID: c.id, Endpoint: ep.name, What: c.what, Wants: c.wants,
-				}, r.OK(), s.says(r))
+				}, r.OK() != c.refused, s.says(r))
+
+				if c.refused {
+					// Nothing to assert at rest: rclone removes what it will not
+					// vouch for.
+					return
+				}
 
 				stored := harness.AssertEncryptedAtRest(t, ctx, harness.BackendClient(t),
 					s.bucket, c.id+"/", storedFormat(t))

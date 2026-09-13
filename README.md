@@ -1736,6 +1736,37 @@ by Renovate as the group "client e2e". Every run writes
 `test-results/e2e-rclone-verdicts.md`: one row per case per endpoint, in
 rclone's own words.
 
+**The remote to configure**, and it is the one the suite drives:
+
+```ini
+[s3ep]
+type = s3
+provider = Minio
+env_auth = false
+access_key_id = <your s3_clients entry>
+secret_access_key = <its secret>
+endpoint = https://proxy.example.com
+region = us-east-1
+force_path_style = true
+
+# Required today. Without it rclone rebuilds S3's multipart ETag from the MD5s
+# of its own plaintext parts and compares the whole string against what the
+# proxy answered. The parts this proxy stores are ciphertext, so the two can
+# never agree — and no value the proxy could answer would make them, because its
+# entity tag is a change token and not a content digest by decision
+# (see "Entity tags" above). The upload is verified regardless: rclone sends a
+# Content-MD5 with every part and this proxy checks each one against the decoded
+# plaintext before a byte reaches the backend.
+use_multipart_etag = false
+```
+
+`provider = Other` has the same effect, because that entry already defaults the
+comparison off — but `Minio` plus the explicit line says what is going on, and
+it keeps the rest of that provider's behaviour.
+
+Nothing else is needed: single-request uploads, downloads, `check`, `sync`,
+`hashsum` and the listings all work with rclone's defaults.
+
 Configuration notes for a real rclone deployment:
 
 - Point the remote at the proxy over **HTTPS** with `force_path_style = true`.
@@ -1749,14 +1780,13 @@ Configuration notes for a real rclone deployment:
   rclone; `rclone check` called an intact object different and
   `rclone sync --checksum` re-uploaded everything on every run. None of that
   needs a flag any more.
-- **For a multipart upload, set `use_multipart_etag = false`** on the remote, or
-  use a `provider` whose default is already off (`Other`). Without it rclone
-  computes S3's multipart formula over its plaintext parts and compares it with
-  what the backend computed over the sealed ones: the part count agrees, the
-  digest cannot, and no value this proxy can answer changes that. The upload is
-  verified regardless — rclone sends a `Content-MD5` with every part and this
-  proxy checks each one against the decoded plaintext before a byte reaches the
-  backend.
+- **`use_multipart_etag = false` is the one line this product asks for**, and
+  the block above says why. It is a documented limit
+  ([ADR 0032](./docs/adr/0032-the-entity-tag-is-a-change-token-never-a-content-digest.md)
+  D9), not a defect waiting for a fix: the comparison it switches off cannot be
+  satisfied by any entity tag an encrypting proxy could answer. It goes away the
+  day rclone carries a provider entry for this endpoint, which one provider
+  already carries for the same reason.
 - On a multipart object rclone stores its own plaintext MD5 as
   `X-Amz-Meta-Md5chksum`, the proxy preserves it, and `rclone hashsum md5`,
   `rclone check` and `rclone lsjson --hash` then all report the plaintext

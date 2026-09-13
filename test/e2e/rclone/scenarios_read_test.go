@@ -17,13 +17,18 @@ import (
 // corpus is the pair of objects the read cases need: one written by a single
 // request, one written in parts.
 //
-// Placing them needs escape flags today — --ignore-checksum for the single-part
-// object, use_multipart_etag = false for the other — because the write defects
-// R1 and R2a are open. That is setup working around a defect, not an assertion
-// about it: the read cases have to be able to run and fail on their own reasons
-// while the write side is broken. **When R1 and R2a pass, these flags come out**,
-// and the narrowest one is used for each so a blanket --ignore-checksum cannot
-// hide which defect is which.
+// The single-part object is placed with no flag at all: R1 was the defect that
+// needed --ignore-checksum here, and the entity-tag marker closed it
+// (ADR 0032). The flag is gone, which means a regression on the write side now
+// breaks the read cases too - that is the point of not carrying a workaround
+// past its defect.
+//
+// The multipart object is placed through the remote carrying
+// use_multipart_etag = false. That is not a workaround: it is the documented
+// setting this product asks an rclone user for, because rclone otherwise
+// recomputes S3's multipart formula over its own plaintext parts and no entity
+// tag of any shape can satisfy it (ADR 0032 D9). R2a is the case that states
+// that limit.
 //
 // Each object sits alone in a directory on both sides, because rclone's own
 // comparison verbs (check, sync) take directories, not files.
@@ -52,7 +57,7 @@ func seedCorpus(t *testing.T, ctx context.Context, s *suite, ep endpoint) corpus
 	c.singleSrc = harness.WriteRandomFile(t, c.singleDir, singleName, singlePartSize)
 	c.multiSrc = harness.WriteRandomFile(t, c.multiDir, multiName, multiPartSize)
 
-	single := s.run(t, ctx, "--ignore-checksum", "copyto",
+	single := s.run(t, ctx, "copyto",
 		c.singleSrc, s.remotePath(remotes[0], ep, c.singleKey))
 	require.Truef(t, single.OK(), "could not place the single-part object:\n%s", single.Combined)
 
