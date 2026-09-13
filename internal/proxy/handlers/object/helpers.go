@@ -10,9 +10,13 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/gorilla/mux"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/monitoring"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/etag"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
+	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 	"github.com/sirupsen/logrus"
 )
 
@@ -84,6 +88,52 @@ func writeEntityHeaders(w http.ResponseWriter, e storedEntityHeaders) {
 			w.Header().Set(header, *value)
 		}
 	}
+}
+
+// integrityReason names what failed, for the log field and the metric label. The
+// second return says whether the error is an integrity failure at all: a copy
+// that stops because the client went away is not one.
+func integrityReason(err error) (string, bool) {
+	switch {
+	case errors.Is(err, orchestration.ErrForeignObject):
+		return "foreign_object", true
+	case errors.Is(err, orchestration.ErrKeyMaterialUnreadable):
+		return "key_material", true
+	case errors.Is(err, dataencryption.ErrNotWellFormed):
+		return "stored_length", true
+	case errors.Is(err, dataencryption.ErrCorrupt):
+		return "authentication", true
+	default:
+		return "", false
+	}
+}
+
+// reportStreamFault records a response body that stopped before the object did.
+//
+// The status line is out by the time the plaintext moves, so a fault here cannot
+// become an error document - the proxy stops writing and the client sees a short
+// body. That is the deliberate price of streaming (ADR 0003 D15), and it is why
+// this has to be loud in both places an operator looks: a log line that names
+// the object and what failed, and a counter that is otherwise zero. The request
+// itself is still counted as the 200 it announced.
+//
+// A copy that failed because the client disconnected is not an integrity fault
+// and is not counted as one.
+func (h *Handler) reportStreamFault(r *http.Request, err error) {
+	vars := mux.Vars(r)
+	fields := logrus.Fields{"bucket": vars["bucket"], "key": vars["key"]}
+
+	reason, isIntegrity := integrityReason(err)
+	if !isIntegrity {
+		h.logger.WithError(err).WithFields(fields).
+			Warn("The response body stopped before the object ended")
+		return
+	}
+
+	monitoring.RecordObjectIntegrityFailure(reason, monitoring.IntegrityPhaseMidStream)
+	h.logger.WithError(err).WithFields(fields).WithField("reason", reason).
+		Error("Object failed its integrity check mid-stream; the response was truncated " +
+			"and the client has incomplete data")
 }
 
 // clientETag is what a client is told an object's entity tag is. Under an

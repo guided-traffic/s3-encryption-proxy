@@ -121,7 +121,44 @@ var (
 			Help: "Number of active connections",
 		},
 	)
+
+	// ObjectIntegrityFailures is the one metric that is supposed to stay at
+	// zero. It counts reads where an object did not authenticate, by what
+	// failed and by when it was found.
+	//
+	// The phase is why this metric has to exist at all. A failure found before
+	// the response begins is a 403 and is already visible in
+	// s3ep_requests_total; a failure found mid-stream is not, because the status
+	// line said 200 long before the fault and cannot be taken back - the
+	// response is cut instead. Without this counter such a read is recorded as a
+	// success (ADR 0003).
+	//
+	// Neither bucket nor key is a label: they are unbounded, and the log line
+	// beside every increment names them.
+	ObjectIntegrityFailures = factory.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3ep_object_integrity_failures_total",
+			Help: "Reads refused or cut because an object failed its integrity check",
+		},
+		[]string{"reason", "phase"},
+	)
 )
+
+// The phases an integrity failure can be found in.
+const (
+	// IntegrityPhaseBeforeResponse is a refusal: nothing of the object reached
+	// the client and the answer is 403 InvalidObjectState.
+	IntegrityPhaseBeforeResponse = "before_response"
+	// IntegrityPhaseMidStream is a truncation: the status line was already out,
+	// so all the proxy can do is stop writing. A client that ignores a short
+	// read sees incomplete data.
+	IntegrityPhaseMidStream = "mid_stream"
+)
+
+// RecordObjectIntegrityFailure counts one failed read.
+func RecordObjectIntegrityFailure(reason, phase string) {
+	ObjectIntegrityFailures.WithLabelValues(reason, phase).Inc()
+}
 
 // SetServerInfo sets server build information
 func SetServerInfo(version, commit, buildTime string) {

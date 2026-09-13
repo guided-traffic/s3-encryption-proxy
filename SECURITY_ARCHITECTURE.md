@@ -219,6 +219,17 @@ back door into the encrypted objects:
   the body instead of before it (section 3.5, item 3, and ADR 0025). Nothing
   about `exit` softens the refusals; it does not decide what happens to an
   encrypted object, only what happens to one the proxy never wrote.
+- **A fault found mid-stream truncates the response, and is reported rather than
+  hidden.** The status line is committed before the first plaintext byte moves,
+  so a segment that fails its tag partway through a read can only cut the body —
+  there is no error document left to write, and the object is deliberately not
+  buffered to be verified first ([ADR 0003](docs/adr/0003-objects-are-an-authenticated-segment-chain.md)
+  D15). The client's defence is the one it has anyway: a truncated read is short
+  against the `Content-Length` it was given, and the AWS SDKs additionally verify
+  `x-amz-checksum-crc32c` by default. The operator's defence is
+  `s3ep_object_integrity_failures_total{phase="mid_stream"}`, which is otherwise
+  zero and is the only place such a read is visible — `s3ep_requests_total`
+  counts it as the `200` it announced.
 - **The exit fingerprint is not a key.** `EncryptDEK` and `DecryptDEK` both
   return `ErrExitProviderKeyUse`, so a backend that stamps
   `s3ep-kek-fingerprint: exit-provider-fingerprint` onto an object of its own

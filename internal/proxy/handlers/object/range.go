@@ -497,7 +497,7 @@ func (h *Handler) writeRangeResponse(w http.ResponseWriter, r *http.Request, bod
 	// to a fresh 32 KiB buffer per request. Measured by BenchmarkGetResponseCopy.
 	if _, err := copyWithPooledBuffer(w, body); err != nil {
 		// The status line is already sent; all that is left is to record it.
-		h.logger.WithError(err).Warn("Failed to write the ranged response body")
+		h.reportStreamFault(r, err)
 	}
 }
 

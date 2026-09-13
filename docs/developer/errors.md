@@ -25,6 +25,25 @@ path — cannot produce a body no client can parse. It marshals **before** it
 commits a status, so a marshalling failure answers `500` instead of leaving a
 truncated body behind a `200` the client has already been told to trust.
 
+## When the status is already out
+
+A read streams, so a fault the reader finds after `WriteHeader` cannot become an
+error document. Both read paths hand such an error to `Handler.reportStreamFault`
+instead, which classifies it: an integrity sentinel — `ErrCorrupt`,
+`ErrNotWellFormed`, `ErrForeignObject`, `ErrKeyMaterialUnreadable` — is an
+error-level line naming bucket, key and reason, plus
+`s3ep_object_integrity_failures_total{phase="mid_stream"}`; anything else is a
+client that went away and stays a warning that counts nothing.
+
+That split is the whole value of the metric. The refusal taken before the
+response is a `403` and is already in `s3ep_requests_total`; the truncation is
+recorded there as the `200` it announced, so without the counter it appears
+nowhere (ADR 0003 D15). `writeDecryptionError` increments the same counter with
+`phase="before_response"`, so one series carries both halves.
+
+Never widen the sentinel list to "any read error": the counter is only useful
+while it means *this object did not authenticate*.
+
 ## Choosing a status class
 
 The rule that matters most is not which code but **which class**, because the

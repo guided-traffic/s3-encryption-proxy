@@ -508,8 +508,21 @@ format. What it actually exports today:
 | `s3ep_request_duration_seconds` | histogram | `method`, `endpoint` |
 | `s3ep_server_info` | gauge | `version`, `commit`, `build_time` |
 | `s3ep_active_connections` | gauge | — |
+| `s3ep_object_integrity_failures_total` | counter | `reason`, `phase` |
 | `s3ep_license_info` | gauge | `expires_at` |
 | `s3ep_license_expiry_timestamp` | gauge | — |
+
+**`s3ep_object_integrity_failures_total` is the one series worth an alert.** It counts reads
+where an object did not authenticate: `reason` is what failed — `authentication`,
+`key_material`, `foreign_object`, `stored_length` — and `phase` is when it was found.
+`before_response` means the read was refused with `403 InvalidObjectState` and nothing of the
+object reached the client; `mid_stream` means the status line was already out, the response was
+cut, and **the request is counted as the `200` it announced** — which is exactly why this counter
+exists. It is expected to stay at zero:
+
+```promql
+increase(s3ep_object_integrity_failures_total[15m]) > 0
+```
 
 Every series carries `kubernetes_namespace`, `kubernetes_pod_name`,
 `helm_release` and `helm_chart_version` when those are present in the
@@ -1297,6 +1310,32 @@ revalidation works**: the marker of
 [Entity tags](#entity-tags) is removed again before the precondition is
 evaluated, including from a list of tags and from `*`. Computing an MD5 of your
 own file and sending that will not work, and is not what an entity tag is for.
+
+### A read that fails after it has started
+
+A read streams: the proxy verifies each 64 KiB segment against its own
+authentication tag and hands it on, and it checks the assembled plaintext against
+the CRC32C sealed in the object before it reports the end. An object that fails
+either check is refused with `403 InvalidObjectState` **if the fault is found
+before the response begins**, which is where the trailer is opened and where most
+faults surface.
+
+A fault found later cannot be an error document: the status line and the headers
+are already on the wire. **The proxy stops writing, and the client receives a
+short body.** It is not buffered first — an object is never held in memory to be
+verified before it is delivered, because that would cost the memory profile and
+the first-byte latency this product is built for
+([ADR 0003](./docs/adr/0003-objects-are-an-authenticated-segment-chain.md) D15).
+
+What a client must therefore do is what it should do anyway: **check the length
+it received against the `Content-Length` it was given.** A truncated read is
+short, always. Clients that verify `x-amz-checksum-crc32c` — the AWS SDKs do this
+by default — catch it there as well.
+
+On the proxy's side the same event is loud: an error-level log line naming the
+bucket, the key and what failed, and `s3ep_object_integrity_failures_total` with
+`phase="mid_stream"`. The request itself is still counted as the `200` it
+announced, which is the reason that counter exists.
 
 ### Entity tags
 

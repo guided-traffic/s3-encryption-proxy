@@ -23,6 +23,10 @@ tree and not only of the format. Beside the client's own metadata a stored objec
 proxy keys: `s3ep-dek-algorithm`, `s3ep-encrypted-dek`, `s3ep-kek-fingerprint` and
 `s3ep-kek-algorithm`.
 
+**D15 is implemented, 2026-09-13.** Both read paths report a truncated body through one
+classifier: an integrity sentinel is an error-level line naming bucket, key and reason plus the
+counter, anything else — a client that went away — stays a warning and is not counted.
+
 **D14 is implemented, 2026-09-11.** A whole-object `GET` reads the object's end first and its
 beginning second, `HEAD` reads the trailer alone, and both answer with `x-amz-checksum-crc32c` and
 with the plaintext length the **trailer** authenticates rather than the one the backend reports
@@ -273,6 +277,24 @@ between the two answers `412` before any body byte, and the held tail is appende
 Every stored byte is fetched exactly once. A ranged read carries no checksum (ADR 0012); the read
 path is built so that a checksum over a bounded range can be added later without a format change,
 and it is not built now.
+
+**D15** (added 2026-09-13). **A read streams, and a fault found after the status line has gone out
+truncates the response.** The proxy does not buffer an object to verify it before delivering it:
+that would trade the memory profile the product is built around — one segment in flight, whatever
+the object's size — and the whole first-byte latency, against a cleaner error for a fault that is
+rare and is the proxy's own. What the client gets is a short body.
+
+Because that failure is silent on the wire, it may not be silent anywhere else. Every such read
+**names the object and what failed in the log, at error level**, and moves
+`s3ep_object_integrity_failures_total`, labelled by what failed and by whether it was found
+before the response began or mid-stream. The phase is the point of the metric: a refusal taken
+before the response is a `403` and is already visible in `s3ep_requests_total`, while a
+truncation is recorded there as the `200` it announced and would otherwise appear nowhere at all.
+A copy that stops because the client disconnected is not an integrity failure and is not counted
+as one, or the counter stops meaning anything.
+
+The counter is expected to read zero for the life of a deployment. That is what makes it worth
+alerting on, and an operator who wants one alert from this product should take this one.
 
 ## Consequences
 

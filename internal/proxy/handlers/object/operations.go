@@ -17,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/monitoring"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/utils"
@@ -223,6 +224,13 @@ func (h *Handler) servePerObject(w http.ResponseWriter, r *http.Request, bucket,
 // object as a passing outage. So does an object whose stored bytes do not
 // authenticate under a key that did unwrap.
 func (h *Handler) writeDecryptionError(w http.ResponseWriter, err error, bucket, key string) {
+	// Counted here as well as mid-stream, with the phase saying which: a refusal
+	// is already visible as a 403 in s3ep_requests_total, a truncation is
+	// visible nowhere else (ADR 0003 D15).
+	if reason, ok := integrityReason(err); ok {
+		monitoring.RecordObjectIntegrityFailure(reason, monitoring.IntegrityPhaseBeforeResponse)
+	}
+
 	if errors.Is(err, orchestration.ErrForeignObject) {
 		h.logger.WithFields(map[string]interface{}{
 			"bucket": bucket,
@@ -315,7 +323,7 @@ func (h *Handler) writeGetObjectResponse(w http.ResponseWriter, r *http.Request,
 	// never reach sendfile here and would allocate a fresh 32 KiB buffer per
 	// request. Measured by BenchmarkGetResponseCopy.
 	if _, err := copyWithPooledBuffer(w, output.Body); err != nil {
-		h.logger.WithError(err).Error("Failed to write object data")
+		h.reportStreamFault(r, err)
 		return
 	}
 
