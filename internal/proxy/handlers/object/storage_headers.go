@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/etag"
 )
 
 // StorageAttributes carries the storage headers ADR 0007 D3 forwards unchanged.
@@ -224,9 +225,14 @@ type ConditionalHeaders struct {
 // ignored rather than refused: RFC 9110 says a recipient that cannot parse
 // If-Modified-Since must ignore it, so refusing would be a deviation of its own.
 func ReadConditionalHeaders(r *http.Request) ConditionalHeaders {
+	// Unmarked here, at the one place both are read, so every verb that applies
+	// a precondition applies it to the tag the backend knows: a client that sends
+	// back the marked tag it was given revalidates as if the marker were not
+	// there (ADR 0032 D4). Either header may carry a list, and "*", which is not
+	// a tag.
 	conditions := ConditionalHeaders{
-		IfMatch:     r.Header.Get("If-Match"),
-		IfNoneMatch: r.Header.Get("If-None-Match"),
+		IfMatch:     etag.UnmarkList(r.Header.Get("If-Match")),
+		IfNoneMatch: etag.UnmarkList(r.Header.Get("If-None-Match")),
 	}
 	if raw := r.Header.Get("If-Modified-Since"); raw != "" {
 		if parsed, err := http.ParseTime(raw); err == nil {

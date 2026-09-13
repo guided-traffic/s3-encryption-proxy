@@ -6,6 +6,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/etag"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/middleware"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
@@ -43,6 +44,19 @@ func (h *Handler) reportedSize(stored int64, encrypting bool) int64 {
 // activeProviderEncrypts reports whether the active provider encrypts. A nil
 // manager means the handler was built without one, which only happens in tests
 // that do not exercise a listing size.
+// listingETag marks an entity tag in a listing exactly as the object verbs mark
+// it, so a listing and a HEAD of the same object never disagree (ADR 0032 D3).
+// An object this proxy did not write is marked too: it is refused on every read
+// under an encrypting provider anyway, so the tag names nothing a client can act
+// on, and telling one apart would cost the per-object request ADR 0010 D2 rules
+// out.
+func (h *Handler) listingETag(value string, encrypting bool) string {
+	if !encrypting {
+		return value
+	}
+	return etag.Mark(value)
+}
+
 func (h *Handler) activeProviderEncrypts() bool {
 	return h.encryptionMgr != nil && !h.encryptionMgr.IsExitProvider()
 }
@@ -126,7 +140,7 @@ func (h *Handler) listObjectsV2(w http.ResponseWriter, r *http.Request, bucket s
 		item := objectEntry{
 			Key:          encodeForClient(decodeBackendValue(aws.ToString(entry.Key)), wantsEncoding),
 			LastModified: formatLastModified(entry.LastModified),
-			ETag:         aws.ToString(entry.ETag),
+			ETag:         h.listingETag(aws.ToString(entry.ETag), encrypting),
 			Size:         h.reportedSize(aws.ToInt64(entry.Size), encrypting),
 			StorageClass: string(entry.StorageClass),
 		}
@@ -200,7 +214,7 @@ func (h *Handler) listObjectsV1(w http.ResponseWriter, r *http.Request, bucket s
 		doc.Contents = append(doc.Contents, objectEntry{
 			Key:          encodeForClient(decodeBackendValue(aws.ToString(entry.Key)), wantsEncoding),
 			LastModified: formatLastModified(entry.LastModified),
-			ETag:         aws.ToString(entry.ETag),
+			ETag:         h.listingETag(aws.ToString(entry.ETag), encrypting),
 			Size:         h.reportedSize(aws.ToInt64(entry.Size), encrypting),
 			// V1 carries the owner without being asked, which is what S3 does.
 			Owner:        owner,

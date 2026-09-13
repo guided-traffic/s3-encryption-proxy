@@ -102,6 +102,7 @@ this column is a reading aid.
 | [0021](0021-key-material-is-generated-never-committed.md) | No working key material or license token in the repository: generated on demand, injected through the environment | Partly built |
 | [0030](0030-the-network-boundary-belongs-to-the-administrator.md) | The network boundary is the administrator's: the chart ships no network policy, and the unauthenticated monitoring listener is fenced by the cluster or not at all | Implemented |
 | [0031](0031-a-test-states-the-target-and-stays-red-until-the-product-meets-it.md) | A test states the behaviour the product is supposed to have, is committed red until the product meets it, and never encodes the current answer as the expectation — while a behaviour an ADR decides is itself the target | Implemented, except D7 and D9 outside the two client suites: the twenty-seven tests the sweep rewrote carry their citation in a comment, not in the failure |
+| [0032](0032-the-entity-tag-is-a-change-token-never-a-content-digest.md) | The entity tag is a change token and never a content digest: under an encrypting provider a thirty-two-hex tag is answered with a `-0` suffix, at object and part level, inverted on every tag a client sends back | Implemented |
 
 ### Process
 

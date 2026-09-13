@@ -153,10 +153,15 @@ backend states no region.
 **D11.** Every error on a listing path is an S3 XML error document, like every other error the
 proxy returns.
 
-**D12.** `<ETag>` stays the entity tag of the stored bytes on listings and on `HEAD`, and is
-documented as a known deviation from S3, where it is an MD5 of the object content. Making it
-describe the plaintext is a storage-format question, not a listing question, and is not decided
-here.
+**D12.** `<ETag>` stays the entity tag of the stored bytes on listings and on `HEAD`. Whether it
+is made to describe the plaintext is a storage-format question, not a listing question, and is
+not decided here.
+
+**D12 is closed by ADR 0032** (2026-09-13): it is not made to describe the plaintext, and the
+deviation this decision point recorded does not survive. The entity tag is a change token, and
+under an encrypting provider its shape says so — which a listing states exactly as `GET` and
+`HEAD` do, from the tag the listing already carries and with no per-object request, so D2 holds
+unchanged.
 
 ## Consequences
 
@@ -171,9 +176,9 @@ here.
   (`InvalidObjectState`) when the active provider encrypts, so a client cannot act on such a size
   anyway, and a bucket of pre-existing plaintext is migrated through the proxy once rather than
   read in place. It is pinned by a test so that nobody later "fixes" it by adding a round trip.
-- The `ETag` deviation of D12 survives. A client that compares entity tags rather than sizes
-  still sees a mismatch on every object, so this change does not fix every synchronising client —
-  only the ones that compare sizes, which is most of them.
+- The `ETag` deviation of D12 survives this decision, and is closed by ADR 0032: a client that
+  compares entity tags rather than sizes stops comparing them, instead of comparing them against
+  a value that can never match.
 - Making the bucket existence check a real existence check changes which backend permission it
   needs. A backend policy that grants only the listing permission and not the bucket-head one
   starts failing a check that used to succeed. That is the correct error surface, and it is a

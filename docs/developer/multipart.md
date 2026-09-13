@@ -108,7 +108,8 @@ them stale. The client's document **is** parsed and its part numbers *and* entit
 tags checked against the table; a mismatch in either — a part it never uploaded,
 a part it left out, a tag that is not the one the part was stored under — is
 `InvalidPart`, and the upload survives it, so the client can complete again with
-a correct list. A part table that is not a chain is `InvalidPart` too, but that
+a correct list. The client's tags are unmarked before that check (ADR 0032 D4);
+the table itself always holds the backend's own value. A part table that is not a chain is `InvalidPart` too, but that
 one aborts the backend upload and drops the session.
 
 ### Seven things that are not obvious
@@ -175,7 +176,9 @@ fails to authenticate on the first read.
 backend ETag, but an SDK puts the value into its Complete request and an empty
 one is refused. The proxy answers with a value derived from the part — so a retry
 of the same bytes answers the same value — and replaces it with the backend's
-once the part is stored.
+once the part is stored. That value is never digest-shaped, so the marker of
+ADR 0032 leaves it alone; a zero-length held part ends in `-0` on its own, which
+is why the inverse is driven by shape and not by trimming that suffix.
 
 **The part size is inferred, and the inference must survive arrival order.** The
 size is taken from the largest part *that could be a middle part*; a short last

@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/etag"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
 	"github.com/sirupsen/logrus"
@@ -83,6 +84,18 @@ func writeEntityHeaders(w http.ResponseWriter, e storedEntityHeaders) {
 			w.Header().Set(header, *value)
 		}
 	}
+}
+
+// clientETag is what a client is told an object's entity tag is. Under an
+// encrypting provider the backend's tag is the MD5 of the stored bytes, and the
+// marker says so, because the bare shape claims to be a digest of the object's
+// content (ADR 0032 D2). Under the exit provider the stored bytes are the
+// plaintext, so nothing is marked (ADR 0032 D7).
+func (h *Handler) clientETag(value string) string {
+	if h.encryptionMgr == nil || h.encryptionMgr.IsExitProvider() {
+		return value
+	}
+	return etag.Mark(value)
 }
 
 // readDocument reads an object sub-resource document under

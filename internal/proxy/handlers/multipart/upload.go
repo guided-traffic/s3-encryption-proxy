@@ -297,7 +297,7 @@ func (h *UploadHandler) uploadStreamedPart(
 	cleanETag := strings.Trim(aws.ToString(result.ETag), "\"")
 	session.RecordETag(partNumber, cleanETag)
 
-	w.Header().Set("ETag", aws.ToString(result.ETag))
+	w.Header().Set("ETag", clientETag(h.encryptionMgr, aws.ToString(result.ETag)))
 	w.WriteHeader(http.StatusOK)
 
 	log.WithFields(logrus.Fields{
@@ -367,9 +367,9 @@ func (h *UploadHandler) uploadSegmentedPart(
 	if part == nil {
 		// Held for Complete. The ETag the client gets back is the proxy's own:
 		// the part table, not the client's list, is what Complete is built from.
-		etag, _ := session.PartETag(partNumber)
+		partETag, _ := session.PartETag(partNumber)
 		log.WithField("bytes", len(plaintext)).Debug("Holding the last part until Complete")
-		w.Header().Set("ETag", `"`+etag+`"`)
+		w.Header().Set("ETag", clientETag(h.encryptionMgr, `"`+partETag+`"`))
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -402,7 +402,7 @@ func (h *UploadHandler) uploadSegmentedPart(
 	cleanETag := strings.Trim(aws.ToString(result.ETag), "\"")
 	session.RecordETag(partNumber, cleanETag)
 
-	w.Header().Set("ETag", aws.ToString(result.ETag))
+	w.Header().Set("ETag", clientETag(h.encryptionMgr, aws.ToString(result.ETag)))
 	w.WriteHeader(http.StatusOK)
 
 	log.WithFields(logrus.Fields{
@@ -440,6 +440,6 @@ func (h *UploadHandler) uploadPassThroughPart(
 		return
 	}
 
-	w.Header().Set("ETag", aws.ToString(result.ETag))
+	w.Header().Set("ETag", clientETag(h.encryptionMgr, aws.ToString(result.ETag)))
 	w.WriteHeader(http.StatusOK)
 }

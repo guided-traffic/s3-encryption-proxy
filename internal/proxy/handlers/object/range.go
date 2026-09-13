@@ -465,7 +465,7 @@ func (h *Handler) writeRangeResponse(w http.ResponseWriter, r *http.Request, bod
 		header.Set("Content-Type", aws.ToString(output.ContentType))
 	}
 	if output.ETag != nil {
-		header.Set("ETag", aws.ToString(output.ETag))
+		header.Set("ETag", h.clientETag(aws.ToString(output.ETag)))
 	}
 	if output.LastModified != nil {
 		header.Set("Last-Modified", output.LastModified.UTC().Format(http.TimeFormat))

@@ -1201,9 +1201,10 @@ checksum describes the ciphertext, and the object's own sealed checksum can only
 be read by opening its trailer, which a listing will not do per entry. A `GET` or
 a `HEAD` of one object does report it, as `x-amz-checksum-crc32c`.
 
-`<ETag>` is the backend's, which is an entity tag over the ciphertext and
-therefore not a plaintext MD5. That is consistent across `GET`, `HEAD` and the
-listing, and it is a property of the storage format rather than of the listing.
+`<ETag>` is the backend's value with the marker described under
+[Entity tags](#entity-tags), exactly as `GET` and `HEAD` answer it: a listing that
+disagreed with a `HEAD` of the same object would be worse than either answer on
+its own.
 
 ### `HeadBucket`
 
@@ -1291,10 +1292,58 @@ the whole object; and a create-if-absent `PUT` overwrote what it was written to
 protect.
 
 A date the proxy cannot parse is ignored rather than refused, which is what
-RFC 9110 asks of a recipient. **The ETag a precondition is compared against is
-the stored ciphertext's**, not a digest of the plaintext — send back the value
-the proxy gave you and revalidation works; compute an MD5 of your own file and
-it will not.
+RFC 9110 asks of a recipient. **Send back the entity tag the proxy gave you and
+revalidation works**: the marker of
+[Entity tags](#entity-tags) is removed again before the precondition is
+evaluated, including from a list of tags and from `*`. Computing an MD5 of your
+own file and sending that will not work, and is not what an entity tag is for.
+
+### Entity tags
+
+**The entity tag this proxy answers is a change token, never a digest of your
+file's content** ([ADR 0032](./docs/adr/0032-the-entity-tag-is-a-change-token-never-a-content-digest.md)).
+Equal bytes carry equal tags and different bytes carry different ones, which is
+all HTTP asks of it and all this proxy promises.
+
+S3 makes a stronger promise by convention: a single-request upload answers the
+MD5 of the object's content, thirty-two hex digits. This proxy cannot keep that
+promise — the backend's tag is the MD5 of the encrypted bytes, under a data key
+that is random per object — so it stops making it. Under an encrypting provider
+a tag with that shape is answered with a `-0` suffix inside the quotes:
+
+```
+"2c52a8e3b689c5ea7f55444e2000b35a"    what the backend holds
+"2c52a8e3b689c5ea7f55444e2000b35a-0"  what a client is told
+```
+
+The suffix stays inside the `<hex>-<number>` grammar every S3 client already
+parses — it is what a multipart object's tag looks like — and S3 itself cannot
+produce it, because a completed multipart upload has at least one part. What it
+buys is that a client which would otherwise compare the tag against its own file
+stops doing so, instead of concluding the transfer was corrupted.
+
+What this means in practice:
+
+- It applies to **every verb that states an entity tag**: an upload, a completed
+  multipart upload, a `GET`, a ranged `GET`, a `HEAD`, both listings, **and every
+  part** — `UploadPart` and `ListParts` — because a client driving its own
+  multipart upload judges each part and never sees an object-level tag.
+- **Send back what you were given.** The marker is removed again before any
+  precondition or part list is used, so `If-Match`, `If-None-Match` and the
+  completion document all behave as if it were not there.
+- A tag that already says it is not a digest — a multipart `<hex>-N` — is
+  answered unchanged.
+- **Under the exit provider nothing is marked.** There the stored bytes are the
+  plaintext and the backend's tag is the truth about them.
+- **To verify content, use `x-amz-checksum-crc32c`**, the CRC32C this proxy seals
+  into every object and answers on a whole-object `GET` and on a `HEAD`. It
+  describes the bytes you actually receive, which an entity tag never did.
+- **A documented limit** ([ADR 0006](./docs/adr/0006-the-proxy-serves-any-s3-client.md)
+  D2): a multipart object's tag is not S3's composite over your plaintext parts,
+  so a client that recomputes that formula — `rclone` with `use_multipart_etag`
+  on, its default for some providers — reports a mismatch. Set
+  `use_multipart_etag = false` for this endpoint; the upload is verified anyway,
+  by this proxy, against every part's own `Content-MD5`.
 
 ### What an unauthenticated request is told
 
@@ -1596,26 +1645,28 @@ Configuration notes for a real rclone deployment:
   rclone is built on the AWS SDK for Go and, like it, emits its checksum-trailer
   request framing over TLS only.
 - **rclone verifies both directions against the entity tag, and this proxy's
-  entity tag is not a digest of your file.** It is the backend's MD5 of the
-  *stored* bytes, in the one shape S3 reserves for a content digest
-  ([entity tag](#s3-api-behaviour-worth-knowing)). For an object written by a
-  single request — anything below `optimizations.streaming_segment_size`, 12 MB
-  by default — rclone therefore reports `corrupted on transfer: md5 hashes
-  differ` on **upload and on download alike**, and deletes what it will not
-  vouch for. `rclone check` reports an intact object as differing, and
-  `rclone sync --checksum` re-uploads every unchanged object on every run. The
-  only escape rclone offers is the global `--ignore-checksum`, which also
-  switches off detection of real corruption. The suite records all of it.
-- For a multipart upload, set `use_multipart_etag = false` on the remote, or use
-  a `provider` whose default is already off (`Other`). Without it rclone
+  entity tag is not a digest of your file** — it says so in its shape, which is
+  what makes rclone stop comparing it ([Entity tags](#entity-tags)). Before the
+  marker, an object written by a single request was reported `corrupted on
+  transfer: md5 hashes differ` on upload and download alike and deleted by
+  rclone; `rclone check` called an intact object different and
+  `rclone sync --checksum` re-uploaded everything on every run. None of that
+  needs a flag any more.
+- **For a multipart upload, set `use_multipart_etag = false`** on the remote, or
+  use a `provider` whose default is already off (`Other`). Without it rclone
   computes S3's multipart formula over its plaintext parts and compares it with
   what the backend computed over the sealed ones: the part count agrees, the
-  digest cannot.
+  digest cannot, and no value this proxy can answer changes that. The upload is
+  verified regardless — rclone sends a `Content-MD5` with every part and this
+  proxy checks each one against the decoded plaintext before a byte reaches the
+  backend.
 - On a multipart object rclone stores its own plaintext MD5 as
   `X-Amz-Meta-Md5chksum`, the proxy preserves it, and `rclone hashsum md5`,
   `rclone check` and `rclone lsjson --hash` then all report the plaintext
-  digest. It writes no such annotation for a single-request upload, which is why
-  those objects are the ones that misbehave.
+  digest. It writes no such annotation for a single-request upload, so for those
+  objects `rclone hashsum md5` reports **no hash at all** rather than a wrong
+  one. That value is written by rclone, in the clear, beside the ciphertext:
+  useful, and not something this proxy vouches for.
 
 ## s3cmd
 
@@ -1641,25 +1692,28 @@ Configuration notes for a real s3cmd deployment:
   issue a `GET ?location` before every signed request. Point `ca_certs_file` at
   your CA rather than turning verification off.
 - **s3cmd compares the entity tag of every PUT — and of every uploaded part —
-  with the MD5 of the bytes it sent.** Against the entity tag this proxy
-  answers, a `put` warns `MD5 Sums don't match!`, exhausts its retries and exits
-  2. A multipart `put` is refused on its **first part**, never reaches
-  `CompleteMultipartUpload`, and leaves an upload open. `sync` re-uploads every
-  unchanged file on every run. There is **no s3cmd option that switches the
-  upload check off**: `--no-check-md5` governs only which files `sync` considers
-  changed.
-- **A refused `put` still stores the object.** s3cmd reports failure and exits
-  non-zero, and the object is in the bucket, whole and decryptable. A script
-  that trusts the exit code will conclude that nothing was written. rclone
-  behaves the opposite way and deletes it.
+  with the MD5 of the bytes it sent**, and has no option that switches that check
+  off. The marker of [Entity tags](#entity-tags) is what makes it stop: a tag
+  carrying a hyphen is one s3cmd does not treat as a digest, which is why the
+  marker covers a part's answer and not only the object's. Before it, a `put`
+  warned `MD5 Sums don't match!` and exited 2, a multipart `put` was refused on
+  its **first part** and left an upload open, and `sync` re-uploaded every
+  unchanged file on every run.
+- **What that costs, and it is worth knowing:** s3cmd sends no `Content-MD5` for
+  an object body, so once it stops comparing the entity tag there is no
+  end-to-end digest of an s3cmd upload anywhere. Over HTTPS the TLS record MAC
+  covers the wire; over the plain listener nothing does. Use the TLS endpoint
+  with s3cmd.
 - `s3cmd del --recursive` and `s3cmd multipart` are refused (`501` and `405`):
   s3cmd addresses a bucket with a trailing slash and this proxy does not route
   `POST /bucket/?delete` or `GET /bucket/?uploads`. Delete objects by their full
   key, and clear an abandoned upload from the backend.
 - On read s3cmd prefers the plaintext MD5 in its own `x-amz-meta-s3cmd-attrs`,
-  which the proxy preserves, so `get` verifies and `info` reports the right
-  digest. `ls --list-md5` has only the listing's entity tag and reports that
-  instead — the two commands disagree about the same object.
+  which the proxy preserves, so `get` verifies and both `info` and
+  `ls --list-md5` report the same digest — the latter falls back to that
+  annotation exactly because the entity tag now carries a hyphen. That value is
+  written by s3cmd, in the clear, beside the ciphertext: it is the client's own
+  bookkeeping, not something this proxy vouches for.
 
 
 ## Security

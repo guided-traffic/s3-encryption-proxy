@@ -177,12 +177,22 @@ func TestR5_ReportedHashes(t *testing.T) {
 	}
 }
 
-// hashsum returns the md5 rclone reports for one object.
+// hashsum returns the md5 rclone reports for one object, or the empty string
+// when it reports none.
+//
+// The line is "%*s  %s" with the hash padded to 32 columns, so an object rclone
+// has no hash for prints two leading spaces and then the name. Splitting on
+// whitespace would make that name the hash and turn "no hash" into a wrong one -
+// which is the answer this suite exists to tell apart.
 func hashsum(t *testing.T, ctx context.Context, s *suite, ep endpoint, key string) string {
 	t.Helper()
 	r := s.run(t, ctx, "hashsum", "md5", s.remotePath(remotes[0], ep, key))
 	require.Truef(t, r.OK(), "hashsum failed:\n%s", r.Combined)
-	fields := strings.Fields(r.Stdout)
-	require.NotEmptyf(t, fields, "hashsum printed nothing:\n%s", r.Combined)
-	return fields[0]
+
+	line, _, found := strings.Cut(strings.TrimRight(r.Stdout, "\n"), "\n")
+	require.Truef(t, found || line != "", "hashsum printed nothing:\n%s", r.Combined)
+
+	hash, _, ok := strings.Cut(line, "  ")
+	require.Truef(t, ok, "hashsum printed a line this parser does not know: %q", line)
+	return strings.TrimSpace(hash)
 }

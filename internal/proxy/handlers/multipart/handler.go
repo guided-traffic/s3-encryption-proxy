@@ -3,11 +3,28 @@ package multipart
 import (
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/etag"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
 	"github.com/sirupsen/logrus"
 )
+
+// clientETag is what a client is told an entity tag is, for an object and for a
+// part alike. Under an encrypting provider the backend's tag describes stored
+// bytes, and the marker says so where the bare value would claim to be a digest
+// of the client's own content (ADR 0032 D2, D3). Under the exit provider nothing
+// is marked (ADR 0032 D7).
+//
+// A part-level tag matters as much as the object's: a client that drives its own
+// multipart upload judges the answer part by part and never sees an object-level
+// tag at all.
+func clientETag(mgr *orchestration.Manager, value string) string {
+	if mgr == nil || mgr.IsExitProvider() {
+		return value
+	}
+	return etag.Mark(value)
+}
 
 // Handler handles multipart upload operations
 type Handler struct {

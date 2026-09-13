@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/etag"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/object"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
@@ -200,6 +201,13 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 				"The specified multipart upload does not exist")
 			return
 		}
+		// Unmarked here and not where the list was parsed: the exit arm above
+		// forwards that same map to the backend as the part identity, and under
+		// that provider nothing was ever marked (ADR 0032 D4, D7).
+		for number, value := range parts {
+			parts[number] = etag.Unmark(value)
+		}
+
 		// The client's list is not what the object is built from, but it is what
 		// the client believes it uploaded. A disagreement is reported rather than
 		// silently overruled (ADR 0011 D6). The upload survives it, as it does at
@@ -283,7 +291,7 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	finalETag := aws.ToString(result.ETag)
+	finalETag := clientETag(h.encryptionMgr, aws.ToString(result.ETag))
 	finalVersionID := aws.ToString(result.VersionId)
 
 	// Set response headers

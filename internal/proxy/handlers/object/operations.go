@@ -280,7 +280,7 @@ func (h *Handler) writeGetObjectResponse(w http.ResponseWriter, r *http.Request,
 		w.Header().Set("Content-Length", strconv.FormatInt(*output.ContentLength, 10))
 	}
 	if output.ETag != nil {
-		w.Header().Set("ETag", *output.ETag)
+		w.Header().Set("ETag", h.clientETag(*output.ETag))
 	}
 	if output.LastModified != nil {
 		w.Header().Set("Last-Modified", output.LastModified.UTC().Format(http.TimeFormat))
@@ -481,7 +481,7 @@ func (h *Handler) putObjectSegmented(
 		"storedSize":    aws.ToInt64(putInput.ContentLength),
 	}).Debug("Single-request upload completed")
 
-	w.Header().Set("ETag", aws.ToString(putOutput.ETag))
+	w.Header().Set("ETag", h.clientETag(aws.ToString(putOutput.ETag)))
 	writeVersionHeaders(w, putOutput.VersionId, nil)
 	WriteSSEHeaders(w, putOutput.ServerSideEncryption, putOutput.SSEKMSKeyId)
 	w.WriteHeader(http.StatusOK)
@@ -599,7 +599,7 @@ func (h *Handler) handleHeadObject(w http.ResponseWriter, r *http.Request, bucke
 // body from a HEAD — Content-Encoding above all — is misled when they are
 // dropped.
 func (h *Handler) writeHeadResponse(
-	w http.ResponseWriter, contentType, etag *string, lastModified *time.Time,
+	w http.ResponseWriter, contentType, entityTag *string, lastModified *time.Time,
 	contentLength *int64, checksum string, versionID *string,
 	entity storedEntityHeaders, sseAlgorithm types.ServerSideEncryption, sseKMSKeyID *string,
 	metadata map[string]string,
@@ -610,8 +610,8 @@ func (h *Handler) writeHeadResponse(
 	if contentLength != nil {
 		w.Header().Set("Content-Length", strconv.FormatInt(*contentLength, 10))
 	}
-	if etag != nil {
-		w.Header().Set("ETag", *etag)
+	if entityTag != nil {
+		w.Header().Set("ETag", h.clientETag(*entityTag))
 	}
 	if lastModified != nil {
 		w.Header().Set("Last-Modified", lastModified.UTC().Format(http.TimeFormat))
@@ -1232,7 +1232,7 @@ producerLoop:
 		"plaintext_bytes": totalPlaintext,
 	}).Debug("Multipart producer completed")
 
-	w.Header().Set("ETag", aws.ToString(completeOutput.ETag))
+	w.Header().Set("ETag", h.clientETag(aws.ToString(completeOutput.ETag)))
 	writeVersionHeaders(w, completeOutput.VersionId, nil)
 	w.WriteHeader(http.StatusOK)
 }

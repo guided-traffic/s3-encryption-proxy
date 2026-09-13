@@ -488,6 +488,41 @@ does not clamp above 1000, so that is the proxy's own behaviour — `<Owner>` na
 the calling client rather than the backend account, and `KeyCount` is forwarded
 from the backend rather than counted.
 
+## The entity tag
+
+The marker of [ADR 0032](../adr/0032-the-entity-tag-is-a-change-token-never-a-content-digest.md)
+lives in `internal/proxy/etag`: `Mark` appends `-0` to a value that is exactly
+thirty-two hex digits, `Unmark` removes it only when what is left is again
+exactly that, and `UnmarkList` runs the inverse over a precondition header that
+may carry a list and may carry `*`.
+
+Three gates, and they are three because the packages cannot share one:
+`Handler.clientETag` in `handlers/object`, the package-level `clientETag` in
+`handlers/multipart`, and `Handler.listingETag` in `handlers/bucket`. Each marks
+only under an encrypting provider. Every emission site goes through one of them —
+the single-request `PUT`, `writeGetObjectResponse`, `writeHeadResponse`,
+`writeRangeResponse`, the producer's and the client's `CompleteMultipartUpload`,
+every `UploadPart` answer, `ListParts` and both object listings.
+
+**Two places must never see the marker, and a test pins each.** The `If-Match`
+the tail-first read puts on its second request (`tail.go`) and the pin a ranged
+read sets from the object's own metadata (`pinToHeadETag` in `range.go`) are the
+backend's own value going back to the backend: marking either answers `412` to
+every whole-object read above one segment. They are not marked because they never
+pass through a gate — the gates sit on the response, not on the value.
+
+The inverse runs in exactly two places. `ReadConditionalHeaders` unmarks
+`If-Match` and `If-None-Match` for every verb at once, unconditionally: a tag
+carrying the marker can only have come from this proxy, and under the exit
+provider unmarking one is what makes an object written before the switch
+revalidate. The completion's part list is unmarked **inside the encrypting
+branch** of `complete.go`, not where the list is parsed — the exit arm forwards
+that same map to the backend as the part identity, and nothing marked it there.
+
+`RecordETag` always stores the backend's own value: the part table is what
+`VerifyClientParts` and the completion are built from, and it is never the
+client-facing string.
+
 ## What is refused rather than pretended
 
 Three object sub-resources stopped being refused on 2026-09-11 and are

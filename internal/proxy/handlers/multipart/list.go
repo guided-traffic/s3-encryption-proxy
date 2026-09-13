@@ -140,7 +140,7 @@ func (h *ListHandler) HandleListParts(w http.ResponseWriter, r *http.Request) {
 		doc.Parts = append(doc.Parts, partEntry{
 			PartNumber:   part.PartNumber,
 			LastModified: formatListTime(part.UploadedAt),
-			ETag:         `"` + part.ETag + `"`,
+			ETag:         clientETag(h.encryptionMgr, `"`+part.ETag+`"`),
 			// The plaintext length the client sent. The part the session still
 			// holds is listed with it too: the client uploaded it and was answered
 			// an ETag for it.
@@ -196,7 +196,7 @@ func (h *ListHandler) listPassThroughParts(
 		doc.Parts = append(doc.Parts, partEntry{
 			PartNumber:   int(aws.ToInt32(part.PartNumber)),
 			LastModified: formatListTime(aws.ToTime(part.LastModified)),
-			ETag:         aws.ToString(part.ETag),
+			ETag:         clientETag(h.encryptionMgr, aws.ToString(part.ETag)),
 			Size:         aws.ToInt64(part.Size),
 		})
 	}

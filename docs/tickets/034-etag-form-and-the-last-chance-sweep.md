@@ -19,7 +19,9 @@ carries the breaking marker (ADR 0018 D5), and a key or value that used to be
 accepted and is refused from now on is a startup break (ADR 0013 D11, ADR 0017
 D7 and D8). Whatever is not decided here waits for 6.0.0, which is unscheduled.
 
-**Owner decisions, 2026-09-13.** Item 2 is in 5.0.0. Item 1 is **not decided**:
+**Owner decisions, 2026-09-13.** Item 2 is in 5.0.0. **Item 1 is decided and
+built — ADR 0032; everything below it is the record of how.** The paragraph that
+follows is what stood before that decision:
 the owner accepts `-0` as the marker *if* the entity tag changes, and decides
 whether it does only on the evidence of two end-to-end suites — one for rclone,
 one for s3cmd. **Both suites now exist, have run, and their evidence is below**
@@ -38,10 +40,33 @@ discussion, not by this file.
 
 ## 1. The entity tag is an MD5 of the ciphertext in the shape of a content digest — **suites built and run; the decision is open and now has evidence**
 
-### Where this stands, 2026-09-13 — read this first
+### DECIDED AND BUILT, 2026-09-13 — read this first
 
-Both end-to-end suites exist, have run, and have been analysed. Nothing is
-decided; what follows is the state to pick the decision up from.
+The owner decided that the entity tag is not owed to be a content digest, and the
+`-0` marker at object **and** part level shipped the same day. The decision and
+everything that follows from it is [ADR 0032](../adr/0032-the-entity-tag-is-a-change-token-never-a-content-digest.md);
+ADR 0010 D12 is closed by it.
+
+What the suites say after the change: rclone 26 of 28 cases, s3cmd 17 of 19. The
+four that remain are not the entity tag's shape — two are the trailing-slash
+routing gap (S6a, S6b, item 2 of this ticket's own list), and two are R2a, which
+ADR 0032 D9 records as a documented limit because no proxy-side value of any
+shape closes it. `make test-unit`, `make test-integration` and
+`make test-conformance-minio` are green.
+
+**What is left of item 1, and it is in ADR 0032's residual risks, not here:** what
+replaces the end-to-end digest s3cmd loses, and the per-object request count the
+marker induces. The analysis below is kept as the record of how the decision was
+reached.
+
+The R5b harness bug named under *What the recommended candidate requires* was
+fixed with the change: `rclone hashsum md5` pads its hash to thirty-two columns,
+so an object with no hash printed two spaces and then the file name, which the
+suite read as the hash.
+
+### The analysis the decision was taken on
+
+Both end-to-end suites exist, have run, and have been analysed.
 
 **The defect, in one line.** 23 of 47 e2e rows are red. Two are routing (S6a,
 S6b). The other 21 are the entity tag, and the worst of them is not an upload
