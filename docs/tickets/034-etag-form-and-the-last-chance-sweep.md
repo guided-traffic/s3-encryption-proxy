@@ -22,7 +22,13 @@ D7 and D8). Whatever is not decided here waits for 6.0.0, which is unscheduled.
 **Owner decisions, 2026-09-13.** Item 2 is in 5.0.0. Item 1 is **not decided**:
 the owner accepts `-0` as the marker *if* the entity tag changes, and decides
 whether it does only on the evidence of two end-to-end suites — one for rclone,
-one for s3cmd — that do not exist yet and are built first. Ad-hoc probes, the
+one for s3cmd. **Both suites now exist, have run, and their evidence is below**
+(*What the two suites answer*, and *The option analysis of 2026-09-13*). What the
+evidence changed about the question: the defect is not "uploads fail" but "an
+object written by a single-request `PUT` is unreachable to rclone in both
+directions", the candidate's scope has to widen to **part-level** entity tags or
+s3cmd cannot upload below `optimizations.streaming_segment_size` at all, and one
+claim — the per-object `HEAD` traffic the marker induces — is still unmeasured. Ad-hoc probes, the
 ones recorded below included, are how the finding was made; they are not what a
 release stands on (ADR 0006 D5 and D7, ADR 0019 D1). Items 3 to 8 are recorded
 with a recommendation and what each answer costs; they are decided in
@@ -30,7 +36,48 @@ discussion, not by this file.
 
 ---
 
-## 1. The entity tag is an MD5 of the ciphertext in the shape of a content digest — **not decided; two end-to-end suites first**
+## 1. The entity tag is an MD5 of the ciphertext in the shape of a content digest — **suites built and run; the decision is open and now has evidence**
+
+### Where this stands, 2026-09-13 — read this first
+
+Both end-to-end suites exist, have run, and have been analysed. Nothing is
+decided; what follows is the state to pick the decision up from.
+
+**The defect, in one line.** 23 of 47 e2e rows are red. Two are routing (S6a,
+S6b). The other 21 are the entity tag, and the worst of them is not an upload
+failure: **an object written by a single-request `PUT` is unreachable to rclone in
+both directions** (R3b), and **s3cmd can upload nothing below
+`optimizations.streaming_segment_size`** and no explicit multipart upload at all
+(S1, S2).
+
+**What the analysis settled.**
+
+- Eight candidates costed. Three are empirically dead — s3cmd's only escape is a
+  hyphen in the string, and it substitutes `''` for a missing tag and fails the
+  same comparison. One is measured out on performance (every object as a backend
+  multipart upload: 3.2× on a 1 KiB write).
+- The candidate written in this ticket is **half an answer**: it has to widen to
+  part-level entity tags, or s3cmd stays where it is.
+- The expensive alternative — a plaintext digest in the sealed trailer — is costed
+  in its own section. It buys **two rows** that no marker can buy, ships the
+  marker anyway, and carries a security regression on the precondition path.
+  Verdict: not in 5.0.0.
+- Three named conditions turn the recommended candidate from a fix into a live
+  defect if they are missed. They are listed under *What the recommended candidate
+  requires*.
+
+**What is owed before a decision.** One measurement — the per-object `HEAD`
+traffic the marker induces. It is the single load-bearing claim with no recorded
+column, it is the only axis on which the marker can lose, and it is one afternoon.
+
+**What only the owner can answer.** R2a: whether a documented rclone setting is
+the target behaviour. That answer is also the gate answer — see the last work
+items.
+
+**Two defects found along the way**, neither gated on this decision and both
+recorded at the end of the O4 section: a `PUT` above the ceiling silently drops
+both entity-tag preconditions, and R2a's own case cannot catch a proxy that
+forwards the backend's composite.
 
 ### What happens
 
@@ -369,6 +416,523 @@ with this release.
 **Cost of the candidate.** One regular-expression match per response and per
 precondition header. No per-byte cost.
 
+### The option analysis of 2026-09-13 — eight candidates against the suites' evidence
+
+Run once both suites existed and had been run against the tree as it is. Eight
+candidates were evaluated against the **clients' own sources** — rclone v1.75.1
+`backend/s3/s3.go` and `fs/operations/`, and the pinned s3cmd 2.4.0 in
+`test/e2e/s3cmd/venv/` — each one refuted from three independent lenses, and four
+of the findings below were reproduced **live** against the running demo stack with
+the pinned `rclone` binary. Everything marked *verified* was read in a source file
+or produced by a command; everything else says so.
+
+#### Two constraints nobody had written down, and they decide more than the marker
+
+**A — the listing dictates the form of the answer.** A listing carries no
+metadata, no trailer and no data key;
+[listing.go:98](../../internal/proxy/handlers/bucket/listing.go#L98) is its only
+backend call and `reportedSize` is arithmetic on the stored length. ADR 0010 D2
+forbids the per-key round trip. **Therefore every listing entity tag must be a
+pure function of the backend's entity tag**, and any candidate that answers
+something else is necessarily a hybrid with a marker on the listing. Five of the
+red rows are decided by the listing tag.
+
+**B — invertibility, not honesty, is what the wire needs.** `If-Match` is
+forwarded to the backend today
+([storage_headers.go:244-278](../../internal/proxy/handlers/object/storage_headers.go#L244)),
+and
+[listobjects_conformance_test.go:841](../../test/integration/s3-methods/listobjects_conformance_test.go#L841)
+asserts that the tag a listing reports satisfies an `If-Match`. A marker survives
+that because it is invertible — strip, forward. Every SDK download manager pins
+the first response's entity tag as `If-Match` for the rest of a multipart read
+(aws-sdk-go-v2 `download.go:376`, boto3 `s3transfer/download.py:515`, minio-go
+`api-get-object.go:198`), so whatever is answered comes back and has to be
+translatable into something the backend recognises. This is the strongest single
+argument for the marker family and it appeared in no earlier note.
+
+**B does not make a plaintext digest impossible — it prices it.** An earlier
+reading of this constraint concluded that a value the backend never issued forces
+non-atomic, proxy-side precondition evaluation. That is too strong: the proxy can
+read the object's tail, compare proxy-side, and forward the **backend's** own
+entity tag as `If-Match` so the backend still performs the atomic compare — free
+on `HEAD` and on a whole-object `GET`, which already read the tail. What the
+constraint really costs is set out under *O4 costed* below: a standing +1 backend
+request on every ranged `GET`, a valued `If-None-Match` on a write that cannot be
+expressed at all, and a fail-open wherever a backend ignores a conditional write.
+
+#### What each candidate buys, out of the 23 red rows
+
+Two of the 23 (S6a, S6b) are the trailing-slash routing gap and belong to no
+candidate here.
+
+| | Candidate | Rows green | Rows red | Verdict |
+|---|---|---|---|---|
+| O1 | Leave it, document the client flags | 0 | 23 | rejected |
+| O2 | `-0` marker, object level only — the candidate as written above | 15 | 8 | half the answer |
+| O3 | `-0` marker, object **and part** level | 17 | 6 | **recommended** |
+| O4 | Answer the plaintext MD5 and the plaintext multipart composite | 20, and it loses R1b | 3 | **not in 5.0.0** — costed in its own section below |
+| O5 | Write every object as a backend multipart upload | 15 | 8 | rejected, measured |
+| O6 | An opaque tag outside the `<hex>-<number>` grammar | 0, and three green rows regress | 23 | rejected, measured |
+| O7 | Omit the entity tag under an encrypting provider | 0, and six green rows regress | 23 | rejected, measured |
+| O8 | A marker whose digits come from the trailer, so it is stable | — | — | rejected |
+
+Two more rows go green under O2, O3 and O5 once the R5b harness bug below is
+fixed, so O3 reads 19 of 23 with four left: R2a twice, and the two routing rows.
+O1's zero is the whole point of it: nothing changes. Its only lever that moves an
+e2e row is upstream — rclone's compiled-in `etag_is_not_md5` quirk, which carries
+exactly one provider today (Fastly, rationale *mandatory encryption*). An entry
+for this proxy would close all thirteen rclone rows including R2a at no cost to
+this product; it closes none of s3cmd's ten, and it is an upstream release cycle,
+not a decision this project can take alone.
+
+#### The three candidates that look cheap and are empirically dead
+
+- **O6.** s3cmd 2.4.0 has exactly **one** escape from its digest comparison: a
+  hyphen anywhere in the string. Verified at every comparison site — `S3.py:2067`,
+  `:2294`, `:2316`, `FileLists.py:486`, `:590`, `bin/s3cmd:242` — with no length
+  test and no hex test anywhere in its source. A prefix, a base64 value and a
+  longer hex string carry no hyphen, so they fix **none** of S1/S2/S4/S5 and turn
+  the three green S2b/S2c/S2d rows red.
+- **O7.** A missing entity tag is substituted with `''` and fails the same
+  comparison; the source comment at `S3.py:2021` reads *"Force re-upload here"*.
+  In a listing the omitted element kills s3cmd with a Python traceback
+  (`FileLists.py:478` indexes `object['ETag']` directly). It is also the only
+  candidate that would close R2a, because rclone's multipart gate is
+  `head.ETag != nil && *head.ETag != ""` — a presence test. That win is
+  unreachable: it costs s3cmd entirely.
+- **O5.** Measured, not estimated: **2.691 ms/op against 0.848 ms/op** for a
+  1 KiB write, reproduced at three concurrency levels — a factor of 3.2 on the
+  most frequently used verb, to change the shape of a string that a 23 ns
+  predicate changes. It has one real advantage worth recording: the value stays a
+  genuine backend entity tag, so nothing is invented, no reverse map exists
+  anywhere, and a listing cannot desynchronise from `HEAD`.
+
+#### Two facts that widen the candidate beyond what is written above
+
+1. **The part-level arm is not optional.** s3cmd decides a multipart upload part
+   by part and never sees an object-level answer, so `-0` at object level alone
+   leaves S2 red — which means s3cmd can upload **nothing** below
+   `optimizations.streaming_segment_size` (single-request `PUT`, refused) and no
+   explicit multipart upload (refused on part 1). It works only in the window at
+   or above the ceiling, where the internal producer answers `<hex>-N`. That
+   window is what S2b measures.
+2. **The proxy already ships a hyphenated non-digest entity tag on a
+   client-visible encrypting path.** The held short part answers
+   `fmt.Sprintf("%08x-%d", …)`
+   ([segmented_session.go:519](../../internal/orchestration/segmented_session.go#L519)).
+   Live against the demo stack, rclone accepted `ETag: "9ae471bc-2097152"` for
+   part 3 of a three-part upload without comment. The mechanism the candidate
+   relies on is already in production use inside this product.
+
+#### What the recommended candidate requires, or it is a live defect
+
+Each of these was found by adversarial review of the plan, not by running it:
+
+- **The reverse map in `complete.go` ships in the same commit, inside the
+  encrypting branch** — not where `parts` is built at
+  [complete.go:176](../../internal/proxy/handlers/multipart/complete.go#L176),
+  because the exit arm forwards that same map to the backend as the part identity.
+  Without it every client-driven multipart upload under an encrypting provider
+  answers `400 InvalidPart` from
+  [segmented_session.go:717](../../internal/orchestration/segmented_session.go#L717);
+  with it in the wrong place, every exit multipart upload breaks instead.
+- **The reverse rule is shape-driven, never a trailing-`-0` trim.** A held part of
+  length zero carries the literal `"00000000-0"` — `%08x` of `Value=0` and a
+  `Length` of 0. A trim rule corrupts it and fails `VerifyClientParts` on a path
+  no test covers. The rule is *strip `-0` only when the remaining head is exactly
+  32 hex digits*, which is also what leaves `%08x-%d` alone.
+- **The unit layer is blind and would pass a broken implementation.** Thirteen
+  test files under `internal/` touch an entity tag and between them they contain
+  exactly **one** 32-hex literal; the fixtures are names — `"stored-etag"` ×14,
+  `"mpu-etag"` ×11, `"part-etag-1"` ×10, `"ciphertext-etag"` ×6 — so the forward
+  map never fires in a unit test. At least one real 32-hex fixture per emission
+  site **and per internal pin** —
+  [operations.go:85](../../internal/proxy/handlers/object/operations.go#L85),
+  [range.go:404](../../internal/proxy/handlers/object/range.go#L404) — or nothing
+  catches a marker wrongly applied to the tail-first pin, which would answer 412
+  to every whole-object `GET` above one segment.
+- **R5b needs a suite-harness fix and is not a product defect.**
+  [scenarios_read_test.go:186](../../test/e2e/rclone/scenarios_read_test.go#L186)
+  takes `strings.Fields(stdout)[0]`; `rclone hashsum md5` prints `%*s  %s` with
+  width 32, so an empty hash makes `fields[0]` the **filename**. The assertion
+  stays exactly as written and only the parsing is corrected, so ADR 0031 is not
+  touched.
+
+#### What no candidate answers
+
+**R2a is closed by no proxy-side value of any shape.** rclone builds `wantETag`
+from the MD5s of its own plaintext chunks (`s3.go:4762`) and compares the whole
+string against the entity tag of the **post-upload HEAD** (`s3.go:5173`); the
+guard is a presence test, not a shape test, and the parts the proxy stores are
+ciphertext. Reproduced live: `expecting 0e2d7c9cd4e676c2cfc5ddb8f868fc9b-3 but got
+19b9c07ba009803db0e52448470d1ba4-3`. Four things reach it: `use_multipart_etag =
+false` (already green as R2c), rclone's compiled-in `etag_is_not_md5` quirk, an
+absent HEAD entity tag, or a stored plaintext composite.
+
+**What `use_multipart_etag = false` switches off is a check this product performs
+twice over.** Verified live: rclone sends `Content-Md5` on **every** `UploadPart`,
+and ADR 0012 verifies each one against the decoded plaintext before a byte reaches
+the backend ([upload.go:175-200](../../internal/proxy/handlers/multipart/upload.go#L175)).
+The composite's other job — these parts, in this order, N of them — is what the
+segment associated data and the sealed trailer already enforce strictly (ADR 0003).
+**R2a is a reporting gap, not an integrity gap**, and that is the fact the decision
+about it should rest on.
+
+#### The security consequence of every marker candidate — this needs an owner decision
+
+The mechanism by which every row turns green is that **the client stops checking**.
+It is asymmetric between the two clients, and the second half is a real loss:
+
+- **rclone: nominal.** Its upload stays verified end to end — by the proxy, against
+  the plaintext, using the `Content-MD5` rclone itself sends (verified live on a
+  single-request `PUT` and on every part). Its download stays verified by the
+  segment tags and the sealed trailer, which are stronger than MD5.
+- **s3cmd: a real loss.** Verified in the pinned source: `generate_content_md5` is
+  called only for bucket sub-resource bodies and the `DeleteObjects` body, never
+  from `object_put` or `send_file`, and `MultiPart.py:211` says
+  `# TODO implement Content-MD5`. The proxy takes `X-Amz-Content-Sha256` as the
+  signed *claim* in the canonical request
+  ([s3auth_robust.go:318-336](../../internal/proxy/middleware/s3auth_robust.go#L318))
+  and never re-derives it from the body. So after the marker, S1 and S2 go from
+  *refused because the only end-to-end digest disagreed* to *exit 0, with no
+  end-to-end digest anywhere*. Over the plain-HTTP listener that is a genuine loss
+  of detection; over TLS the record MAC covers the wire, which is not this
+  product's doing.
+- **The mechanism of the S4 and S5 fix relies on unauthenticated client
+  metadata.** Both turn green because s3cmd falls back to
+  `x-amz-meta-s3cmd-attrs`, a client-written plaintext MD5 stored in the clear
+  beside the ciphertext. Under ADR 0001 the backend is the adversary and that
+  value is attacker-writable. It is not new — rclone already writes
+  `X-Amz-Meta-Md5chksum` the same way, which is why R3a and R5a are green today —
+  but the marker **extends** the reliance on it, and that belongs in the ADR
+  rather than in a test file.
+
+Two complements are proposed against that loss, each decided on its own:
+
+- **Verify `x-amz-content-sha256` against the decoded body** when it is a real hex
+  digest, not `UNSIGNED-PAYLOAD` and not a `STREAMING-*` form. The machinery
+  exists — ADR 0012's verifier already withholds the final payload byte until the
+  verdict is in. It gives s3cmd a **stronger** end-to-end check than it had before
+  the marker, and costs a SHA-256 pass only where a client declares a real payload
+  hash (s3cmd does; aws-sdk-go-v2 over HTTPS does not).
+- **Serve `x-amz-checksum-crc32c` on the verbs that lack it** — `PUT`,
+  `UploadPart`, `CompleteMultipartUpload`, a ranged read. The values are already
+  computed (`EncryptReader.Checksum()`, the session part table). It moves **zero**
+  e2e rows, because neither named client reads it, and it is worth doing anyway:
+  it is the only integrity channel the proxy can vouch for itself, and ADR 0008
+  D13's own uniformity bullet asks for it.
+
+#### Where the recommended candidate stands against ADR 0008
+
+ADR 0008 D13 says a header that describes the **stored object** belongs to the
+proxy and is restated from what the client actually receives, never forwarded.
+`-0` does not do that: it decorates a forwarded backend value. **The marker is a
+compatibility correction, not an honesty correction** — the proxy stops making a
+false claim without yet describing itself. The amendment to ADR 0010 D12 has to
+say that in those words, or it claims more than the change delivers. ADR 0008 D12
+("a value the proxy does not have is omitted, never rendered as a zero value") is
+the clause a reviewer will raise, and the answer is that `-0` is not a zero value
+standing in for a missing one — it is a shape that removes a false promise while
+staying invertible. That answer has to be written down, not assumed.
+
+#### The `-0` premise, checked
+
+S3 cannot produce `<hex>-0`: a completed multipart upload has at least one part,
+and MinIO's own strict parser rejects part number 0. The premise that matters is
+narrower — *can anything on the inbound path legitimately carry `-0`* — and the
+answer is **yes, inside this repository**: the zero-length held part above. Two
+mitigations, both cheap: the shape-driven rule, and a conformance assertion
+(ADR 0027's minio, localstack and wasabi) that no backend in the set ever answers
+`-0`. This is also the axis on which `-0` beats the `-1` that gaul/s3proxy uses: a
+genuine one-part multipart upload ends in `-1` on every backend, so `-1` is not
+invertible.
+
+#### The one unmeasured claim, and the measurement that settles it
+
+Every correctness claim above is double-sourced and four were reproduced live.
+**One** load-bearing claim has zero recorded columns and was asserted in opposite
+directions by two reviewers:
+
+> the per-object `HEAD` traffic the marker induces is acceptable.
+
+The mechanism by which R4b, R4d, R5b, S4 and S5 turn green **is** that both
+clients stop trusting the listing and start asking per object. Each such ask costs
+this proxy a backend ranged `GET` (`bytes=-40`), a key unwrap and a trailer open
+([operations.go:525](../../internal/proxy/handlers/object/operations.go#L525) →
+[tail.go:65](../../internal/proxy/handlers/object/tail.go#L65)), and the data-key
+cache holds 1024 entries
+([providers.go:23](../../internal/orchestration/providers.go#L23)), so a sweep over
+a larger bucket is a full miss stream that also evicts the entries serving real
+reads. `O(N/1000)` listing calls become `O(N)` authenticated object reads on the
+sweep verbs. `test/perf/` has no listing or `HEAD`-rate instrument, so the workload
+is unmeasured rather than unaffected, and under ADR 0020 neither claim may be
+quoted.
+
+The measurement, one afternoon: the candidate on a branch, a bucket of
+1000 × 4 KiB objects, and the **backend request count** plus wall clock for
+`rclone check`, `rclone sync --checksum` and `s3cmd sync` before and after — the
+request count is the number that settles it, readable from MinIO or from the
+proxy's own `:9090`. The same run gives questions 2 and 3 of this ticket for free,
+because `make e2e-rclone` and `make e2e-s3cmd` are 5 s and 8 s on a warm stack.
+
+### O4 costed: a plaintext digest sealed in the trailer
+
+Costed on 2026-09-13 because it is the one candidate that closes R2a, and because
+a storage-format decision has a deadline this one does not obviously have. Every
+number below is either measured on this machine or counted in the tree; the two
+adversarial reviews that follow the estimate are folded in.
+
+#### The deadline is real, and it covers less than it looks like
+
+**`s3ep-gcm-seg-v2` has never been in a release.** Verified: `git tag -l 'v5*'`
+is empty, `git describe` on this branch reads `v4.0.3-170-g2e52a30`, and
+`git ls-tree v4.0.3 -- pkg/encryption/dataencryption/` lists only `aes_ctr.go`
+and `aes_gcm.go` — the codec exists in **zero tags**. `release.config.mjs` cuts
+only from `main`, and `main` does not carry the codec either. The published
+`:latest` image is v4.0.3 and writes the format this release deletes.
+
+So a field added to the trailer **now** is not a v2→v3 break: it is the shape v2
+ships with. No second format id, no dual reader, no migration, no release note.
+The only objects in the format anywhere are on disposable stacks, and a 40-byte
+trailer read under a 58-byte constant fails closed at
+[segmented_gcm.go:174](../../pkg/encryption/dataencryption/segmented_gcm.go#L174)
+— `403`, loud and correct.
+
+Added **after** the tag, ADR 0017 D10 forbids it landing in a minor at all, so it
+becomes a 6.0.0 with a second forced re-upload of every object. That is the
+asymmetry, and it is what makes this worth costing now rather than later.
+
+**But only the 18 bytes are time-limited.** The MD5 pass, the answer sites, the
+precondition work and the listing split are major-only under ADR 0018 D5 either
+way — they cost the same in 6.0.0 as in 5.0.0. And a trailer field that is
+reserved but never filled is speculative code (CLAUDE.md rule 2); a field that is
+filled but never answered pays the full per-byte cost for a value nothing reads,
+which is exactly what
+[segmented_gcm_io.go:28-33](../../pkg/encryption/dataencryption/segmented_gcm_io.go#L28)
+already rejected once for the running CRC32C. There is no cheap half-step. The
+question is binary: decide now that the entity tag will one day be the plaintext
+digest and build it now, or decide it will not and ship the marker.
+
+#### The size is trivial; the payload is not
+
+A sibling agent flipped `TrailerSize` in-tree, compiled the whole tree, ran
+`go test ./... -short` against a captured baseline and reverted. Result:
+
+| | |
+|---|---|
+| Non-test lines for the size alone | **3, in one file** — everything else derives from the constant and recompiled untouched |
+| Test lines with a hardcoded literal | **18, in five files**, and they map exactly onto the 18 new failing nodes |
+| Documentation lines stating 40 / 65604 / the overhead formula | ~18 across seven non-ticket files |
+| Migration, dual reader, second format id | **zero** |
+
+**The trailer is 40 → 58, not 40 → 56.** One 16-byte field cannot be both
+`md5(plaintext)` and S3's composite `md5(concat(md5(part_i)))-N`: the composite
+needs `N` to render at all. The body becomes
+`uint64 length ‖ uint32 crc32c ‖ [16]byte digest ‖ uint16 partCount`, where
+`partCount == 0` means a bare digest and `> 0` the composite over that many
+client parts. Derived: the tail-first first window 65604 → **65622**, HEAD's
+suffix `bytes=-40` → **`bytes=-58`**, and ADR 0003 D12a's two named unreachable
+lengths 68/65605 → **86/65623** — the last of which owes a third exhaustive
+well-formedness sweep, because [ADR 0003](../adr/0003-objects-are-an-authenticated-segment-chain.md)
+records one per trailer size.
+
+**`Checksum` must not absorb the digest.** `Checksum.Append` folds two CRC32Cs
+with `crc32Combine`, without the plaintext. **MD5 has no such construction.** The
+digest needs its own type threaded separately through the seal and open paths, and
+that parameter churn is most of the orchestration diff. It is also why
+`md5(whole plaintext)` is *structurally impossible* on the client-driven multipart
+path: parts arrive in any order, concurrently, and may be re-uploaded, so no
+hasher ever sees the object's plaintext in order. Only the composite is available
+there — which is fine, because the composite is exactly what rclone compares.
+
+#### What it costs per byte — measured, and not fixable
+
+On this machine (Apple M5 Pro, arm64; the instrument agrees with the project's own
+recorded `cryptofloor` column within 3.4 %, which is what makes the comparison
+legitimate):
+
+| | |
+|---|---|
+| MD5 standalone | 890 MiB/s — **1.12 ms/MiB** |
+| CRC32C, the hash the trailer already carries | 11 409 MiB/s — **12.8× faster** |
+| SHA-256, for contrast | **3.65× faster than MD5** — arm64 has SHA-2 and CRC32C in silicon and no CPU has an MD5 instruction |
+| Seal + running CRC32C, what ships today | 4741 MiB/s |
+| Seal + CRC32C + MD5 | **752 MiB/s — 6.2×** |
+| Per-core line rate the proxy can seal | 39.8 → **6.3 Gbit/s** |
+| Aggregate sealing at 16 concurrent streams | 40.2 → **9.9 GB/s** |
+
+Three mitigations were measured and all three fail: sharing the memory traversal
+with the seal loop buys **0.4 %** (MD5 is compute-bound, not memory-bound); a
+second goroutine at 1 MiB handoff recovers 16 % and costs a whole extra core per
+stream; at 64 KiB handoff the wakeups eat most of it. Go's `crypto/md5` is already
+hand-written assembly on both architectures, so 890 MiB/s **is** the fast path.
+
+**What that means end to end is genuinely unresolved, and honestly so.** In-process
+crypto is 3.5–5.1 % of a PUT's wall clock today, and the whole proxy adds only
++0.11 ms/MiB over a direct client while the seal alone costs 0.214 ms/MiB of CPU —
+today's encryption is already more than absorbed by pipeline overlap. Applied to
+the recorded rows, a fully serial MD5 costs −15.3 % at 5 MiB to −21.0 % at 128 MiB
+TLS. The adversarial review is right that this claim cannot be made: ADR 0020 says
+*"nothing below roughly 15 % end to end may be claimed at all"*, three of those
+four rows sit at that floor, **and both columns are missing** — ADR 0020's own
+2026-09-12 note says the 2026-09-11 after column *"is already the run to replace,
+not the state of the tip"*. Worse, the effect that would decide it — aggregate
+sealing capacity falling 4–6× under concurrency — has **no instrument**:
+`test/perf/throughput_test.go` runs no parallel streams and every recorded
+measurement is single-stream against a co-located backend. Building that
+instrument is an uncosted work item.
+
+What can be said without an instrument: a single-request PUT seals **inside** the
+`Read` the backend's HTTP writer pulls, so the serial end of the bracket is the
+shape that path actually has; and one core on a 10 GbE link crosses from
+network-bound to CPU-bound.
+
+#### The expensive candidate ships the cheap one as well
+
+A listing has no trailer, so under constraint A the listing tag stays a marker
+while `HEAD`/`GET` carry the digest. **Both designs get built**, and one object is
+named by two different 32-hex-shaped strings depending on the verb. Consequences,
+each verified:
+
+- [listobjects_conformance_test.go:781-845](../../test/integration/s3-methods/listobjects_conformance_test.go#L781)
+  asserts `LIST == HEAD == GET` for four object shapes *and* that the listing's tag
+  satisfies an `If-Match`. Under the split it is **unsatisfiable** — it has to be
+  overturned by an ADR, not edited by a developer. Under the marker it passes
+  unchanged.
+- A precondition carrying either of the two forms is **indistinguishable by shape**,
+  so the evaluator has to accept both on every verb.
+- A new client-visible inconsistency appears where the marker has none: `s3cmd
+  ls --list-md5` HEADs on a hyphen and then reads **only** `s3cmd-attrs`, never the
+  HEAD entity tag. For an object s3cmd did not write, `info` reports the trailer
+  digest and `ls --list-md5` reports the marker — which is the S5 defect displaced
+  onto foreign objects.
+
+#### The ranged `GET` is forced, and it is the standing cost
+
+ADR 0008 D13 names a per-path entity-tag asymmetry as a defect of the response
+surface, and its own residual exempts a ranged read only for
+`x-amz-checksum-crc32c`, on the argument that a partial read cannot make a
+statement about the whole object at rest. **An entity tag is not such a
+statement** — it identifies the whole object and is what `If-Match` and every SDK
+download manager key on. So neither "keep the backend tag on a 206" nor "omit the
+tag on a 206" is available, and what is left is **+1 backend request on every
+ranged `GET`, conditional or not, permanently**. A 1 GiB download at the SDK's
+8 MiB default goes from 128 to 256 backend requests.
+
+And even where the trailer bytes are already in hand it cannot be answered without
+restructuring: `provisionalWindow`
+([range.go:334-345](../../internal/proxy/handlers/object/range.go#L334)) over-asks
+by exactly `TrailerSize`, but `rangeReader.finish()` opens the trailer only after
+the body is consumed, by which time the status and headers are out.
+
+#### The preconditions: the translate design works, and it moves a race rather than closing it
+
+Reading the tail, comparing proxy-side and then forwarding the **backend's** entity
+tag as `If-Match` costs **zero** extra requests on `HEAD` and on a whole-object
+`GET` — both already read the tail and the `GET` already pins its second leg with
+the backend tag ([operations.go:85](../../internal/proxy/handlers/object/operations.go#L85)).
+The earlier conclusion that a plaintext digest forces a TOCTOU is too strong. What
+it does force, each verified:
+
+- The proxy becomes the precondition evaluator on five verbs. Atomicity then rests
+  entirely on the backend honouring `If-Match` on a write — and this repo's own
+  [conditional_requests_test.go:380-388](../../test/integration/s3-methods/conditional_requests_test.go#L380)
+  already tolerates a backend that ignores it. Where it is ignored the write
+  proceeds while the proxy has claimed to evaluate the precondition: **fail-open**,
+  and now the proxy's failure rather than the client's.
+- **A valued `If-None-Match` on a write is unspecified under translate.** "Write
+  unless the current plaintext digest is D" cannot be expressed by forwarding the
+  backend tag: `If-None-Match: E` inverts the condition and refuses the very write
+  the client wanted, `If-Match: E` is strictly stronger and yields spurious 412s
+  under any concurrent writer, and on a nonexistent object there is no `E` at all.
+- A replacement by a **different object with identical plaintext** answers 412
+  where native S3 allows the write, because the backend tag moves with the fresh
+  per-object data key. A deliberate conformance deviation, covered by no test.
+
+#### The security regression, and it is exclusive to this design
+
+**Today's entity tag is the backend's MD5 of the ciphertext under a random
+per-object data key: a client cannot predict it, choose it or collide it.** The
+trailer digest makes the tag `md5(the client's own plaintext)` — fully chosen —
+and the translate design then makes the **proxy** evaluate `412`/`304` and the
+lost-update guard against that value. That puts a collision-broken hash on the
+input side of a precondition verdict. It is no worse than native S3, and it is
+strictly worse than what this product does today and than the marker, which keeps
+the unpredictable value. Under CLAUDE.md rule 9 this is the finding that has to be
+answered before the design is chosen, not after.
+
+Two smaller entries, for completeness:
+
+- **The confirmation oracle is not new.** The proxy already answers
+  `x-amz-checksum-crc32c` — a checksum over the whole plaintext — on a whole-object
+  `GET` and on `HEAD` (ADR 0003 D14). MD5 is the same leak at higher resolution,
+  and against the low-entropy candidate sets that matter a 32-bit CRC32C already
+  confirms a guess. The incremental leak is small; the claim that the entity tag
+  "says nothing about the plaintext today" is false.
+- **`gosec` cost.** `crypto/md5` would land inside `pkg/encryption/dataencryption`
+  — the crypto package itself — and `make gosec` flags G501 and G401. The two
+  existing suppressions are justified with *"not a security primitive"*, which is
+  precisely what the value stops being once it drives a precondition verdict. A new
+  suppression justified in the opposite direction, inside the codec, is a review
+  artefact in a product with a published threat model.
+
+#### What it buys: two rows
+
+| | Marker (O3) | Trailer digest |
+|---|---|---|
+| Red rows turned green | 17, or 19 with the R5b harness fix | 20 |
+| Rows it wins that the other cannot | — | **R2a, twice** |
+| Rows it loses that the other wins | — | **R1b** — the digest is *stable* for unchanged bytes, which is the better property, but the case asserts instability as its premise and non-digest shape as its target, so it fails before a verdict is recorded and has to be rewritten |
+| Rows of its total actually won by the listing **marker** half | — | 8 of the 20 |
+
+**The exclusive product delta is two rows**, against ~1400–2000 changed lines, a
+format change, a new precondition evaluator, an overturned conformance assertion,
+a per-byte regression the project cannot currently measure, and a security
+regression on the precondition path. And R2a has a **zero-product-cost**
+alternative: an upstream rclone provider entry carrying `etag_is_not_md5`, which
+one provider already carries (Fastly, rationale *mandatory encryption*).
+
+#### Size estimate, and why it is soft
+
+15 non-test Go files plus one new, ~23 test files, ~30 new tests, one new ADR and
+**six** amended (0003, 0006, 0008, 0010 D12, 0012, 0020), ~1400–2000 lines.
+Calibrated against this branch: the tail-first read was 18 files / +918 / −371;
+the segment chain end to end was 16 files / +1114 / −1300. Four to seven commits
+over two to four focused days, plus a full gate cycle and a performance baseline —
+and add roughly two days if the precondition evaluator needs its own component.
+**The estimate is soft at both ends**, because the two largest items — the ranged
+`GET` and the evaluator — are the ones the adversarial reviews reopened.
+
+#### Verdict on O4
+
+**Not in 5.0.0.** The deadline argument is real but covers only 18 bytes, and
+there is no honest half-step that banks them: a reserved field is speculative and
+a filled-but-unanswered field pays the full per-byte cost for a value nothing
+reads. If the plaintext digest is ever wanted it is a 6.0.0 with a format break —
+which [ADR 0017](../adr/0017-stored-data-compatibility-is-not-owed.md) already
+permits and already prescribes a procedure for (D1 no migration owed, D2 the
+precondition re-confirmed with the owner per release, D5 announced, D6 rehearsed).
+That is a known, rehearsed cost, not a catastrophe, and paying it buys the
+question a real answer instead of a deadline-shaped one.
+
+#### Found along the way, independent of this decision
+
+1. **A `PUT` above `optimizations.streaming_segment_size` silently drops both
+   entity-tag preconditions.** `ConditionalHeaders.ApplyToCompleteMultipartUpload`
+   has exactly one caller,
+   [complete.go:272](../../internal/proxy/handlers/multipart/complete.go#L272);
+   the internal producer builds its own `CompleteMultipartUploadInput`
+   ([operations.go:1203-1209](../../internal/proxy/handlers/object/operations.go#L1203))
+   and sets neither. So `If-None-Match: *` — create-if-absent — is lost for every
+   object above the ceiling, and a client that relies on it overwrites silently.
+   Verified by reading both call sites. Nothing to do with the entity tag's shape.
+2. **R2a cannot catch a proxy that forwards the backend's composite.** Its 12 MiB
+   in 5 MiB chunks gives parts of 5, 5 and 2 MiB; the short tail means the trailer
+   rides the last client part, so the backend's part count happens to equal the
+   client's. A size that is an exact multiple of the chunk size — 10 or 15 MiB —
+   puts the trailer in its own part and makes them differ by one. Neither suite has
+   such a case, and it matters for any design that answers a composite.
+
 ### Work, in this order
 
 - [x] **The rclone suite**: `test/e2e/rclone/`, cases R1–R7, both endpoints,
@@ -380,48 +944,137 @@ precondition header. No per-byte cost.
 - [x] **Run both against the tree as it is** and write the answers to questions
       1, 4 and 5 into this ticket — done above. Question 5 is answered *yes* and
       widens the candidate's scope to part-level entity tags.
-- [ ] **Apply the candidate on a branch, run both again**, and write the answers
-      to questions 2 and 3.
-- [ ] **Decide**, in discussion: the rule, the marker, what the multipart formula
-      is answered with, and what each client's README section says (ADR 0006
-      D6: configuration and client-specific notes only). Then, and only then:
-- [ ] **Amend ADR 0010 D12** with the rule, its reverse map and the exit
-      exception; strike the ADR 0012 residual that says no examined client
-      verifies the ETag and record the suites; note in ADR 0008's status that
-      the ETag is the proxy's statement; add the two suites to ADR 0019's and
-      ADR 0006's status blocks, and to `CLAUDE.md`'s test-layer list.
-- [ ] **One pair of functions**, in `internal/proxy/response` or next to the
-      conditional headers: the forward map for an answered ETag, the reverse map
-      for a precondition value — list-aware, `*` untouched, weak tags untouched.
-- [ ] **Route every emission site in the table through the forward map**, and
-      `ReadConditionalHeaders`
-      ([storage_headers.go:226](../../internal/proxy/handlers/object/storage_headers.go#L226))
-      through the reverse map, so all four `ApplyTo*` inherit it. The proxy's own
-      `If-Match` pins ([operations.go:85](../../internal/proxy/handlers/object/operations.go#L85),
+- [x] **The option analysis**: eight candidates against the clients' own sources,
+      three adversarial lenses each, four findings reproduced live — written up
+      above. It answers question 5 in the wider form, refutes three candidates
+      empirically, and leaves exactly one claim unmeasured.
+- [ ] **Measure the induced per-object `HEAD` traffic** — the one unmeasured
+      claim, and the only axis on which the marker can lose. The candidate on a
+      branch, 1000 × 4 KiB objects, backend request count and wall clock for
+      `rclone check`, `rclone sync --checksum` and `s3cmd sync`, before and after
+      (ADR 0020 wants two recorded columns). The same run answers questions 2 and
+      3, because both suites are 5 s and 8 s on a warm stack.
+- [ ] **Decide**, in discussion, five things and not one: the rule and the
+      marker; **whether the part-level arm is in scope** (without it s3cmd cannot
+      upload below `optimizations.streaming_segment_size` at all); what R2a is
+      answered with, given that the client setting switches off a check ADR 0012
+      already performs per part; whether the loss of s3cmd's only end-to-end
+      digest is accepted or answered by verifying `x-amz-content-sha256`; and
+      what each client's README section says (ADR 0006 D6). Then, and only then:
+- [ ] **Amend ADR 0010 D12** with four rules, not one: the forward rule at object
+      level, the forward rule at **part** level, the reverse map at both
+      positions (the two precondition headers *and* the `CompleteMultipartUpload`
+      part list), and the exit exception, stated the way ADR 0025 D8 states the
+      size rule. Record as named residuals: R2a, the exit provider's own objects,
+      and a foreign object in a listing, which gets the marker although its
+      backend tag is a true content digest. Strike the ADR 0012 residual that says
+      no examined client verifies the ETag and name the suites; note in ADR 0008's
+      status that the marker is a **compatibility** correction, not the honesty
+      correction D13 asks for; add the two suites to ADR 0019's and ADR 0006's
+      status blocks and to `CLAUDE.md`'s test-layer list.
+- [ ] **Three functions**, in `internal/proxy/response`: the forward map, the
+      reverse map for a precondition header (list-aware, `*` and weak tags
+      untouched, **quote-aware** — every client that replays a tag hands it back
+      quoted, minio-go re-quotes explicitly), and the reverse map for one part
+      value. All three **shape-driven**: strip `-0` only when the remaining head
+      is exactly 32 hex digits, or the zero-length held part's `"00000000-0"` is
+      corrupted.
+- [ ] **Route every emission site through the forward map** — value-wrapping, not
+      statement-wrapping: [operations.go:480](../../internal/proxy/handlers/object/operations.go#L480)
+      and [:1221](../../internal/proxy/handlers/object/operations.go#L1221) are
+      single unconditional `w.Header().Set` calls, and wrapping the *statement* in
+      a provider gate drops the header entirely under exit. The three response
+      funnels are shared by both provider arms and are not told which arm called
+      them, so the gate belongs at the call sites. The proxy's own `If-Match` pins
+      ([operations.go:85](../../internal/proxy/handlers/object/operations.go#L85),
       [range.go:404](../../internal/proxy/handlers/object/range.go#L404)) carry
       backend ETags and stay as they are.
+- [ ] **The two reverse maps, in the same commit as the forward map.**
+      `ReadConditionalHeaders`
+      ([storage_headers.go:226](../../internal/proxy/handlers/object/storage_headers.go#L226)),
+      so all four `ApplyTo*` inherit it; and the part list in
+      [complete.go](../../internal/proxy/handlers/multipart/complete.go) **inside
+      the encrypting branch**, before `VerifyClientParts` — not where `parts` is
+      built, because the exit arm forwards that same map to the backend as the
+      part identity. Without it every client-driven multipart upload under an
+      encrypting provider answers `400 InvalidPart`.
 - [ ] **Tests.** Unit: both maps over quoted and unquoted 32-hex, `-N`, `-0`, a
-      list, `*`, empty. Integration, both transports: a single-request `PUT`
-      answers an ETag that is not 32 hex digits, and `PUT`, `GET`, `HEAD` and
-      both listings answer the same value; `If-Match` with that value is `200`
-      and `If-None-Match` with it is `304`; `If-Match` with the backend's raw
-      ETag, read from MinIO directly, is `412` — the marker is the contract, not
-      a cosmetic; under the exit provider every ETag equals the backend's. The
-      conformance precondition test
+      list, `*`, empty, and `"00000000-0"`. **And first: give the unit layer eyes**
+      — thirteen files under `internal/` touch an entity tag and contain exactly
+      one 32-hex literal between them, so the forward map fires nowhere today. At
+      least one real 32-hex fixture per emission site and per internal pin, or a
+      marker wrongly applied to the tail-first pin goes undetected and answers 412
+      to every whole-object `GET` above one segment. Integration, both transports:
+      a single-request `PUT` answers an ETag that is not 32 hex digits, and `PUT`,
+      `GET`, `HEAD` and both listings answer the same value; `If-Match` with that
+      value is `200` and `If-None-Match` with it is `304`; under the exit provider
+      every ETag equals the backend's. **A ranged `GET` carrying a marked
+      `If-Match`** — no test covers it today and no suite exercises an SDK
+      download manager, which pins the first response's tag for every later chunk,
+      so the failure mode is a 412 on the *second* chunk. The conformance
+      precondition test
       ([refusal_test.go:159-186](../../test/integration/conformance/refusal_test.go#L159))
       keeps passing unchanged, which is the reverse map working. And the two
-      suites, green.
+      suites, green — plus the R5b harness fix below, without which R5b stays red
+      for a reason that is not the product's.
+- [ ] **Open sub-decision raised by the reverse map.** The bullet above that said
+      *"`If-Match` with the backend's raw ETag, read from MinIO directly, is
+      `412` — the marker is the contract, not a cosmetic"* does not survive a
+      shape-driven map: an unmarked raw 32-hex is a no-op for the map, reaches the
+      backend and **matches**, so it is `200`. Either the marked value is the only
+      accepted contract — which needs the map to reject an unmarked one, and
+      therefore state under which provider — or both are accepted and the ADR says
+      so. It cannot be left implicit.
+- [ ] **Fix the R5b harness**, not the assertion:
+      [scenarios_read_test.go:186](../../test/e2e/rclone/scenarios_read_test.go#L186)
+      takes `strings.Fields(stdout)[0]`, and `rclone hashsum md5` prints `%*s  %s`
+      with width 32, so an empty hash yields the filename. Parse the fixed-width
+      column. ADR 0031 is untouched: the assertion stays exactly as written.
+- [ ] **Run what compiling does not prove**: `make test-integration` and
+      `make test-integration-tls` (thirteen sites echo an `UploadPart` ETag into
+      `CompleteMultipartUpload`, and two drive aws-sdk-go-v2's own uploader),
+      `make test-conformance` against minio and localstack, and the Velero gate —
+      kopia never reads an entity tag, but `go vet` does not execute an assertion
+      and this is a release gate.
 - [ ] **Documentation.** `README.md`: the listing paragraph at
       [1184-1186](../../README.md#L1184) and the precondition paragraph at
       [1274-1277](../../README.md#L1274) say the ETag is the ciphertext's MD5;
       they say the decided shape instead, and the exit section states the
       exception. Per-client sections for rclone and s3cmd with their
-      configuration and notes, each naming its proof (ADR 0006 D6, D7). Release
+      configuration and notes, each naming its proof (ADR 0006 D6, D7) — and for
+      rclone, what `use_multipart_etag = false` actually switches off. Release
       notes: the *Behaviour — the entity tag* paragraph drafted in
       [023](023-major-v5.md), rewritten to the decision, and a `BREAKING CHANGE`
       footer on the commit.
 - [ ] **Gate decision**: whether `e2e-rclone` and `e2e-s3cmd` join the release
-      gate list once green.
+      gate list once green. It depends on R2a: a suite that keeps one red row by
+      decision cannot be a gate, so the R2a answer and the gate answer are one
+      decision, not two. **The O4 costing below sharpens this rather than
+      loosening it.** R2a was the only row O4 bought that no marker can; with O4
+      out of 5.0.0, R2a stops being a design question and becomes a product
+      statement with exactly two answers: either a documented client setting is
+      the target behaviour — and the case is rewritten to configure the remote
+      that way, green, gate possible — or the proxy is supposed to satisfy
+      rclone's composite unaided, in which case R2a is red until 6.0.0 and
+      `e2e-rclone` cannot gate the release it was built to gate.
+- [ ] **Two defects found while costing O4, neither gated on this decision.**
+      (1) A `PUT` above `optimizations.streaming_segment_size` drops both
+      entity-tag preconditions — the internal producer builds its own
+      `CompleteMultipartUploadInput`
+      ([operations.go:1203-1209](../../internal/proxy/handlers/object/operations.go#L1203))
+      and never calls `ApplyToCompleteMultipartUpload`, so `If-None-Match: *`
+      silently stops protecting anything above the ceiling. (2) R2a's 12 MiB in
+      5 MiB chunks has a short tail, so the backend's part count equals the
+      client's by accident; the suite cannot catch a proxy that forwards the
+      backend's composite. A 10 or 15 MiB case would.
+- [ ] **Two complements, each decided on its own and neither gated on the
+      marker.** (1) Verify `x-amz-content-sha256` against the decoded body when it
+      is a real hex digest — it gives s3cmd a stronger end-to-end check than the
+      one the marker silences, and ADR 0012's verifier already has the shape for
+      it. (2) Serve `x-amz-checksum-crc32c` on `PUT`, `UploadPart`,
+      `CompleteMultipartUpload` and a ranged read; the values are already
+      computed, it moves no e2e row, and it is what ADR 0008 D13's uniformity
+      bullet asks for.
 
 ---
 
