@@ -138,6 +138,48 @@ CI jobs put the same list in the step summary.
   a real per-request id and echo it in `x-amz-request-id`. The constant that
   identifies nothing is the one answer that is wrong either way.
 
+## Open, and not in the list above
+
+Four things the sweep and its decision left outstanding. They are here because a
+decision record is not a work list; the reasoning for each is in ADR 0031.
+
+- [ ] **A red test does not name its rule where a reader sees it.** ADR 0031 D7
+      asks for the rule and the record *in the failure message*. The two client
+      suites do it; the twenty-seven tests above do not — their citation sits in
+      a source comment and the failure is bare tool output (`Should be empty, but
+      was proxy-request`). ADR 0031 D9 asks a suite to report what is open where
+      its result is already read; the integration suites produce no such summary.
+      **These two are named in ADR 0031 as the whole mitigation for the largest
+      risk it accepts**, so until they are built that risk is unmitigated. The
+      mechanical fix is to move each citation into the assertion's message.
+
+- [ ] **There is no emergency release path, and it is undecided.** Every gate is
+      a prerequisite of the release job, so a security fix in a dependency cannot
+      ship while an unrelated target is red. ADR 0031's residual risks put the
+      choice plainly: either a security release may cut past red gates under a
+      named written procedure saying who may do it and what backfills afterwards,
+      or it may not and an unbounded delay on security fixes is accepted. **Decide
+      it before it is needed.**
+
+- [ ] **Three required checks are not pinned to the app that reports them.** The
+      thirteen checks that predate this work name GitHub Actions as the only app
+      allowed to satisfy them; the three end-to-end checks added on 2026-09-13
+      carry no such binding, so anything able to write a commit status can report
+      them green. The endpoint that sets it answered HTTP 500 on every attempt,
+      including an exact no-op, so this is a retry rather than a fix. Until then
+      it is a real if modest weakening of three release gates, and it is the kind
+      of inconsistency nobody finds by reading the repository, because the check
+      list is configured outside it.
+
+- [ ] **Revisit the enforced known-failure manifest** once the red set is about
+      regressions rather than a backlog. ADR 0031 rejects it for now and says why,
+      and names it as the alternative most likely to replace the decision: it
+      cannot decay, and it preserves the regression signal that permanent red
+      destroys.
+
+The committed knowledge graph is also behind by this work and the two client
+suites; it is rebuilt in its own approved change and never unprompted.
+
 ## Done when
 
 - [ ] Each item above is either fixed, or decided and recorded in an ADR with its
@@ -145,4 +187,6 @@ CI jobs put the same list in the step summary.
 - [ ] `make test-unit`, `make test-integration`, `make test-integration-tls`,
       `make test-e2e-rclone`, `make test-e2e-s3cmd` and `make test-e2e-velero`
       are green on the branch head.
+- [ ] The four items under *Open, and not in the list above* are each done or
+      decided and recorded.
 - [ ] `git grep 035` is empty outside this directory, and this file is deleted.
