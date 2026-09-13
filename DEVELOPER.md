@@ -231,8 +231,8 @@ third literal.
 | Combined Coverage | merges unit and integration data. **Advisory: no coverage threshold fails a build** — but the job itself is required, because `Semantic Release` needs it and a broken merge would otherwise stop the release silently |
 | Conformance (minio, localstack) | `scripts/conformance-run.sh` per backend, one runner each, `fail-fast` off: when one backend disagrees, what the others did is the finding ([ADR 0027](docs/adr/0027-conformance-is-asserted-against-a-backend-that-is-not-minio.md)) |
 | Velero E2E (kind) | a preflight plus the twelve V1-V10 scenarios, thirteen tests in all. A deliberate release gate ([ADR 0019](docs/adr/0019-integration-and-e2e-tests-are-the-product.md)) |
-| rclone E2E (demo stack) | R1-R7 against the demo stack, over both proxy endpoints. A deliberate release gate ([ADR 0019](docs/adr/0019-integration-and-e2e-tests-are-the-product.md)) |
-| s3cmd E2E (demo stack) | S1-S7, the same. Its own job, never bundled with rclone's: a red gate has to name the client, and one client's flake must not withhold the other's verdict |
+| rclone E2E (minio) | R1-R7 against the demo stack, over both proxy endpoints. A deliberate release gate ([ADR 0019](docs/adr/0019-integration-and-e2e-tests-are-the-product.md)) |
+| s3cmd E2E (minio) | S1-S7, the same. Its own job, never bundled with rclone's: a red gate has to name the client, and one client's flake must not withhold the other's verdict |
 | Semantic Release | only on a push to `main`, and only when all of the above pass |
 
 ### What `main` actually enforces
@@ -242,15 +242,15 @@ configuration, not a file in this repository** — so it does not move when a jo
 does. Adding a job to the pipeline therefore has a second step: put its name on
 the required list, or it runs on every pull request and blocks nothing. Do it in
 that order — merge the workflow first, then add the context, or every pull
-request waits on a check that never reports. `rclone E2E (demo stack)` and
-`s3cmd E2E (demo stack)` are the fourteenth and fifteenth, added 2026-09-13.
+request waits on a check that never reports. `rclone E2E (minio)` and
+`s3cmd E2E (minio)` are the fourteenth and fifteenth, added 2026-09-13.
 
 The contexts are **job** names, never `workflow / job`, which is why renaming a
 workflow does not disturb them:
 
 | | |
 |---|---|
-| From `test-pipeline.yml` | Malware Scan (Source Code), Unit Tests, Race Detector, GoSec Security Scan, Vulnerability Check, Code Linting, Helm Chart, Integration Tests, Combined Coverage, Conformance (minio), Conformance (localstack), Velero E2E (kind), rclone E2E (demo stack), s3cmd E2E (demo stack) |
+| From `test-pipeline.yml` | Malware Scan (Source Code), Unit Tests, Race Detector, GoSec Security Scan, Vulnerability Check, Code Linting, Helm Chart, Integration Tests, Combined Coverage, Conformance (minio), Conformance (localstack), Velero E2E (kind), rclone E2E (minio), s3cmd E2E (minio) |
 | From `semantic-release-dry-run.yml` | Semantic-Release (dry run) |
 
 `Semantic Release` is deliberately **not** on the list. It is skipped on a pull

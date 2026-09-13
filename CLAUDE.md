@@ -286,6 +286,9 @@ its own Make targets and its own CI job, and no target or job ever runs two of t
 together. Adding a third tool means adding a third job, not another step inside an
 existing one. The reasons are all about what a failure tells you:
 - a red gate names the client in the job name, so nobody opens a log to learn which one broke;
+- the job name carries the **S3 backend** it ran against — `rclone E2E (minio)`, the way
+  `Conformance (minio)` does — never the stack that hosted it: the backend is what a verdict
+  is about, and the same suite against another backend is another job;
 - one client's trouble — a download, an upstream release, a flake — cannot withhold the
   other's verdict, and both verdicts are what the suites exist to produce;
 - a required check is per job, so bundling makes it impossible to require one client and

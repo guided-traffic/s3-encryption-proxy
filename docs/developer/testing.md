@@ -357,9 +357,12 @@ warning about one. The Velero job budgets 45 minutes for bring-up,
 run and teardown, and CI runs the same `e2e-up.sh` / `e2e-down.sh` a workstation
 does, so the two cannot drift apart.
 
-`rclone E2E (demo stack)` and `s3cmd E2E (demo stack)` run the client suites the
+`rclone E2E (minio)` and `s3cmd E2E (minio)` run the client suites the
 same way, from the same up-scripts, and **are on that list too** (decision of
-2026-09-13). They are the only place a client's own verification logic meets this
+2026-09-13). The name carries the S3 backend the suite was run against, the way
+`Conformance (minio)` and `Conformance (localstack)` do, and not the stack that
+happened to host it: the backend is what a verdict is about, and the same suite
+against another backend is another job. They are the only place a client's own verification logic meets this
 proxy, which is exactly what an SDK-based suite cannot reach.
 
 **One tool, one job.** The two are never bundled, and a third tool would be a
