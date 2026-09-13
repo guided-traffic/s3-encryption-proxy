@@ -578,6 +578,17 @@ func (s *SegmentedSession) RecordStreamedPart(partNumber int, offset int64, sum 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.touchLocked()
+	// A client may send any part number again with different bytes. When the
+	// part it replaces is the one being held, the held copy is no longer part of
+	// this object: leaving it would have Complete store those bytes under this
+	// number while the table describes these, an object that stores cleanly and
+	// fails authentication on every read. The drop belongs here rather than in
+	// SealStreamingPart because every failure between the two returns without
+	// touching the table, and a held part is a part the client uploaded
+	// successfully: it may only disappear once its replacement stands.
+	if s.pending != nil && s.pendingNum == partNumber {
+		s.dropPendingLocked()
+	}
 	s.parts[partNumber] = sessionPart{
 		offset:       offset,
 		plaintextLen: sum.Length,

@@ -130,10 +130,6 @@ type SealedPart struct {
 // byte moves and recorded only once the part is stored.
 func (p *SealedPart) Offset() int64 { return p.offset }
 
-// Streamed reports whether this part seals the client's body as the backend
-// pulls it rather than from a retained copy.
-func (p *SealedPart) Streamed() bool { return p.src != nil }
-
 // Checksum reports what the part actually carried. For a streamed part it is
 // valid only once the body has been read to the end, which is the point where
 // the backend has taken every byte; before that it reports false.

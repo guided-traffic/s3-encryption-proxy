@@ -124,6 +124,19 @@ still get its object (ADR 0006). An earlier version of this path removed the
 entry on failure and turned that client's Complete into a `400`;
 `TestMpuUploadKeepsAStoredPartWhenALaterAttemptFails` is the guard.
 
+`RecordStreamedPart` is also where a superseded held part goes. A client may send
+any part number again, and one that arrives short first and segment-aligned second
+— what an SDK retry with different chunking produces — takes the buffered path and
+then the streamed one. Leaving the held copy would have Complete store those bytes
+under that number while the table described the streamed ones: an object that
+stores cleanly and fails authentication on every read, behind a
+`CompleteMultipartUpload` that answered `200 OK`. The drop sits here rather than
+in `SealStreamingPart` for the same reason the table entry does — every failure
+between the two returns without touching the session, and a held part is one the
+client uploaded successfully. It gives the short-part budget back with it.
+`TestSegmentedSessionHeldPartReplacedByAStreamedOne` and
+`TestSegmentedSessionFailedStreamKeepsTheHeldPart` are the two guards.
+
 `uploadStreamedPart` also compares the sealed length against the declared one
 before it records anything. A backend that acknowledges a part it did not take in
 full has not stored it, whatever it answered, and entering what was sealed up to

@@ -1204,3 +1204,63 @@ func TestMpuPartsUploadedOutOfOrder(t *testing.T) {
 			"concurrently uploaded parts round-tripped to different bytes")
 	})
 }
+
+// A client may re-send any part number, and an SDK that retries a part with
+// different chunking sends it at a different size: short first, then at or above
+// the minimum and covering whole segments. Those two sizes take different paths
+// through the proxy — the short one is held until Complete, the aligned one is
+// streamed to the backend as it arrives — and the object has to carry the
+// replacement either way.
+//
+// Before 2026-09-13 it did not: the streamed part replaced the table entry and
+// the held copy stayed, so Complete stored the superseded bytes under that number
+// under a trailer authenticating the replacement. The upload answered 200 OK and
+// every later read answered 403. MinIO is the control: S3 permits this.
+func TestMpuHeldPartResentAtStreamingSize(t *testing.T) {
+	integration.EnsureMinIOAndProxyAvailable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	tc := integration.NewTestContextWithTimeout(t, ctx)
+	defer tc.CleanupTestBucket()
+
+	proxy, direct := MpuTargets(t, tc)
+
+	first := MpuPayload(t, MpuMinPartSize)
+	// Below the 5 MiB minimum, so the proxy holds it until Complete.
+	held := MpuPayload(t, 1024*1024)
+	// The same part number again, now large enough and segment-aligned, which is
+	// what routes it to the streaming path.
+	replacement := MpuPayload(t, MpuMinPartSize)
+
+	wantDigest := MpuDigest(append(append([]byte{}, first...), replacement...))
+
+	for _, tg := range []MpuTarget{proxy, direct} {
+		tg := tg
+		t.Run(tg.Name, func(t *testing.T) {
+			key := MpuKey("resent-held-part")
+			uploadID := MpuCreate(t, ctx, tg, key)
+
+			etag1 := MpuPart(t, ctx, tg, key, uploadID, 1, first)
+			MpuPart(t, ctx, tg, key, uploadID, 2, held)
+			etag2 := MpuPart(t, ctx, tg, key, uploadID, 2, replacement)
+
+			_, err := MpuComplete(ctx, tg, key, uploadID, []types.CompletedPart{
+				MpuPartRef(1, etag1), MpuPartRef(2, etag2),
+			})
+			require.NoErrorf(t, err, "%s: CompleteMultipartUpload", tg.Name)
+			t.Cleanup(func() {
+				_, _ = tg.Client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
+					Bucket: aws.String(tg.Bucket), Key: aws.String(key),
+				})
+			})
+
+			body := MpuGetBody(t, ctx, tg.Client, tg.Bucket, key)
+			require.Equalf(t, len(first)+len(replacement), len(body),
+				"%s: the object is not the two parts it was completed from", tg.Name)
+			assert.Equalf(t, wantDigest, MpuDigest(body),
+				"%s: the object carries the superseded held part, not the replacement", tg.Name)
+		})
+	}
+}

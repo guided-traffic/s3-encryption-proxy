@@ -290,6 +290,113 @@ func TestSegmentedSessionHeldPartReplacedByAStorableOne(t *testing.T) {
 	assert.Equal(t, 3, final.PartNumber, "the trailer follows the two stored parts")
 }
 
+// The same replacement over the streaming path. A client that retries a part
+// with different chunking sends it again segment-aligned and at or above the
+// backend minimum, which routes it to the streaming path - and that path has to
+// forget the held copy exactly as the buffered one does, or Complete stores the
+// superseded bytes under a trailer that authenticates the replacement.
+func TestSegmentedSessionHeldPartReplacedByAStreamedOne(t *testing.T) {
+	m := segManager(t)
+	session, err := segRegisteredSession(t, m, "upload-replace-streamed")
+	require.NoError(t, err)
+
+	first := segPlaintext(t, segPartSize)
+	replacement := segPlaintext(t, segPartSize)
+
+	// Part 2 arrives short and is held, then part 1 is stored where it lies.
+	_, err = session.SealPart(2, segPlaintext(t, 4096), m.ShortPartBufferSize())
+	require.NoError(t, err)
+	require.Equal(t, int64(4096), m.ShortPartBytesHeld())
+
+	stored := make(map[int][]byte)
+	part, err := session.SealPart(1, first, m.ShortPartBufferSize())
+	require.NoError(t, err)
+	body, err := part.Body()
+	require.NoError(t, err)
+	stored[1], err = io.ReadAll(body)
+	require.NoError(t, err)
+
+	// Part 2 again, this time streamed to the backend as it arrives.
+	stored[2] = segStreamPart(t, session, 2, replacement)
+	assert.Zero(t, m.ShortPartBytesHeld(), "the superseded copy must be given back")
+
+	final, err := session.Complete()
+	require.NoError(t, err)
+	require.Equal(t, 3, final.PartNumber, "the trailer follows the two stored parts")
+	stored[final.PartNumber] = final.Body
+
+	var object bytes.Buffer
+	for number := 1; number <= len(stored); number++ {
+		object.Write(stored[number])
+	}
+	reader, err := m.OpenSegmented("bucket/object", session.Upload.Metadata(), bytes.NewReader(object.Bytes()))
+	require.NoError(t, err)
+	got, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	assert.Equal(t, append(append([]byte{}, first...), replacement...), got,
+		"the object must carry the replacement, not the held copy")
+}
+
+// A streamed attempt that never reaches the backend leaves the held part where
+// it was. The drop sits in RecordStreamedPart rather than in SealStreamingPart
+// for this: a held part is one the client uploaded successfully, and every
+// failure before the table is written has to leave it standing.
+func TestSegmentedSessionFailedStreamKeepsTheHeldPart(t *testing.T) {
+	m := segManager(t)
+	session, err := segRegisteredSession(t, m, "upload-replace-failed")
+	require.NoError(t, err)
+
+	tail := segPlaintext(t, 4096)
+	_, err = session.SealPart(2, tail, m.ShortPartBufferSize())
+	require.NoError(t, err)
+	stored := make(map[int][]byte)
+	part, err := session.SealPart(1, segPlaintext(t, segPartSize), m.ShortPartBufferSize())
+	require.NoError(t, err)
+	body, err := part.Body()
+	require.NoError(t, err)
+	stored[1], err = io.ReadAll(body)
+	require.NoError(t, err)
+
+	// The streamed attempt is prepared and then abandoned, as an upload the
+	// backend refuses is.
+	_, err = session.SealStreamingPart(2, segPartSize, bytes.NewReader(segPlaintext(t, segPartSize)))
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(4096), m.ShortPartBytesHeld(), "the held part must survive a failed attempt")
+	final, err := session.Complete()
+	require.NoError(t, err)
+	require.Equal(t, 2, final.PartNumber, "the held part is still the object's last")
+	stored[final.PartNumber] = final.Body
+
+	var object bytes.Buffer
+	for number := 1; number <= len(stored); number++ {
+		object.Write(stored[number])
+	}
+	reader, err := m.OpenSegmented("bucket/object", session.Upload.Metadata(), bytes.NewReader(object.Bytes()))
+	require.NoError(t, err)
+	got, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	assert.Equal(t, segPartSize+len(tail), len(got))
+}
+
+// segStreamPart plays one part through the streaming path as the upload handler
+// does: seal, let the backend pull the body, then record what was stored.
+func segStreamPart(t *testing.T, session *SegmentedSession, partNumber int, plaintext []byte) []byte {
+	t.Helper()
+
+	part, err := session.SealStreamingPart(partNumber, int64(len(plaintext)), bytes.NewReader(plaintext))
+	require.NoError(t, err)
+	body, err := part.Body()
+	require.NoError(t, err)
+	sealed, err := io.ReadAll(body)
+	require.NoError(t, err)
+	sum, ok := part.Checksum()
+	require.True(t, ok, "a fully pulled part has its checksum")
+	session.RecordStreamedPart(partNumber, part.Offset(), sum)
+	session.RecordETag(partNumber, "etag")
+	return sealed
+}
+
 // TestSegmentedSessionInfersThePartSizeWhateverArrivesFirst: every uploader
 // dispatches part 1 first, but nothing makes it arrive first, and a client that
 // puts all its parts in flight at once regularly delivers the short last one

@@ -4,8 +4,8 @@
 
 **Accepted.** Date: 2026-09-07.
 
-**Implemented on the 5.0.0 branch, except the drop of a superseded held part on the streamed path
-(below), which is still open.**
+**Implemented on the 5.0.0 branch.** The last gap — the drop of a superseded held part on the
+streamed path — closed 2026-09-13 (below).
 In the tree: both server-side copy verbs are refused (D9); one client part becomes exactly one
 backend part and none waits for another (D1); the part-table rules are enforced at Complete and a
 layout that cannot be stored as a chain answers `InvalidPart` and aborts the upload (D2, D3); the
@@ -62,10 +62,15 @@ full first — which is what makes the key a memory bound rather than a bound on
 **Found while implementing it:** a client may send any part number again, and a held short part
 that came back large enough to be stored where it lies was left in the session. Complete then
 stored the held bytes under that number while the part table described the new ones — an object
-that stores cleanly and fails authentication on every read. The superseded copy is dropped where the
-replacement is buffered. It is **not** dropped where the replacement is streamed, which is the path a
-client takes when it declares a length that could be a middle part's — the held bytes are still
-sealed at Complete under that number. That half is open.
+that stores cleanly and fails authentication on every read, answered to a
+`CompleteMultipartUpload` that said `200 OK`. The superseded copy is dropped where the replacement
+is buffered, and **since 2026-09-13 on the streamed path too** — the path a client takes when it
+declares a length that could be a middle part's, which is what an SDK retry with different chunking
+produces. The streamed drop happens once the backend has acknowledged the part and its sealed
+length has been checked, not when the part is prepared: every failure before that point leaves the
+part table as it found it, and a held part is one the client uploaded successfully, so it may only
+disappear once its replacement stands. Dropping it gives the short-part budget back with it, which
+closes the reservation leak on the same path.
 
 **Amended 2026-09-09:** the global short-part buffer of D5 is a configuration key with a low
 default, not a constant, because it is memory an operator budgets against the container limit;
