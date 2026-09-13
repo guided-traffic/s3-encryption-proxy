@@ -3,7 +3,7 @@
 # Declare variables to be passed into your templates.
 
 # Defaults are tuned for evaluating the proxy: a single replica, no PodDisruptionBudget.
-# For production see values-production.yaml (multiple replicas, PDB, autoscaling, NetworkPolicy, TLS).
+# For production see values-production.yaml (multiple replicas, PDB, autoscaling, TLS).
 replicaCount: 1
 
 image:
@@ -187,27 +187,6 @@ affinity:
             values:
             - s3-encryption-proxy
         topologyKey: kubernetes.io/hostname
-
-# Network policy configuration
-networkPolicy:
-  enabled: false
-  policyTypes:
-    - Ingress
-    - Egress
-  ingress:
-    - from: []
-      ports:
-        - protocol: TCP
-          port: 8080
-  egress:
-    - to: []
-      ports:
-        - protocol: TCP
-          port: 443  # HTTPS for S3 access
-        - protocol: TCP
-          port: 53   # DNS
-        - protocol: UDP
-          port: 53   # DNS
 
 # Pod Disruption Budget
 # Disabled by default because the default deployment runs a single replica:

@@ -514,12 +514,10 @@ license is loaded.
 
 The listener carries no authentication, so it names no licensee: `licensed_to`
 and `company` were labels of `s3ep_license_info` until 5.0.0 and are gone.
-Restricting who can reach the metrics port is the operator's. The chart does ship
-a NetworkPolicy — `networkPolicy.enabled`, off by default — but its stock rules
-open TCP 8080 only, so enabling it with `values.yaml` as it stands closes the
-metrics port instead of narrowing it. `values-production.yaml` turns it on and
-adds a rule for TCP 9090 with `from: []`, which admits every source until you
-replace it with your Prometheus namespace.
+Restricting who can reach the metrics port is the operator's, and the chart ships
+no NetworkPolicy of its own: which namespaces may reach the pod is a property of
+the cluster, not of the chart (ADR 0030). Write one against the proxy pod, or run
+without one knowingly.
 
 There is no remaining-days gauge. It would be written once, at startup, and
 could never fall, so an alert on it could never fire. Ask the timestamp

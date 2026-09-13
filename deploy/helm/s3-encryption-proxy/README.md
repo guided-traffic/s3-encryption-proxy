@@ -5,8 +5,9 @@ This Helm chart deploys the S3 Encryption Proxy to a Kubernetes cluster.
 The chart renders one Deployment, one Service, one ConfigMap, one Secret and one
 ServiceAccount, plus optional Ingress, cert-manager Certificates (one for the
 Ingress, one for the proxy's own Service), HPA, PodDisruptionBudget,
-NetworkPolicy, monitoring Service, ServiceMonitor and Grafana dashboard
-ConfigMap.
+monitoring Service, ServiceMonitor and Grafana dashboard ConfigMap. It renders
+no NetworkPolicy: the network boundary belongs to the administrator
+(ADR 0030).
 
 ## Prerequisites
 
@@ -55,6 +56,25 @@ rather than the `appVersion` the note above is about. It accepts only
 helm delete my-s3-proxy
 ```
 
+## Upgrading to 5.0.0
+
+Two value keys are gone, and Helm ignores a value key a chart no longer
+declares — so an upgrade that carries them makes no error and no warning. Check
+your values file for both before you upgrade.
+
+- **`networkPolicy.*`**. The chart renders no NetworkPolicy any more (ADR 0030).
+  If you set `networkPolicy.enabled: true`, **the upgrade removes the policy your
+  release owns** and the pod is left with whatever the cluster's other policies
+  say. Take the rules out of your values file into a NetworkPolicy of your own
+  before upgrading; the policy is yours to maintain from here.
+- **`monitoring.metricsPath` now reaches the proxy.** The chart renders a
+  `monitoring:` block into its ConfigMap instead of passing `--monitoring` and
+  `--monitoring-port` on the command line, which those flags could not carry. A
+  path other than `/metrics` used to reach the ServiceMonitor alone, so every
+  scrape was a 404; it is now what the proxy serves. If your values carry a
+  `monitoring:` block inside `config` as a workaround, remove it — the chart
+  refuses to render with both.
+
 ## The proxy needs three things to start
 
 A `helm install` with nothing but the chart defaults produces a pod that never
@@ -87,6 +107,12 @@ configuration. Two routes for the licensed case, both supported:
 | Chart-managed | `license.jwt` (token inline) or `license.existingSecret` + `license.existingSecretKey`. The chart mounts it at `/app/license/license.jwt` and prepends `license_file:` to the rendered config |
 | Environment | an `env` entry named `S3EP_LICENSE_TOKEN` with a `secretKeyRef`. The proxy also reads `S3EP_LICENSE` and `S3_ENCRYPTION_PROXY_LICENSE` |
 
+A written `license_file` is binding ([ADR 0013](../../../docs/adr/0013-a-configuration-key-exists-only-if-code-reads-it.md) D13),
+so on the chart-managed route a Secret that is missing or carries the wrong key
+makes the pod fail to start with an error naming the file, instead of running on
+a token from somewhere else. The environment route is read first and leaves the
+key unwritten, so it keeps the discovery of the well-known locations.
+
 **3. The credentials the config references.** The shipped `config` refers to
 `${S3_ACCESS_KEY_ID}`, `${S3_SECRET_KEY}` and `${S3EP_AES_KEY}`. A `${VAR}`
 reference whose variable is unset or empty is a **startup failure**, not an
@@ -112,10 +138,10 @@ the reference stays a literal.
 ## Configuration
 
 > **Defaults are tuned for trying the proxy out**, not for production: a single
-> replica, no PodDisruptionBudget, no NetworkPolicy, no autoscaling and no TLS.
+> replica, no PodDisruptionBudget, no autoscaling and no TLS.
 > For production deployments start from `values-production.yaml`, which runs
 > multiple replicas behind a PodDisruptionBudget and enables autoscaling,
-> network policies, monitoring and cert-manager TLS. See
+> monitoring and cert-manager TLS. See
 > [Production Installation with cert-manager](#production-installation-with-cert-manager).
 
 Defaults below are the values in `values.yaml`.
@@ -253,19 +279,19 @@ An S3 object is arbitrarily large and streams through the proxy. Ingress
 controllers that buffer a request body by default have to be told not to;
 `values-production.yaml` carries the two nginx annotations that do it.
 
-### Network Policy Configuration
+### Network Policy
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `networkPolicy.enabled` | Render a NetworkPolicy | `false` |
-| `networkPolicy.policyTypes` | Policy types | `[Ingress, Egress]` |
-| `networkPolicy.ingress` | Ingress rules | allow TCP 8080 from anywhere |
-| `networkPolicy.egress` | Egress rules | allow TCP 443, TCP/UDP 53 to anywhere |
+The chart renders none, and has no `networkPolicy` values (ADR 0030). Which
+namespaces may reach the proxy, and which port and address the S3 backend
+listens on, are properties of the cluster the chart cannot know — so the rules
+it used to ship were `from: []` and `to: []`, which in Kubernetes means "from
+anywhere" and "to anywhere": a blanket grant under the name of a security
+control. Write the policy for your own topology, or run without one knowingly.
 
-The default egress rules assume the S3 backend is reachable on 443. A backend on
-another port (MinIO on 9000, for example) is blocked until you add it. The
-default ingress rules do not open the monitoring port; `values-production.yaml`
-adds 9090.
+The pod is an ordinary `NetworkPolicy` target: it carries the chart's standard
+selector labels, serves the S3 API on `service.targetPort` and, with
+`monitoring.enabled`, metrics on `monitoring.port`. Its egress goes to the
+backend named by `s3_backend.target_endpoint` and to DNS.
 
 ### Certificate Configuration (cert-manager)
 
@@ -341,9 +367,9 @@ nothing to resolve to and the proxy refuses to start.
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `monitoring.enabled` | Add `--monitoring` and the monitoring container port | `false` |
-| `monitoring.port` | Monitoring port | `9090` |
-| `monitoring.metricsPath` | Metrics path used by the ServiceMonitor | `/metrics` |
+| `monitoring.enabled` | Render the `monitoring:` block into the ConfigMap and open the monitoring container port | `false` |
+| `monitoring.port` | Monitoring port; becomes `monitoring.bind_address` | `9090` |
+| `monitoring.metricsPath` | Metrics path; becomes `monitoring.metrics_path` and is what the ServiceMonitor scrapes | `/metrics` |
 | `monitoring.service.enabled` | Render the separate monitoring Service (with `monitoring.enabled`) | `false` |
 | `monitoring.service.type` | Monitoring service type | `ClusterIP` |
 | `monitoring.service.port` | Monitoring service port | `9090` |
@@ -544,9 +570,9 @@ renders all three override files plus the Velero e2e values on every run.
    address — the proxy refuses to start otherwise — and it is reached with
    `kubectl port-forward`, never through a Service.
 
-6. **Network Policies**: enable `networkPolicy` in production and replace the
-   empty `from: []` selectors with your ingress controller and Prometheus
-   namespaces. As shipped they allow the ports from anywhere.
+6. **Network Policies**: the chart renders none (ADR 0030). Write one for the
+   proxy pod naming your ingress controller and Prometheus namespaces on the
+   ingress side and the S3 backend and DNS on the egress side.
 
 7. **Pod Security**: the chart runs non-root with a read-only root filesystem,
    all capabilities dropped, `RuntimeDefault` seccomp and no mounted service

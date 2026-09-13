@@ -23,10 +23,6 @@ resources:
 autoscaling:
   enabled: false
 
-# Disable network policies for easier development
-networkPolicy:
-  enabled: false
-
 # Development logging
 logging:
   enabled: true

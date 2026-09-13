@@ -50,33 +50,6 @@ affinity:
           - s3-encryption-proxy
       topologyKey: kubernetes.io/hostname
 
-# Enable network policies for security
-networkPolicy:
-  enabled: true
-  policyTypes:
-    - Ingress
-    - Egress
-  ingress:
-    # S3 API traffic. Restrict "from" to your ingress controller namespace.
-    - from: []
-      ports:
-        - protocol: TCP
-          port: 8080
-    # Metrics scraping. Restrict "from" to your Prometheus namespace.
-    - from: []
-      ports:
-        - protocol: TCP
-          port: 9090
-  egress:
-    - to: []
-      ports:
-        - protocol: TCP
-          port: 443  # HTTPS to the S3 backend
-        - protocol: TCP
-          port: 53   # DNS
-        - protocol: UDP
-          port: 53   # DNS
-
 # Enable monitoring. The ServiceMonitor scrapes the dedicated monitoring
 # Service, so monitoring.service must be enabled as well.
 monitoring:

@@ -8,11 +8,12 @@ decision list of the documentation audit. The monitoring decision was taken and 
 so the repository has been holding both positions at once — a decision that no network policy
 ships, and a chart that still ships one. This record is where the decision is written down.
 
-**Not built.** As of 2026-09-13 the chart still declares its `networkPolicy` values and still
-renders the object wherever it is switched on, so D1 and D3 are outstanding in full. Of D2 the
-statement half already stands: the security architecture says that restricting who can reach the
-metrics port is the operator's. What is outstanding is the removal itself and the upgrade note,
-and they land together, in 5.0.0.
+**Built 2026-09-13.** The template is deleted, the `networkPolicy` values are gone from
+`values.yaml` and from both profiles, and the chart README carries the upgrade note D3 asks for:
+Helm ignores a value key a chart no longer declares, so an operator who had set
+`networkPolicy.enabled: true` loses the policy on upgrade with no error of its own. The chart
+renders no NetworkPolicy under any values, and the two statements outside the chart — `README.md`
+and `SECURITY_ARCHITECTURE.md` — say so.
 
 ## Context
 

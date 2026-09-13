@@ -681,15 +681,14 @@ default rather than something tighter.
   authentication at all** ([monitoring/server.go:34](internal/monitoring/server.go#L34)).
   That is deliberate — it is what an ordinary Prometheus scrape needs, and it is
   what every exporter does. **Restricting who can reach the port is the
-  operator's**, through whatever the cluster uses. The chart ships a
-  NetworkPolicy but leaves it off (`networkPolicy.enabled: false` # default) and
-  its default ingress rule admits port 8080 alone, so on a default install the
-  port is reachable by anything that can route to the pod once the monitoring
-  listener runs (`monitoring.enabled`, plus `monitoring.service.enabled` for a
-  Service in front of it) — and enabling the shipped policy unchanged closes 9090
-  to everything, Prometheus included. `values-production.yaml` turns the policy on
-  and adds a rule for the metrics port, but with `from: []`, which matches every
-  source until the operator narrows it to the Prometheus namespace.
+  operator's**, through whatever the cluster uses. The chart ships no
+  NetworkPolicy (ADR 0030): it cannot know which namespaces may reach the proxy
+  or where the backend listens, and the rules it used to ship were `from: []`
+  and `to: []` — allow-from-anywhere and allow-to-anywhere, a blanket grant
+  wearing the name of a control. So on any install the metrics port is reachable
+  by anything that can route to the pod once the monitoring listener runs
+  (`monitoring.enabled`, plus `monitoring.service.enabled` for a Service in front
+  of it), until the operator writes a policy of their own.
   Six metrics are declared, down from twenty: the thirteen nothing ever observed
   went first, then `s3ep_license_days_remaining`, which was set once at startup
   and never refreshed ([monitoring/metrics.go:72](internal/monitoring/metrics.go#L72)).
