@@ -17,15 +17,15 @@ through. The wrap algorithm and the fingerprint derivation changed with ADR 0004
 metadata set with ADR 0003; neither changed the rules below.
 
 **Amended 2026-09-13: D13 and D14 write down which stored inputs are load-bearing for
-decryption and what selects the provider. Decided 2026-09-12 and 2026-09-13. D13 is a constraint
-the product already satisfies — what is new is that it may not be widened; of D14, only the
-reading of `s3ep-kek-algorithm` is outstanding.** D13 describes the set the product already keeps — one required field, the rest selector and
+decryption and what selects the provider. Decided 2026-09-12 and 2026-09-13; both hold in the
+tree.** D13 describes the set the product already keeps — one required field, the rest selector and
 description, and no wrap-describing metadata inside the wrapped key's associated data — and states
-for the first time that it stays that small. What D14 adds is outstanding: `s3ep-kek-algorithm` is
-written on every object and nothing on the read path reads it, so neither the diagnostic the field
-is kept for nor the fingerprint-confirmed dispatch a second key encryption algorithm will need
-exists yet. Selection already runs on the fingerprint alone (D4), and no refusal changes when D14
-lands.
+for the first time that it stays that small. D14's reading of `s3ep-kek-algorithm` **landed
+2026-09-13**: a lookup that finds no provider for the object's fingerprint now logs which algorithm
+the object claims beside it, which is the one place the field is read. It is the diagnostic and
+nothing else — selection still runs on the fingerprint alone (D4), the value reaches no response
+body, and no refusal changed. The fingerprint-confirmed dispatch the rule also allows has nothing
+to dispatch on until a second key encryption algorithm exists.
 
 **Amended 2026-09-12: a `HEAD` unwraps, and a whole-object `GET` looks the key up twice.** The
 tail-first read of ADR 0003 D14 has both verbs open the object's own trailer, so a `HEAD` reports

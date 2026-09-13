@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/sirupsen/logrus"
+
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/keyencryption"
 )
@@ -350,8 +352,21 @@ func (m *Manager) codecFor(objectKey string, metadata map[string]string) (*datae
 		// (ADR 0001). Anything else — a provider with a network round trip
 		// behind it, when one exists — stays a 5xx, because a retry is the right
 		// answer to an outage.
+		if errors.Is(err, ErrUnknownFingerprint) {
+			// The one place s3ep-kek-algorithm is read: it names the wrap the
+			// object claims, so the line says which algorithm nothing configured
+			// can open rather than only which fingerprint was missed. It decides
+			// nothing - the lookup ran on the fingerprint, and this field is
+			// unauthenticated (ADR 0002 D14) - and it stays in this log, never in
+			// a response body.
+			m.logger.WithFields(logrus.Fields{
+				"object_key":    objectKey,
+				"fingerprint":   fingerprint,
+				"kek_algorithm": m.metadataManager.GetKEKAlgorithm(metadata),
+			}).Warn("The object is wrapped with an algorithm and fingerprint no configured provider carries")
+			return nil, ErrKeyMaterialUnreadable
+		}
 		if errors.Is(err, keyencryption.ErrWrappedDEKAuth) ||
-			errors.Is(err, ErrUnknownFingerprint) ||
 			errors.Is(err, keyencryption.ErrExitProviderKeyUse) {
 			return nil, ErrKeyMaterialUnreadable
 		}

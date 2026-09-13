@@ -82,6 +82,15 @@ func (mm *MetadataManager) GetFingerprint(metadata map[string]string) (string, e
 	return "", fmt.Errorf("KEK fingerprint not found in metadata")
 }
 
+// GetKEKAlgorithm reports which key encryption algorithm the object says wrapped
+// its data key. It is diagnostics, not a decision: the provider is selected by
+// the fingerprint, and this field is unauthenticated, so a value that disagrees
+// with it is never on its own a reason to refuse an object (ADR 0002 D14). An
+// object without the key answers the empty string rather than an error.
+func (mm *MetadataManager) GetKEKAlgorithm(metadata map[string]string) string {
+	return metadata[mm.prefix+"kek-algorithm"]
+}
+
 func (mm *MetadataManager) GetMetadataPrefix() string {
 	return mm.prefix
 }
