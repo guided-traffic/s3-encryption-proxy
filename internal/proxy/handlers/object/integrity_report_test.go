@@ -11,6 +11,7 @@ import (
 	"github.com/sirupsen/logrus"
 	logrustest "github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/monitoring"
@@ -113,6 +114,38 @@ func TestObjIntARefusalIsCountedBeforeTheResponse(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, rr.Code, rr.Body.String())
 	assert.Equal(t, "InvalidObjectState", ObjGetparseError(t, rr.Body.Bytes()).Code)
 	assert.Equal(t, before+1, ObjIntcount("authentication", monitoring.IntegrityPhaseBeforeResponse))
+}
+
+// The ranged path answers 206 before it copies, so a fault inside the window is
+// the same truncation as on the whole-object path and has to be reported the
+// same way. Its own test because the reporting is one call per path, and a call
+// that is missing looks exactly like a read that went well.
+func TestObjIntARangedFaultIsLoggedAndCounted(t *testing.T) {
+	backend := new(MockS3Backend)
+	h := ObjGetnewHandler(t, backend)
+
+	stored, metadata := ObjGetrangeStore(t, h, "k", ObjGetpayload(1<<20))
+
+	// One byte of the first segment the window carries. The planner asks for
+	// segment 0 plus the trailer for a range at offset 0.
+	corrupt := append([]byte(nil), stored...)
+	corrupt[17] ^= 0xff
+	backend.On("GetObject", mock.Anything, mock.Anything).
+		Return(ObjGetrangeAnswer(t, corrupt, metadata, "bytes=0-65603"), nil)
+
+	hook := ObjIntcapture(h)
+	before := ObjIntcount("authentication", monitoring.IntegrityPhaseMidStream)
+
+	rr := ObjGetdo(h, ObjGetrangeRequest("k", "bytes=0-99"), "b", "k")
+
+	require.Equal(t, http.StatusPartialContent, rr.Code, rr.Body.String())
+	assert.Less(t, rr.Body.Len(), 100, "a window that does not authenticate must not be served whole")
+	assert.Equal(t, before+1, ObjIntcount("authentication", monitoring.IntegrityPhaseMidStream))
+
+	entry := ObjIntentry(t, hook, logrus.ErrorLevel)
+	assert.Equal(t, "b", entry.Data["bucket"])
+	assert.Equal(t, "k", entry.Data["key"])
+	assert.Equal(t, "authentication", entry.Data["reason"])
 }
 
 // A client that hangs up is not an integrity failure, and counting it as one

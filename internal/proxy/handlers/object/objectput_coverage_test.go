@@ -56,6 +56,9 @@ type ObjPutopts struct {
 	prefix       string // default: "s3ep-"
 	segmentSize  int64  // plaintext per part; also the single-request/producer boundary
 	concurrency  int    // default: 1
+	// verifyPayloadHash is s3_security.verify_payload_hash, off unless a test
+	// asks for it, as it is off unless an operator does (ADR 0012 D15).
+	verifyPayloadHash bool
 }
 
 // ObjPutnewHandler wires a handler exactly like NewHandler does in production,
@@ -93,6 +96,7 @@ func ObjPutnewHandler(t *testing.T, backend *MockS3Backend, o ObjPutopts) *Handl
 	}
 	cfg.Optimizations.StreamingSegmentSize = o.segmentSize
 	cfg.Optimizations.MultipartUploadConcurrency = o.concurrency
+	cfg.S3Security.VerifyPayloadHash = o.verifyPayloadHash
 
 	encMgr, err := orchestration.NewManager(cfg)
 	require.NoError(t, err)
@@ -1686,5 +1690,63 @@ func TestObjPutClientChecksumsAreVerifiedAndDropped(t *testing.T) {
 		require.Equal(t, http.StatusBadRequest, rr.Code, rr.Body.String())
 		assert.Equal(t, "InvalidDigest", ObjPutparseError(t, rr.Body.Bytes()).Code)
 		backend.AssertNotCalled(t, "PutObject", mock.Anything, mock.Anything)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// s3_security.verify_payload_hash, driven through a real upload (ADR 0012 D15).
+// The verifier has its own tests; what this covers is the wiring - a key that is
+// read from the file and never reaches the parser the handler uses is a key that
+// does nothing, and nothing else would fail.
+// ---------------------------------------------------------------------------
+
+// ObjPutpayloadHash is the SHA-256 of a body, hex, as a signed request states it.
+func ObjPutpayloadHash(body []byte) string {
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])
+}
+
+func TestObjPutPayloadHashIsVerifiedOnlyWhenTheKeyIsOn(t *testing.T) {
+	payload := ObjPutpayload(4096)
+	// A hash of something else. The signature is computed over the header as
+	// sent, so a client that lies about its payload hash still signs correctly -
+	// which is the whole reason verifying it against the body adds anything.
+	wrong := ObjPutpayloadHash(ObjPutpayload(2048))
+
+	t.Run("off: the upload is stored", func(t *testing.T) {
+		backend := new(MockS3Backend)
+		h := ObjPutnewHandler(t, backend, ObjPutopts{})
+		ObjPutcapturePut(backend, `"stored-etag"`, "")
+
+		req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(payload))
+		req.Header.Set("x-amz-content-sha256", wrong)
+		rr := ObjPutdo(h, req, "b", "k")
+
+		assert.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+	})
+
+	t.Run("on: the upload is refused and nothing is stored", func(t *testing.T) {
+		backend := new(MockS3Backend)
+		h := ObjPutnewHandler(t, backend, ObjPutopts{verifyPayloadHash: true})
+		ObjPutcapturePut(backend, `"stored-etag"`, "")
+
+		req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(payload))
+		req.Header.Set("x-amz-content-sha256", wrong)
+		rr := ObjPutdo(h, req, "b", "k")
+
+		require.Equal(t, http.StatusBadRequest, rr.Code, rr.Body.String())
+		assert.Equal(t, "BadDigest", ObjPutparseError(t, rr.Body.Bytes()).Code)
+	})
+
+	t.Run("on: a truthful client is stored", func(t *testing.T) {
+		backend := new(MockS3Backend)
+		h := ObjPutnewHandler(t, backend, ObjPutopts{verifyPayloadHash: true})
+		ObjPutcapturePut(backend, `"stored-etag"`, "")
+
+		req := httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(payload))
+		req.Header.Set("x-amz-content-sha256", ObjPutpayloadHash(payload))
+		rr := ObjPutdo(h, req, "b", "k")
+
+		assert.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
 	})
 }

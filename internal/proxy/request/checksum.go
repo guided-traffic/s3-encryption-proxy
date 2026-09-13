@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash"
@@ -98,6 +99,50 @@ var checksumAlgorithms = map[string]*checksumAlgorithm{
 	// Content-MD5 is keyed by its lowercase header name so the lookup is uniform;
 	// it never arrives as an aws-chunked trailer.
 	"content-md5": {name: contentMD5Header, newHash: func() hash.Hash { return md5.New() }, digestLen: 16}, // #nosec G401
+}
+
+// payloadHashHeader carries the SigV4 payload hash. It is hex, not base64, and
+// it is not part of the x-amz-checksum-* family, so it has its own algorithm
+// value rather than an entry in the map above.
+const payloadHashHeader = "x-amz-content-sha256"
+
+var payloadHashAlgorithm = &checksumAlgorithm{
+	name:      payloadHashHeader,
+	newHash:   func() hash.Hash { return sha256.New() },
+	digestLen: 32,
+}
+
+// declaredPayloadHash returns the payload hash to verify, and whether there is
+// one to verify at all.
+//
+// Off unless `s3_security.verify_payload_hash` says otherwise (ADR 0012 D15).
+// Every signed client sends this header, so verifying it is a SHA-256 pass over
+// every upload rather than over the few that declare a checksum of their own -
+// a per-byte cost on the most used verb the product has, which is the operator's
+// to choose. What it buys is the client that declares nothing else: s3cmd sends
+// no Content-MD5 for an object body, so without this its uploads carry no
+// end-to-end digest at all (ADR 0032).
+//
+// Skipped for an aws-chunked body, where the header carries a STREAMING-*
+// sentinel rather than a digest and the trailers are the declaration, and for
+// UNSIGNED-PAYLOAD. Both fail the hex test below as well; the framing test is
+// there so a client that sends both framings cannot be answered BadDigest for a
+// hash it never claimed described the decoded payload.
+func declaredPayloadHash(r *http.Request, enabled bool) ([]byte, bool) {
+	if !enabled || isAWSChunkedRequest(r) {
+		return nil, false
+	}
+	value := strings.ToLower(strings.TrimSpace(r.Header.Get(payloadHashHeader)))
+	if len(value) != hex.EncodedLen(payloadHashAlgorithm.digestLen) {
+		return nil, false
+	}
+	want, err := hex.DecodeString(value)
+	if err != nil {
+		// Not a digest at all. The signature check has its own opinion about
+		// this header; this code only verifies a value that is one.
+		return nil, false
+	}
+	return want, true
 }
 
 // declaration is one algorithm the request asked to have verified, together with
@@ -286,7 +331,7 @@ func decodeDigest(value string, alg *checksumAlgorithm) ([]byte, error) {
 // declaredChecksums collects what the request asked to have verified. It returns
 // nil when the request declares nothing, which is what keeps the cost of an
 // upload without a checksum at exactly zero.
-func declaredChecksums(r *http.Request) ([]*declaration, error) {
+func declaredChecksums(r *http.Request, verifyPayloadHash bool) ([]*declaration, error) {
 	var out []*declaration
 
 	add := func(alg *checksumAlgorithm) *declaration {
@@ -357,6 +402,17 @@ func declaredChecksums(r *http.Request) ([]*declaration, error) {
 		}
 	}
 
+	// The payload hash last, because it is the only declaration the request did
+	// not make deliberately: every signed client sends it.
+	if want, ok := declaredPayloadHash(r, verifyPayloadHash); ok {
+		out = append(out, &declaration{
+			alg:      payloadHashAlgorithm,
+			sum:      payloadHashAlgorithm.newHash(),
+			want:     want,
+			wantName: payloadHashHeader,
+		})
+	}
+
 	return out, nil
 }
 
@@ -373,8 +429,14 @@ func IsChecksumUnsupported(err error) bool {
 // DeclaresChecksum reports whether the request carries a verifiable digest, in a
 // header or promised as a trailer. The multi-object delete refuses a request
 // that carries none (ADR 0012 D14).
+//
+// The SigV4 payload hash never counts here, whatever
+// `s3_security.verify_payload_hash` says. Every signed client sends that header,
+// so counting it would make every signed request satisfy the rule and the
+// refusal would mean nothing - and a refusal S3 defines must not appear or
+// disappear with a configuration key.
 func DeclaresChecksum(r *http.Request) bool {
-	declared, err := declaredChecksums(r)
+	declared, err := declaredChecksums(r, false)
 	return err != nil || len(declared) > 0
 }
 
@@ -401,8 +463,8 @@ func IsChecksumFailure(err error) (malformedValue bool, ok bool) {
 
 // verifying wraps src when the request declares a checksum, and returns src
 // untouched when it does not — not even a Read indirection.
-func verifying(r *http.Request, src io.Reader, trailers func() map[string]string) (io.Reader, error) {
-	declared, err := declaredChecksums(r)
+func verifying(r *http.Request, src io.Reader, trailers func() map[string]string, verifyPayloadHash bool) (io.Reader, error) {
+	declared, err := declaredChecksums(r, verifyPayloadHash)
 	if err != nil {
 		return nil, err
 	}

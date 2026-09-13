@@ -399,6 +399,10 @@ s3_security:
   # maximum of seven days, which is the hard cap this may not exceed: a leaked
   # URL is a bearer credential for exactly as long as it says.
   max_presign_expiry_seconds: 3600  # default, 1 to 604800
+  # Verify the SigV4 payload hash against the body the proxy decoded, the way a
+  # declared checksum is verified. Off by default: every signed client sends
+  # x-amz-content-sha256, so this is a SHA-256 pass over every upload.
+  verify_payload_hash: false  # default
 
 # Monitoring
 monitoring:
@@ -1336,6 +1340,48 @@ On the proxy's side the same event is loud: an error-level log line naming the
 bucket, the key and what failed, and `s3ep_object_integrity_failures_total` with
 `phase="mid_stream"`. The request itself is still counted as the `200` it
 announced, which is the reason that counter exists.
+
+### Verifying what a client uploaded
+
+Every checksum a client **declares** is verified against the decoded plaintext
+before a byte reaches the backend, and then dropped — `Content-MD5` and the
+`x-amz-checksum-*` family, as a header or as an `aws-chunked` trailer
+([ADR 0012](./docs/adr/0012-client-checksums-are-verified-never-forwarded.md)).
+That needs no configuration and cannot be switched off.
+
+The SigV4 payload hash, `x-amz-content-sha256`, is the one digest that is **not**
+verified by default:
+
+```yaml
+s3_security:
+  verify_payload_hash: true   # default false
+```
+
+It is a key rather than a rule because every signed client sends that header. A
+`Content-MD5` is a client asking to be checked, and the cost lands on that
+client's uploads; the payload hash is on essentially every signed request, so
+verifying it is a SHA-256 pass over **every** upload this proxy accepts. Whether
+that is worth paying depends on the deployment — a client leg on TLS already has
+the record MAC over the wire.
+
+Turn it on when a client of yours declares nothing else. **s3cmd is the known
+case**: it sends no `Content-MD5` for an object body, so without this key its
+uploads carry no end-to-end digest anywhere.
+
+What the key does not do:
+
+- It is **skipped for an `aws-chunked` body**, where the header carries a
+  `STREAMING-*` sentinel and the trailers are the declaration.
+- A value that is not a digest — `UNSIGNED-PAYLOAD`, anything that is not 64 hex
+  characters — is ignored, not refused.
+- It **never satisfies the `DeleteObjects` digest rule**. A batch delete without a
+  deliberate `Content-MD5` or `x-amz-checksum-*` stays refused with
+  `400 InvalidRequest` whatever this key says.
+- With it on, a request that also declares a checksum of its own has **both**
+  verified.
+
+A mismatch answers `400 BadDigest`, decided before the last payload byte is
+released, so a refused upload stores nothing.
 
 ### Entity tags
 

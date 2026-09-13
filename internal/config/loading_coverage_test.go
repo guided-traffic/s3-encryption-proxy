@@ -788,6 +788,61 @@ optimizations:
 	}
 }
 
+// The key exists only if the loader reads it (ADR 0013 D11): a configuration
+// carrying it has to start, and the value has to arrive where the parser looks.
+func TestCfgVerifyPayloadHashIsReadFromTheFile(t *testing.T) {
+	const body = `
+bind_address: "0.0.0.0:8080"
+s3_backend:
+  target_endpoint: "https://minio:9000"
+s3_clients:
+  - type: "static"
+    access_key_id: "username0"
+    secret_key: "this-is-not-very-secure"
+s3_security:
+  verify_payload_hash: %s
+`
+
+	for _, tc := range []struct {
+		written string
+		want    bool
+	}{{"true", true}, {"false", false}} {
+		t.Run(tc.written, func(t *testing.T) {
+			CfgNoLicense(t)
+			CfgResetViper(t)
+			path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", fmt.Sprintf(body, tc.written))
+			require.NoError(t, InitConfig(path))
+
+			cfg, err := Load()
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, cfg.S3Security.VerifyPayloadHash)
+		})
+	}
+}
+
+// Absent is off: the default is what an operator who writes nothing gets, and it
+// is the one that costs nothing (ADR 0012 D15).
+func TestCfgVerifyPayloadHashDefaultsToOff(t *testing.T) {
+	CfgNoLicense(t)
+	CfgResetViper(t)
+	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", `
+bind_address: "0.0.0.0:8080"
+s3_backend:
+  target_endpoint: "https://minio:9000"
+s3_clients:
+  - type: "static"
+    access_key_id: "username0"
+    secret_key: "this-is-not-very-secure"
+`)
+	require.NoError(t, InitConfig(path))
+
+	cfg, err := Load()
+
+	require.NoError(t, err)
+	assert.False(t, cfg.S3Security.VerifyPayloadHash)
+}
+
 // A document ceiling of 0 would read as "no bound at all", which is the one
 // value that switches the protection off rather than tightening or loosening it
 // (ADR 0017 D8, ADR 0024 D4). An absent key keeps the default.

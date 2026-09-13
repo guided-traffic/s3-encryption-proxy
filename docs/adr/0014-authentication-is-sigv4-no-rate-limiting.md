@@ -137,9 +137,16 @@ denial-of-service defence are the ingress's job.
 `x_forwarded_for` as two raw fields and interpret neither. No forwarded header selects a client,
 keys a counter, or decides anything in the proxy, so there is no trusted-proxy list to configure.
 
-**D9** `s3_security` carries exactly two keys — `max_clock_skew_seconds` and
-`max_presign_expiry_seconds` — and both are enforced. Every other key in that block is removed
-rather than documented as unimplemented (ADR 0013).
+**D9** `s3_security` carries exactly three keys — `max_clock_skew_seconds`,
+`max_presign_expiry_seconds` and `verify_payload_hash` — and every one of them is enforced. Every
+other key in that block is removed rather than documented as unimplemented (ADR 0013).
+
+**Amended 2026-09-13, and the amendment is the point of D9 rather than an exception to it.**
+`verify_payload_hash` was added by ADR 0012 D15: it decides whether the SigV4 payload hash is
+verified against the body, which is a control on the client leg and belongs in this block. It is
+admitted here because it meets the bar D12 sets — the key landed in the same change as the code
+that reads it and the tests that prove both of its positions — and D9's rule was never "two keys",
+it was "no key that reads nothing".
 
 **D10** An authentication failure answers a fixed message per S3 error code. The attempted access
 key id, the signed header names and the clock offset are logged and never echoed into the

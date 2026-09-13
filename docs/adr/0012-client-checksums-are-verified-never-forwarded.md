@@ -219,6 +219,42 @@ with `400 InvalidRequest`, and the digest it carries is verified against the raw
 document is parsed, with D6's answers on failure. The body is a few kilobytes and the operation is
 destructive, so there is no cost argument and every reason for the check.
 
+**D15** (added 2026-09-13). The SigV4 payload hash is a digest the proxy can verify, and
+whether it does is the operator's to decide: `s3_security.verify_payload_hash`, **default
+`false`**. With it on, an `x-amz-content-sha256` carrying a real hex digest is checked against the
+decoded body exactly like a declared checksum, with D6's answers on failure.
+
+It is a key and not a rule because of what makes it different from every other declaration this
+ADR covers: **every signed client sends it.** A `Content-MD5` is a client choosing to be checked
+and the cost lands on that client's uploads; the payload hash is present on essentially every
+signed request, so verifying it is a SHA-256 pass over every upload the proxy accepts. That is a
+per-byte cost on the most used verb the product has, against a threat model where the operator
+may already have TLS on the client leg. Neither answer is right for every deployment, which is
+what a configuration key is for.
+
+What it buys is the client that declares nothing else. At least one supported client sends no
+`Content-MD5` for an object body at all, so without this its uploads reach the backend with no
+end-to-end digest anywhere — the entity tag stopped being one (ADR 0032), and the proxy takes the
+payload hash as a signed claim in the canonical request without ever re-deriving it from the body.
+
+Three things the key deliberately does not change:
+
+* **It is skipped for an aws-chunked body**, where the header carries a `STREAMING-*` sentinel and
+  the trailers are the declaration. A client cannot be refused for a hash it never claimed
+  described the decoded payload.
+* **A value that is not a digest is not a declaration.** `UNSIGNED-PAYLOAD` and anything that is
+  not 64 hex characters is ignored rather than refused: what that header means to the signature is
+  ADR 0014's subject, and this rule only looks at values that are digests.
+* **It never satisfies D14.** A batch delete without a deliberate digest stays refused whatever
+  this key says, or a refusal S3 defines would appear and disappear with a configuration value —
+  and since every signed client sends a payload hash, counting it would retire that rule
+  altogether.
+
+With the key on and a client that declares a checksum of its own, both are verified. Skipping the
+payload hash whenever something else already covers the body would save a pass, and it is
+deliberately not done: the operator asked for the payload hash to be verified, and a rule that
+silently decides it is redundant is one nobody can see in the answer.
+
 ## Consequences
 
 - **The defect that was probed is closed, because there is no default to hide behind.** The

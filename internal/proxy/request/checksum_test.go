@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash/crc32"
@@ -18,6 +19,8 @@ import (
 	"testing"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The CRC-64/NVME check value: the residue of the ASCII string "123456789",
@@ -818,7 +821,7 @@ func TestChkTrailerBlockIsBounded(t *testing.T) {
 			framed := trailerBlock(tc.junk)
 
 			decoder := newStreamingAWSChunkedReader(io.NopCloser(bytes.NewReader(framed)), testLogger())
-			src, err := verifying(chkChunkedRequest(payload, framed, alg.trailer, false), decoder, decoder.Trailers)
+			src, err := verifying(chkChunkedRequest(payload, framed, alg.trailer, false), decoder, decoder.Trailers, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -880,4 +883,131 @@ func TestChkReadBodyUnverifiedSkipsTheCheck(t *testing.T) {
 	if _, err := p.ReadBody(r); !errors.Is(err, ErrChecksumMismatch) {
 		t.Fatalf("ReadBody must still verify: %v", err)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// The SigV4 payload hash, verified only when the operator asks (ADR 0012 D15).
+// ---------------------------------------------------------------------------
+
+// ChkpayloadHash is the SHA-256 of a body, hex, as a signed request states it.
+func ChkpayloadHash(payload string) string {
+	sum := sha256.Sum256([]byte(payload))
+	return hex.EncodeToString(sum[:])
+}
+
+// ChkverifyingParser is a parser with s3_security.verify_payload_hash on.
+func ChkverifyingParser(t *testing.T) *Parser {
+	t.Helper()
+	return NewParser(testLogger(), &config.Config{
+		S3Security: config.S3SecurityConfig{VerifyPayloadHash: true},
+	})
+}
+
+// Off by default, and that is a decision rather than an oversight: every signed
+// client sends this header, so verifying it is a SHA-256 pass over every upload.
+func TestChkPayloadHashIsNotVerifiedUnlessConfigured(t *testing.T) {
+	const payload = "the bytes the client says it is sending"
+
+	r := httptest.NewRequest(http.MethodPut, "/b/k", strings.NewReader(payload))
+	// Deliberately the hash of something else: a proxy that verifies this
+	// without being asked would refuse the request.
+	r.Header.Set("x-amz-content-sha256", ChkpayloadHash("entirely different bytes"))
+
+	body, err := chkParser(t).ReadBody(r)
+
+	require.NoError(t, err)
+	assert.Equal(t, payload, string(body))
+}
+
+// With the key on, the payload hash is a digest like any other.
+func TestChkPayloadHashIsVerifiedWhenConfigured(t *testing.T) {
+	const payload = "the bytes the client says it is sending"
+
+	t.Run("a matching hash passes", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodPut, "/b/k", strings.NewReader(payload))
+		r.Header.Set("x-amz-content-sha256", ChkpayloadHash(payload))
+
+		body, err := ChkverifyingParser(t).ReadBody(r)
+
+		require.NoError(t, err)
+		assert.Equal(t, payload, string(body))
+	})
+
+	t.Run("a hash of other bytes is a mismatch", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodPut, "/b/k", strings.NewReader(payload))
+		r.Header.Set("x-amz-content-sha256", ChkpayloadHash("something else entirely"))
+
+		_, err := ChkverifyingParser(t).ReadBody(r)
+
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrChecksumMismatch)
+		assert.Contains(t, err.Error(), "x-amz-content-sha256")
+	})
+
+	t.Run("an empty body has a payload hash too", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodPut, "/b/k", strings.NewReader(""))
+		r.Header.Set("x-amz-content-sha256", ChkpayloadHash(""))
+
+		body, err := ChkverifyingParser(t).ReadBody(r)
+
+		require.NoError(t, err)
+		assert.Empty(t, body)
+	})
+}
+
+// A client that declares a checksum of its own has both verified. The second
+// pass is the cost of the key being on, and it is the operator's to pay: the
+// alternative - skipping the payload hash whenever anything else covers the
+// body - is a rule nobody asked for and nobody can see.
+func TestChkPayloadHashIsVerifiedBesideAnotherDigest(t *testing.T) {
+	const payload = "a body with a digest of its own"
+	md5sum := md5.Sum([]byte(payload)) // #nosec G401 -- the client's declaration, not a security primitive
+
+	r := httptest.NewRequest(http.MethodPut, "/b/k", strings.NewReader(payload))
+	r.Header.Set("Content-MD5", base64.StdEncoding.EncodeToString(md5sum[:]))
+	r.Header.Set("x-amz-content-sha256", ChkpayloadHash("not this body"))
+
+	_, err := ChkverifyingParser(t).ReadBody(r)
+
+	require.Error(t, err, "a wrong payload hash is a wrong payload hash, whatever else the request declares")
+	assert.ErrorIs(t, err, ErrChecksumMismatch)
+}
+
+// The values that are not digests, and the framing that declares its digest in a
+// trailer instead. None of them is a declaration, key on or off.
+func TestChkPayloadHashIgnoresEverythingThatIsNotADigest(t *testing.T) {
+	for name, value := range map[string]string{
+		"unsigned payload":            "UNSIGNED-PAYLOAD",
+		"streaming, unsigned trailer": "STREAMING-UNSIGNED-PAYLOAD-TRAILER",
+		"streaming, signed chunks":    "STREAMING-AWS4-HMAC-SHA256-PAYLOAD",
+		"absent":                      "",
+		"not hex":                     strings.Repeat("z", 64),
+		"too short":                   strings.Repeat("a", 63),
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPut, "/b/k", strings.NewReader("body"))
+			if value != "" {
+				r.Header.Set("x-amz-content-sha256", value)
+			}
+
+			// Asked of the declaration itself: a STREAMING-* value also selects
+			// the aws-chunked decoder, so reading such a body here would fail on
+			// the framing rather than on the question being asked.
+			declared, err := declaredChecksums(r, true)
+
+			require.NoError(t, err)
+			assert.Empty(t, declared, "a value that is not a digest is not a declaration")
+		})
+	}
+}
+
+// The refusal S3 defines for a batch delete must not appear or disappear with a
+// configuration key, and every signed client sends a payload hash - so it never
+// counts as the digest that rule asks for (ADR 0012 D14).
+func TestChkPayloadHashNeverSatisfiesTheDeleteObjectsRule(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/b?delete", strings.NewReader("<Delete/>"))
+	r.Header.Set("x-amz-content-sha256", ChkpayloadHash("<Delete/>"))
+
+	assert.False(t, DeclaresChecksum(r),
+		"a payload hash is not the integrity header a batch delete has to carry")
 }

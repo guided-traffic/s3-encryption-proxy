@@ -77,6 +77,12 @@ type S3SecurityConfig struct {
 	// Deliberately below the S3 maximum of seven days: a leaked URL is a bearer
 	// credential for exactly as long as it says (ADR 0014 D5).
 	MaxPresignExpirySeconds int `mapstructure:"max_presign_expiry_seconds"`
+
+	// VerifyPayloadHash turns the SigV4 payload hash into a checksum the proxy
+	// verifies against the body it decoded (ADR 0012 D15). Default false,
+	// because every signed client sends the header and hashing every upload a
+	// second time is a per-byte cost on the most used verb the product has.
+	VerifyPayloadHash bool `mapstructure:"verify_payload_hash"`
 }
 
 // OptimizationsConfig holds performance optimization settings
@@ -394,6 +400,7 @@ func setDefaults() {
 	// S3 Security defaults
 	viper.SetDefault("s3_security.max_clock_skew_seconds", 900)
 	viper.SetDefault("s3_security.max_presign_expiry_seconds", 3600)
+	viper.SetDefault("s3_security.verify_payload_hash", false)
 
 }
 

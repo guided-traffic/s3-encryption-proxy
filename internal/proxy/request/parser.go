@@ -73,6 +73,12 @@ func (p *Parser) ReadDocument(r *http.Request) ([]byte, error) {
 	return p.readBody(r, true, p.maxDocumentSize())
 }
 
+// verifyPayloadHash reports whether the operator asked for the SigV4 payload
+// hash to be verified against the body (ADR 0012 D15). Off unless configured.
+func (p *Parser) verifyPayloadHash() bool {
+	return p.config != nil && p.config.S3Security.VerifyPayloadHash
+}
+
 // maxDocumentSize is the configured ceiling, or the default when the
 // configuration names none. A written 0 never reaches here: the loader refuses
 // it, because it would mean no bound at all.
@@ -102,23 +108,24 @@ func (p *Parser) readBody(r *http.Request, verify bool, limit int64) ([]byte, er
 	}
 	verifying := verifying
 	if !verify {
-		verifying = func(_ *http.Request, src io.Reader, _ func() map[string]string) (io.Reader, error) {
+		verifying = func(_ *http.Request, src io.Reader, _ func() map[string]string, _ bool) (io.Reader, error) {
 			return src, nil
 		}
 	}
+	verifyPayloadHash := p.verifyPayloadHash()
 
 	// AWS Signature V4 / aws-chunked framing (signed, unsigned, with or without trailers)
 	if isAWSChunkedRequest(r) {
 		p.logger.Debug("Decoding aws-chunked request body")
 		decoder := newStreamingAWSChunkedReader(r.Body, p.logger)
-		src, err := verifying(r, decoder, decoder.Trailers)
+		src, err := verifying(r, decoder, decoder.Trailers, verifyPayloadHash)
 		if err != nil {
 			return nil, err
 		}
 		return readAllSized(src, p.DecodedContentLength(r), limit)
 	}
 
-	src, err := verifying(r, r.Body, nil)
+	src, err := verifying(r, r.Body, nil, verifyPayloadHash)
 	if err != nil {
 		return nil, err
 	}
@@ -192,9 +199,9 @@ func (p *Parser) StreamingReader(r *http.Request) (io.Reader, error) {
 	if isAWSChunkedRequest(r) {
 		p.logger.Debug("Streaming aws-chunked body without buffering")
 		decoder := newStreamingAWSChunkedReader(r.Body, p.logger)
-		return verifying(r, decoder, decoder.Trailers)
+		return verifying(r, decoder, decoder.Trailers, p.verifyPayloadHash())
 	}
-	return verifying(r, r.Body, nil)
+	return verifying(r, r.Body, nil, p.verifyPayloadHash())
 }
 
 // DecodedContentLength returns the plaintext payload length the client will

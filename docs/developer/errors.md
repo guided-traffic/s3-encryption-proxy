@@ -25,6 +25,18 @@ path — cannot produce a body no client can parse. It marshals **before** it
 commits a status, so a marshalling failure answers `500` instead of leaving a
 truncated body behind a `200` the client has already been told to trust.
 
+## The payload hash
+
+`x-amz-content-sha256` becomes a verified declaration only when
+`s3_security.verify_payload_hash` is on (ADR 0012 D15). The gate is threaded from
+the `Parser`'s configuration into `declaredChecksums`, which is also why
+`DeclaresChecksum` passes `false` explicitly: the batch-delete rule of D14 asks
+whether the client declared a digest deliberately, and every signed client sends
+a payload hash. Counting it there would retire that refusal.
+
+A `STREAMING-*` value and `UNSIGNED-PAYLOAD` are not digests and never become
+declarations, key or no key, so an `aws-chunked` upload is unaffected.
+
 ## When the status is already out
 
 A read streams, so a fault the reader finds after `WriteHeader` cannot become an

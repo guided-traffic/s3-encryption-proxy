@@ -386,6 +386,12 @@ s3_clients:
 s3_security:
   max_clock_skew_seconds: 900       # default, 1-3600 checked at startup
   max_presign_expiry_seconds: 3600  # default, 1-604800 (the S3 seven-day maximum)
+  verify_payload_hash: false        # default. On, an x-amz-content-sha256 carrying a real hex
+                                    # digest is verified against the decoded body like any
+                                    # declared checksum (ADR 0012 D15). Off by default because
+                                    # every signed client sends that header, so it is a SHA-256
+                                    # pass over every upload. Never satisfies the DeleteObjects
+                                    # digest rule, and skipped for an aws-chunked body
 
 # Monitoring
 monitoring:
