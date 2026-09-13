@@ -1,8 +1,8 @@
 # 033 — A deliberate out-of-band recovery path for a damaged object
 
-Raised 2026-09-12, out of the D7 discussion in
-[032](032-open-decisions-from-the-documentation-audit.md). Recorded here so it is
-not lost; **not worked in that ticket and not scheduled**.
+Raised 2026-09-12, out of the discussion that produced ADR 0002 D13 — which
+stored inputs are load-bearing for decryption, and why that set is kept as small
+as it is. Recorded here so it is not lost; **not scheduled**.
 
 ## The requirement
 

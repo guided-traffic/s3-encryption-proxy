@@ -182,8 +182,11 @@ func (p *Parser) StreamingReader(r *http.Request) (io.Reader, error) {
 //
 // For aws-chunked uploads the total size of the decoded body is carried in
 // X-Amz-Decoded-Content-Length; for regular uploads it is r.ContentLength.
-// The value is a routing hint: use PlaintextContentLength where a mismatch
-// must be treated as an error.
+//
+// No handler routes on it. It is a sizing hint for a buffered body reader, and
+// nothing more: it cannot say whether the number really describes the plaintext,
+// which is the question a routing decision asks. PlaintextContentLength answers
+// that one, and every branch that picks a write path takes it from there.
 func (p *Parser) DecodedContentLength(r *http.Request) int64 {
 	if v := r.Header.Get("X-Amz-Decoded-Content-Length"); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {

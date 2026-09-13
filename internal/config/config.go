@@ -218,7 +218,7 @@ func Load() (*Config, error) {
 	var cfg Config
 	// ErrorUnused: a key the proxy does not define refuses the start and the
 	// error names it (ADR 0013 D11). It is the only mechanism that makes this
-	// release's twelve deleted keys visible to an operator: without it a removed
+	// release's twenty-two deleted keys visible to an operator: without it a removed
 	// key is dropped in silence and the setting the operator believes is in
 	// force is not. A misspelling gets the same treatment, which is the point.
 	//
@@ -445,8 +445,10 @@ func backendUsesTLS(endpoint string) (bool, error) {
 	}
 }
 
-// validateBackendTransport refuses a plain-HTTP backend under a provider that
-// encrypts (ADR 0013 D5). It is a configuration inconsistency, not a runtime
+// validateBackendTransport refuses a plain-HTTP backend under every provider
+// that resolves, the exit provider included (ADR 0013 D5): the backend
+// credential travels in a SigV4 header either way, and so do bucket names and
+// object keys. It is a configuration inconsistency, not a runtime
 // one: it fires before a listener or an S3 client exists, and every entry point
 // that loads configuration gets it.
 //

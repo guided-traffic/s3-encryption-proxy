@@ -131,9 +131,7 @@ func legsFor(transport string, conns int) ([]leg, error) {
 }
 
 // ensureBucket creates the bucket unconditionally and tolerates it already
-// existing. It deliberately does not probe with HeadBucket first: the proxy
-// answers HeadBucket with 200 for a bucket the backend does not have, so the
-// probe would report a bucket that is not there.
+// existing, which costs one round trip either way and needs no probe.
 func ensureBucket(ctx context.Context, c *s3.Client, bucket string) error {
 	_, err := c.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(bucket)})
 	if err != nil && !isAlreadyOwned(err) {

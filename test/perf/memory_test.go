@@ -58,7 +58,9 @@ const (
 )
 
 // TestProxyMemory records the proxy's resident memory around a load, idle and
-// peak (ADR 0020 D14). It records only: the bound is not asserted here.
+// peak, and asserts the bound of ADR 0020 D14: peak-minus-idle stays inside what
+// this configuration budgets, and inside one large object. A number in a report
+// nobody reads is not a bound.
 func TestProxyMemory(t *testing.T) {
 	if !stackReady {
 		SetStatus("memory", "blocked", "no proxy stack")

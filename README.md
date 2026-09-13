@@ -1203,7 +1203,7 @@ accepted, discarded and answered `200 OK`.
 
 | Header | Behaviour | What it means through this proxy |
 |---|---|---|
-| `x-amz-server-side-encryption`, `...-aws-kms-key-id` | forwarded | the **backend** encrypts its own copy of the ciphertext. It is not the proxy's encryption, and the response header the backend produces is not a statement about it |
+| `x-amz-server-side-encryption`, `...-aws-kms-key-id` | forwarded, and the backend's answer is restated | the **backend** encrypts its own copy of the ciphertext. It is not the proxy's encryption, and the header says nothing about it. The confirmation the backend sends back is restated on a single-request `PUT`, a completed multipart upload, a whole-object `GET` and a `HEAD` ([ADR 0008](./docs/adr/0008-every-response-describes-the-proxy.md) D13) — a ranged read and a part upload deliberately carry none |
 | `x-amz-server-side-encryption-customer-*` (SSE-C) | `501 NotImplemented`, naming the header | no read path carries the customer key, so an object written this way could never be read back. Refused on every verb until the key travels on all of them ([ADR 0007](./docs/adr/0007-forward-it-or-refuse-it.md) D6) |
 | `x-amz-tagging` | forwarded | tag keys and values are stored **in the clear** on the ciphertext object. For a backup bucket that is a labelled index of what each object is |
 | `x-amz-storage-class` | forwarded | a tier the backend applies. An object written into an archive tier still appears in a listing and then fails on `GET` |

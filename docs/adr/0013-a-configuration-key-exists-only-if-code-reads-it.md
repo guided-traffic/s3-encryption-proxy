@@ -5,15 +5,16 @@
 **Accepted.** Date: 2026-09-07.
 
 **Amended 2026-09-13: D12, D13 and D14 added — the configuration file itself, the license file
-the operator names, and the command line. All three were decided on 2026-09-12, and none of the
-three is built as of 2026-09-13.** They carry this record's theme outwards from the keys to the
-inputs that deliver them. As the tree stands: a configuration file that cannot be opened, or
-whose YAML does not parse, is read as no file at all, so the start fails on the missing
-`s3_backend.target_endpoint` and tells the operator the wrong thing (D12); a written `license_file` that does not
-resolve falls through to a fixed list of well-known locations, so a mistyped path can start the
-proxy on a token nobody chose (D13); and `--monitoring` and `--monitoring-port` overrule
-`monitoring.enabled` and `monitoring.bind_address`, the second of them unable to express its own
-default as an override (D14). D1 through D11 are unaffected and stay as described below.
+the operator names, and the command line. All three were decided on 2026-09-12 and all three
+landed 2026-09-13.** They carry this record's theme outwards from the keys to the inputs that
+deliver them. What each one ended: a configuration file that could not be opened, or whose YAML
+did not parse, was read as no file at all, so the start failed on the missing
+`s3_backend.target_endpoint` and told the operator the wrong thing (D12); a written
+`license_file` that did not resolve fell through to a fixed list of well-known locations, so a
+mistyped path could start the proxy on a token nobody chose (D13); and `--monitoring` and
+`--monitoring-port` overruled `monitoring.enabled` and `monitoring.bind_address`, the second of
+them unable to express its own default as an override (D14). The binary now declares one flag,
+`--config`. D1 through D11 are unaffected and stay as described below.
 
 **Not built as of 2026-09-13: four of D7's zero cases.**
 `optimizations.streaming_segment_size` at zero or below falls back to 12 MB for the part size
@@ -395,17 +396,19 @@ carries it (ADR 0018), never softened by a shim or a deprecation period.
 - **Deleting a key is one-way but cheap in this direction.** If security-event logging should
   ever become suppressible, it comes back as a key with a reader and a test.
 - **A deployment that switched monitoring on with a flag says so in its configuration**
-  (D14, added 2026-09-13). **Decided 2026-09-12, not built:** a chart that passed the flags
+  (D14, added 2026-09-13). **Built 2026-09-13:** a chart that passed the flags
   renders the setting into the configuration it already writes, and anyone scripting the binary
   edits their invocation. That is what removing a flag costs, and it is why it belongs inside a
   major release.
-- **What D14 buys back: a chart value that reached only half the deployment can no longer
-  drift.** The chart's `monitoring.metricsPath` value reaches the scrape configuration alone
-  today and never the proxy, because the flags carry the bind address and nothing else — so
-  setting it to anything but `/metrics` makes every scrape a 404 against a path the proxy does
-  not serve. Once the whole `monitoring` block is rendered, `metrics_path` travels with
-  `enabled` and `bind_address`, and two statements of the same fact cannot disagree because
-  there is only one.
+- **What D14 bought back: a chart value that reached only half the deployment can no longer
+  drift.** The chart's `monitoring.metricsPath` value used to reach the scrape configuration
+  alone and never the proxy, because the flags carried the bind address and nothing else — so
+  setting it to anything but `/metrics` made every scrape a 404 against a path the proxy does
+  not serve. The chart now renders the whole `monitoring` block, so `metrics_path` travels with
+  `enabled` and `bind_address` and two statements of the same fact cannot disagree. Rendering it
+  also found the drift already in the tree: `values-production.yaml` and `values-monitoring.yaml`
+  each carried a `monitoring:` block inside `config` **and** the chart's own `monitoring` values,
+  and the chart now refuses to render with both rather than letting one of them win silently.
 - **Nothing this project ships stops working under D12, and that is the whole of its cost.**
   **Decided 2026-09-12, not built:** every invocation it ships that starts the proxy names a
   configuration file that parses; what changes is that a file which was quietly ignored stops the
@@ -520,18 +523,18 @@ carries it (ADR 0018), never softened by a shim or a deprecation period.
   client's URL lifetime was measured. **Updated 2026-09-12:** the key exists and every pre-signed
   URL is bounded by it, so an unmeasured number is now in force rather than merely proposed. The
   measurement is still owed.
-- **Not built as of 2026-09-13: D12, D13 and D14.** Until each of them lands, the failure it
-  describes is live — a configuration file that was never read still reports missing client
-  credentials, a `license_file` that does not resolve still falls through to discovery, and the
-  monitoring flags still overrule the configuration keys.
+- **Built 2026-09-13: D12, D13 and D14.** A configuration file that cannot be read now refuses
+  the start and the error names it, a written `license_file` that does not resolve refuses the
+  start instead of falling through to discovery, and the monitoring flags are gone.
 - **D13 binds one route to the token and leaves the others as they are.** Three environment
   variable names are accepted, and the discovery list still applies wherever the key is not
   written, so *which token is this proxy running on* remains unanswerable from the configuration
   alone. ADR 0016 carries that risk; D13 narrows it to the case where the operator said nothing.
 - **Unverified: whether anything outside this repository passes the monitoring flags.** Inside
-  it the chart and the project's own local run targets pass them, and all of those move to
+  it the chart and the project's own local run targets passed them, and all of those moved to
   configuration under D14; no survey was made of deployments or scripts elsewhere, and for them
-  the removal is a breaking change with no deprecation step in front of it.
+  the removal is a breaking change with no deprecation step in front of it. A flag that no longer
+  exists is refused by name, so such an invocation stops rather than starting without it.
 - **Unverified: whether any deployment outside this repository sets the removed keys.**
   **Updated 2026-09-12:** under D11 none of them keeps loading — every removed key is refused at
   startup and the message names it, the legacy top-level backend block included. Every such

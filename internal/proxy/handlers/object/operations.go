@@ -1156,18 +1156,20 @@ producerLoop:
 	close(jobs)
 	collector.Wait()
 
-	// A client that hangs up mid-body makes io.ReadFull return
-	// io.ErrUnexpectedEOF, which the loop above treats as a clean end of stream.
-	// Committing that would store a short object that verifies against its own
-	// trailer: a silently truncated backup that passes every check.
+	// A client that stops early but ends its stream cleanly reaches here as a
+	// finished object: fillPart saw a literal io.EOF and reported the end, and
+	// only the length the client declared says the object is short. Committing
+	// it would store an object that verifies against its own trailer: a silently
+	// truncated backup that passes every check.
 	if expected, known := h.requestParser.PlaintextContentLength(r); producerErr == nil && known && totalPlaintext < expected {
 		producerErr = fmt.Errorf("client sent %d bytes but declared %d", totalPlaintext, expected)
 	}
 
 	// A checksum verdict is the client's mistake, not a proxy failure, so it is
 	// answered as the 400 it is rather than through the producer's 500. Asking
-	// the verifier is more direct than threading its error out of io.ReadFull,
-	// which swallows it whenever a part buffer happened to fill exactly.
+	// the verifier is more direct than threading its error out of the producer
+	// loop, which reaches here as an ordinary read failure with nothing left to
+	// say which of the two it was.
 	if verdict := request.Verdict(body); verdict != nil {
 		abortUpload("the client checksum did not verify", verdict)
 		h.errorWriter.WriteChecksumVerdict(w, verdict)

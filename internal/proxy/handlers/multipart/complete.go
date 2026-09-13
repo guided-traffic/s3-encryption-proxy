@@ -91,8 +91,9 @@ func (h *CompleteHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	// verb alone x-amz-checksum-* is the digest of the completed object, not of
 	// this document (ADR 0012 D2). The proxy can neither verify that value (the
 	// object it would have to hash is the client's plaintext, which it no longer
-	// holds) nor forward it (the backend holds ciphertext), so it is dropped;
-	// serving the proxy's own is ADR 0012 D10, which is not built.
+	// holds) nor forward it (the backend holds ciphertext), so it is dropped.
+	// The proxy's own sealed CRC32C is served on a whole-object GET and on HEAD
+	// (ADR 0003 D14); this response carries none.
 	bodyData, err := h.requestParser.ReadBodyUnverified(r)
 	if err != nil {
 		log.WithError(err).Error("Failed to read request body")
