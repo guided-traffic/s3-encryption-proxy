@@ -355,10 +355,12 @@ func containsForbiddenPatterns(data []byte, patterns []string) bool {
 func CompareEncryptionStrength(t *testing.T, unencryptedData, encryptedData []byte, label string) {
 	t.Helper()
 
-	if len(unencryptedData) == 0 || len(encryptedData) == 0 {
-		t.Skip("Cannot compare encryption strength with empty data")
-		return
-	}
+	// Empty input means the caller fetched nothing, and a comparison that read
+	// nothing is a failed assertion rather than a skipped one: skipping here is
+	// exactly the "assertion that never read anything" ADR 0019 D12 exists to
+	// end.
+	require.NotEmpty(t, unencryptedData, "%s: no plaintext sample to compare", label)
+	require.NotEmpty(t, encryptedData, "%s: no stored bytes to compare", label)
 
 	unencryptedEntropy := calculateShannonEntropy(unencryptedData)
 	encryptedEntropy := calculateShannonEntropy(encryptedData)
@@ -399,7 +401,7 @@ var loremWords = []string{
 	"expedita", "distinctio", "nam", "libero", "tempore", "cum", "soluta",
 	"nobis", "eleifend", "option", "congue", "nihil", "imperdiet", "doming",
 	"placerat", "facer", "possim", "assum", "typi", "non", "habent", "claritatem",
-	"insitam", "processus", "dynamicus", "sequitur", "mutationem", "consuetudium",
+	"insitam", "processus", "dynamics", "sequitur", "mutationem", "consuetudium",
 	"lectorum", "mirum", "claritas", "kessi", "sollemnis", "in", "futurum",
 }
 
@@ -498,12 +500,4 @@ func GenerateLoremIpsumPattern(position int64, size int) []byte {
 	}
 
 	return data
-}
-
-// min returns the minimum of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

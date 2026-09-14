@@ -6,11 +6,11 @@ package integration
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
+	"encoding/xml"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -21,7 +21,18 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	. "github.com/guided-traffic/s3-encryption-proxy/test/integration"
 )
+
+// proxyHost is the authority of ProxyEndpoint, for the Host header of a request
+// signed by hand.
+func proxyHost(t *testing.T) string {
+	t.Helper()
+	u, err := url.Parse(ProxyEndpoint)
+	require.NoError(t, err, "S3EP_TEST_PROXY_ENDPOINT is not a URL")
+	return u.Host
+}
 
 // SimpleTestContext holds basic test utilities for authentication tests
 type SimpleTestContext struct {
@@ -86,11 +97,12 @@ func testS3ClientAuthentication(t *testing.T) {
 				"",
 			)),
 			config.WithRegion("us-east-1"),
+			config.WithHTTPClient(TLSHTTPClient()),
 		)
 		require.NoError(t, err)
 
 		customClient := s3.NewFromConfig(customConfig, func(o *s3.Options) {
-			o.BaseEndpoint = aws.String("http://localhost:8080")
+			o.BaseEndpoint = aws.String(ProxyEndpoint)
 			o.UsePathStyle = true
 		})
 
@@ -106,11 +118,12 @@ func testS3ClientAuthentication(t *testing.T) {
 			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
 				"username0", "this-is-not-very-secure", "")),
 			config.WithRegion("us-east-1"),
+			config.WithHTTPClient(TLSHTTPClient()),
 		)
 		require.NoError(t, err)
 
 		validClient := s3.NewFromConfig(validConfig, func(o *s3.Options) {
-			o.BaseEndpoint = aws.String("http://localhost:8080")
+			o.BaseEndpoint = aws.String(ProxyEndpoint)
 			o.UsePathStyle = true
 		})
 
@@ -136,10 +149,6 @@ func testRobustS3Authentication(t *testing.T) {
 		testClockSkewProtection(t)
 	})
 
-	t.Run("RateLimiting", func(t *testing.T) {
-		testRateLimiting(t)
-	})
-
 	t.Run("SecurityMetrics", func(t *testing.T) {
 		testSecurityMetrics(t)
 	})
@@ -149,7 +158,7 @@ func testRobustS3Authentication(t *testing.T) {
 func testEnterpriseSecurityConfiguration(t *testing.T) {
 	t.Run("HealthEndpointAccessible", func(t *testing.T) {
 		// Health endpoint should be accessible without authentication
-		resp, err := http.Get("http://localhost:8080/health")
+		resp, err := TLSHTTPClient().Get(ProxyEndpoint + "/health")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -159,16 +168,15 @@ func testEnterpriseSecurityConfiguration(t *testing.T) {
 
 	t.Run("S3EndpointProtected", func(t *testing.T) {
 		// S3 endpoint should require authentication
-		resp, err := http.Get("http://localhost:8080/")
+		resp, err := TLSHTTPClient().Get(ProxyEndpoint + "/")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
-		// Should return 403 Forbidden due to missing authentication
-		if resp.StatusCode == http.StatusForbidden {
-			t.Logf("✅ S3 endpoint properly protected with mandatory authentication")
-		} else {
-			t.Logf("⚠️  Unexpected response code (expected 403): %d", resp.StatusCode)
-		}
+		// Mandatory authentication: an unsigned S3 request is refused. Logging
+		// the status instead of asserting it made this subtest green against a
+		// proxy that served the request.
+		require.Equal(t, http.StatusForbidden, resp.StatusCode,
+			"an unsigned request must not be served")
 	})
 
 	t.Run("S3ClientCredentials", func(t *testing.T) {
@@ -191,12 +199,13 @@ func testEnterpriseSecurityConfiguration(t *testing.T) {
 						tc.accessKey, tc.secretKey, "")),
 					config.WithRegion("us-east-1"),
 					config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
-						func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+						func(_, _ string, _ ...interface{}) (aws.Endpoint, error) {
 							return aws.Endpoint{
-								URL:           "http://localhost:8080",
+								URL:           ProxyEndpoint,
 								SigningRegion: "us-east-1",
 							}, nil
 						})),
+					config.WithHTTPClient(TLSHTTPClient()),
 				)
 				require.NoError(t, err)
 
@@ -209,52 +218,31 @@ func testEnterpriseSecurityConfiguration(t *testing.T) {
 				_, err = client.ListBuckets(ctx, &s3.ListBucketsInput{})
 
 				if tc.expected {
-					// Should succeed
-					if err != nil {
-						t.Logf("Expected success but got error: %v", err)
-						// Check if it's an authentication error
-						if strings.Contains(err.Error(), "InvalidAccessKeyId") {
-							t.Logf("❌ Authentication failed for valid credentials: %s", tc.accessKey)
-						}
-					} else {
-						t.Logf("✅ Authentication succeeded for: %s", tc.accessKey)
-					}
-				} else {
-					// Should fail
-					if err != nil && strings.Contains(err.Error(), "InvalidAccessKeyId") {
-						t.Logf("✅ Authentication correctly rejected: %s", tc.accessKey)
-					} else {
-						t.Logf("❌ Expected authentication failure but got: %v", err)
-					}
+					require.NoError(t, err, "a configured client must be able to authenticate: %s", tc.accessKey)
+					return
 				}
+				require.Error(t, err, "an unknown access key must be refused: %s", tc.accessKey)
+				assert.Contains(t, err.Error(), "InvalidAccessKeyId",
+					"an unknown access key is refused as InvalidAccessKeyId, not as something else")
 			})
 		}
 	})
 
 	t.Run("SecurityHeaders", func(t *testing.T) {
-		// Test security headers in responses
-		resp, err := http.Get("http://localhost:8080/health")
+		// The headers ride on the authentication refusal, which is the response
+		// the proxy writes itself. This used to read /health - a response that
+		// carries none of them - and log whatever it found, so it passed either
+		// way and named a header the proxy deliberately does not set.
+		resp, err := TLSHTTPClient().Get(ProxyEndpoint + "/")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
-		// Check for security headers
-		securityHeaders := map[string]string{
-			"X-Content-Type-Options": "nosniff",
-			"X-Frame-Options":        "DENY",
-			"X-XSS-Protection":       "1; mode=block",
-		}
-
-		for header, expectedValue := range securityHeaders {
-			if actualValue := resp.Header.Get(header); actualValue != "" {
-				if expectedValue != "" && actualValue != expectedValue {
-					t.Logf("⚠️  Security header %s has unexpected value: %s (expected: %s)", header, actualValue, expectedValue)
-				} else {
-					t.Logf("✅ Security header present: %s = %s", header, actualValue)
-				}
-			} else {
-				t.Logf("⚠️  Security header missing: %s", header)
-			}
-		}
+		require.Equal(t, http.StatusForbidden, resp.StatusCode)
+		assert.Equal(t, "nosniff", resp.Header.Get("X-Content-Type-Options"))
+		assert.Equal(t, "DENY", resp.Header.Get("X-Frame-Options"))
+		assert.Equal(t, "no-cache, no-store, must-revalidate", resp.Header.Get("Cache-Control"))
+		assert.Empty(t, resp.Header.Get("X-XSS-Protection"),
+			"a deprecated header browsers ignore is not set; asserting it would pin a promise nothing keeps")
 	})
 }
 
@@ -263,95 +251,131 @@ func testEnterpriseSecurityConfiguration(t *testing.T) {
 func testSecurityFeatures(t *testing.T) {
 	t.Log("Testing security features of S3 authentication")
 
+	// The status follows the code (ADR 0014 D13): a header the proxy cannot use
+	// makes the request itself unusable, which is 400, while a request that was
+	// understood and refused is 403. A blanket status tells a client to fix the
+	// wrong thing.
 	t.Run("OversizedAuthHeader", func(t *testing.T) {
 		// Test with oversized authorization header
-		req, err := http.NewRequest("GET", "http://localhost:8080/", nil)
+		req, err := http.NewRequest("GET", ProxyEndpoint+"/", nil)
 		require.NoError(t, err)
 
 		// Create a very large authorization header
 		largeAuth := "AWS4-HMAC-SHA256 " + strings.Repeat("x", 10000)
 		req.Header.Set("Authorization", largeAuth)
 
-		client := &http.Client{Timeout: 5 * time.Second}
-		resp, err := client.Do(req)
+		resp, err := TLSHTTPClient().Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
-		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		assert.Equal(t, "InvalidRequest", authErrorCode(t, resp))
 	})
 
 	t.Run("MalformedAuthHeader", func(t *testing.T) {
 		// Test with malformed authorization header
-		req, err := http.NewRequest("GET", "http://localhost:8080/", nil)
+		req, err := http.NewRequest("GET", ProxyEndpoint+"/", nil)
 		require.NoError(t, err)
 
 		req.Header.Set("Authorization", "Invalid-Header-Format")
 
-		client := &http.Client{Timeout: 5 * time.Second}
-		resp, err := client.Do(req)
+		resp, err := TLSHTTPClient().Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
-		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		assert.Equal(t, "InvalidRequest", authErrorCode(t, resp),
+			"a scheme this proxy does not implement is InvalidRequest, not a parse failure")
 	})
 
 	t.Run("MissingHeaders", func(t *testing.T) {
 		// Test with missing required headers
-		req, err := http.NewRequest("GET", "http://localhost:8080/", nil)
+		req, err := http.NewRequest("GET", ProxyEndpoint+"/", nil)
 		require.NoError(t, err)
 
 		// No authorization header at all
-		client := &http.Client{Timeout: 5 * time.Second}
-		resp, err := client.Do(req)
+		resp, err := TLSHTTPClient().Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
+		// An anonymous request, which S3 and MinIO both answer AccessDenied.
 		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+		assert.Equal(t, "AccessDenied", authErrorCode(t, resp))
 	})
+}
+
+// authErrorCode reads the S3 error code out of a refusal, and asserts on the way
+// that the refusal is an S3 <Error> document at all (ADR 0008 D7) carrying the
+// proxy's own request id (ADR 0008 D12a).
+func authErrorCode(t *testing.T, resp *http.Response) string {
+	t.Helper()
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	var doc struct {
+		XMLName   xml.Name `xml:"Error"`
+		Code      string   `xml:"Code"`
+		RequestID string   `xml:"RequestId"`
+	}
+	require.NoError(t, xml.Unmarshal(body, &doc), "body: %s", body)
+
+	id := resp.Header.Get("x-amz-request-id")
+	assert.NotEmpty(t, id, "every answer states the proxy's own request id")
+	assert.Equal(t, id, doc.RequestID, "the document and the header state one id")
+
+	return doc.Code
+}
+
+// sendWellFormedAuthHeader issues a request whose Authorization header is a
+// syntactically valid AWS4-HMAC-SHA256 header for accessKey, carrying a
+// signature the proxy cannot have computed. It returns the status and body.
+func sendWellFormedAuthHeader(t *testing.T, accessKey string) (int, string) {
+	t.Helper()
+
+	req, err := http.NewRequest("GET", ProxyEndpoint+"/", nil)
+	require.NoError(t, err)
+
+	now := time.Now().UTC()
+	req.Header.Set("Host", proxyHost(t))
+	req.Header.Set("X-Amz-Date", now.Format("20060102T150405Z"))
+	req.Header.Set("X-Amz-Content-Sha256", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+
+	credential := fmt.Sprintf("%s/%s/us-east-1/s3/aws4_request", accessKey, now.Format("20060102"))
+	req.Header.Set("Authorization", fmt.Sprintf(
+		"AWS4-HMAC-SHA256 Credential=%s, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=%s",
+		credential, "dummysignaturefortestingpurposes1234567890abcdef"))
+
+	resp, err := TLSHTTPClient().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	return resp.StatusCode, string(body)
 }
 
 func testSignatureValidation(t *testing.T) {
 	t.Log("Testing AWS Signature V4 validation")
 
-	t.Run("ValidSignatureFormat", func(t *testing.T) {
-		// Create a properly formatted AWS4 signature
-		accessKey := "testclient123"
-		region := "us-east-1"
-		service := "s3"
+	// Both refusals are 403 and both reject the request; which code comes back
+	// says which check failed, and S3 clients branch on that. Asserting only the
+	// status let this subtest pass against a proxy that served the request to a
+	// caller holding no secret key at all.
+	t.Run("KnownKeyBadSignature", func(t *testing.T) {
+		status, body := sendWellFormedAuthHeader(t, "username0")
 
-		// Create request
-		req, err := http.NewRequest("GET", "http://localhost:8080/", nil)
-		require.NoError(t, err)
+		require.Equal(t, http.StatusForbidden, status)
+		assert.Contains(t, body, "SignatureDoesNotMatch",
+			"a configured key with a signature the proxy did not compute is refused for the signature")
+	})
 
-		// Add required headers
-		now := time.Now().UTC()
-		amzDate := now.Format("20060102T150405Z")
-		dateStamp := now.Format("20060102")
+	t.Run("UnknownKey", func(t *testing.T) {
+		status, body := sendWellFormedAuthHeader(t, "testclient123")
 
-		req.Header.Set("Host", "localhost:8080")
-		req.Header.Set("X-Amz-Date", amzDate)
-		req.Header.Set("X-Amz-Content-Sha256", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
-
-		// Build authorization header
-		credential := fmt.Sprintf("%s/%s/%s/%s/aws4_request", accessKey, dateStamp, region, service)
-		signedHeaders := "host;x-amz-content-sha256;x-amz-date"
-
-		// For this test, we'll use a dummy signature since we're testing the format validation
-		signature := "dummysignaturefortestingpurposes1234567890abcdef"
-
-		authHeader := fmt.Sprintf("AWS4-HMAC-SHA256 Credential=%s, SignedHeaders=%s, Signature=%s",
-			credential, signedHeaders, signature)
-
-		req.Header.Set("Authorization", authHeader)
-
-		client := &http.Client{Timeout: 5 * time.Second}
-		resp, err := client.Do(req)
-		require.NoError(t, err)
-		defer resp.Body.Close()
-
-		// The response depends on whether authentication is enabled in the test environment
-		// We're mainly testing that the request is properly formatted
-		t.Logf("Response status: %d", resp.StatusCode)
+		require.Equal(t, http.StatusForbidden, status)
+		assert.Contains(t, body, "InvalidAccessKeyId",
+			"a key no s3_clients entry declares is refused for the key, not for the signature")
 	})
 }
 
@@ -359,7 +383,7 @@ func testClockSkewProtection(t *testing.T) {
 	t.Log("Testing clock skew protection")
 
 	t.Run("OldTimestamp", func(t *testing.T) {
-		req, err := http.NewRequest("GET", "http://localhost:8080/", nil)
+		req, err := http.NewRequest("GET", ProxyEndpoint+"/", nil)
 		require.NoError(t, err)
 
 		// Use a timestamp that's too old (>15 minutes)
@@ -367,7 +391,7 @@ func testClockSkewProtection(t *testing.T) {
 		amzDate := oldTime.Format("20060102T150405Z")
 		dateStamp := oldTime.Format("20060102")
 
-		req.Header.Set("Host", "localhost:8080")
+		req.Header.Set("Host", proxyHost(t))
 		req.Header.Set("X-Amz-Date", amzDate)
 
 		credential := fmt.Sprintf("testkey/%s/us-east-1/s3/aws4_request", dateStamp)
@@ -376,54 +400,18 @@ func testClockSkewProtection(t *testing.T) {
 
 		req.Header.Set("Authorization", authHeader)
 
-		client := &http.Client{Timeout: 5 * time.Second}
-		resp, err := client.Do(req)
+		resp, err := TLSHTTPClient().Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
-		// Should be rejected due to clock skew (if authentication is enabled)
-		t.Logf("Response status for old timestamp: %d", resp.StatusCode)
-	})
-}
-
-func testRateLimiting(t *testing.T) {
-	t.Log("Testing rate limiting (if enabled)")
-
-	t.Run("RapidRequests", func(t *testing.T) {
-		// Send multiple requests rapidly to test rate limiting
-		const numRequests = 10
-		const rapidInterval = 100 * time.Millisecond
-
-		client := &http.Client{Timeout: 2 * time.Second}
-
-		var responses []int
-		for i := 0; i < numRequests; i++ {
-			req, err := http.NewRequest("GET", "http://localhost:8080/health", nil)
-			require.NoError(t, err)
-
-			resp, err := client.Do(req)
-			if err != nil {
-				t.Logf("Request %d failed: %v", i, err)
-				continue
-			}
-			responses = append(responses, resp.StatusCode)
-			resp.Body.Close()
-
-			time.Sleep(rapidInterval)
-		}
-
-		t.Logf("Rapid request responses: %v", responses)
-
-		// Verify that health endpoint is accessible (rate limiting may not apply to health)
-		healthRequests := 0
-		for _, status := range responses {
-			if status == http.StatusOK {
-				healthRequests++
-			}
-		}
-
-		// Health endpoint should remain accessible
-		assert.Greater(t, healthRequests, 0, "Health endpoint should remain accessible")
+		// 20 minutes against a 900-second window: refused for the skew, and named
+		// as such. The subtest is the only thing that covers the clock-skew
+		// boundary end to end, and it used to log the status and pass.
+		require.Equal(t, http.StatusForbidden, resp.StatusCode)
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		assert.Contains(t, string(body), "RequestTimeTooSkewed",
+			"a stale request is refused for its timestamp, not for its signature")
 	})
 }
 
@@ -431,50 +419,30 @@ func testSecurityMetrics(t *testing.T) {
 	t.Log("Testing security metrics and monitoring")
 
 	t.Run("MetricsCollection", func(t *testing.T) {
-		// Test that security metrics are being collected
+		// A metrics endpoint that cannot be reached is a broken listener, not a
+		// reason to pass: skipping here green-lit exactly the failure the
+		// assertions below exist to catch (ADR 0019 D2).
 		resp, err := http.Get("http://localhost:9090/metrics")
-		if err != nil {
-			t.Skip("Metrics endpoint not available")
-			return
-		}
+		require.NoError(t, err, "the monitoring listener must be reachable for this suite")
 		defer resp.Body.Close()
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		// Read metrics content
 		buf := new(bytes.Buffer)
-		buf.ReadFrom(resp.Body)
+		_, err = buf.ReadFrom(resp.Body)
+		require.NoError(t, err)
 		metricsContent := buf.String()
 
-		t.Logf("Metrics endpoint accessible, content length: %d", len(metricsContent))
+		// The two series the request middleware exists to produce. They reached
+		// no scrape at all until 5.0.0: they were registered on the proxy's own
+		// registry while /metrics served prometheus.DefaultGatherer, and this
+		// test only checked that the endpoint answered 200 — which it did, with
+		// a document that never contained them.
+		assert.Contains(t, metricsContent, "s3ep_requests_total",
+			"the request counter must reach a scrape")
+		assert.Contains(t, metricsContent, "s3ep_request_duration_seconds",
+			"the latency histogram must reach a scrape")
+		assert.Contains(t, metricsContent, "s3ep_active_connections",
+			"and the collectors that were already exported stayed exported")
 	})
-}
-
-// Helper functions for AWS signature calculation
-
-func createValidAWS4Signature(accessKey, secretKey, region, service string, req *http.Request) string {
-	// This is a simplified helper - in practice, you'd use the full AWS SDK signing process
-	now := time.Now().UTC()
-	dateStamp := now.Format("20060102")
-
-	// Build string to sign (simplified)
-	stringToSign := fmt.Sprintf("AWS4-HMAC-SHA256\n%s\n%s/%s/%s/aws4_request\n%s",
-		now.Format("20060102T150405Z"),
-		dateStamp, region, service,
-		"dummy_canonical_request_hash")
-
-	// Calculate signature
-	kDate := hmacSHA256([]byte("AWS4"+secretKey), []byte(dateStamp))
-	kRegion := hmacSHA256(kDate, []byte(region))
-	kService := hmacSHA256(kRegion, []byte(service))
-	kSigning := hmacSHA256(kService, []byte("aws4_request"))
-	signature := hmacSHA256(kSigning, []byte(stringToSign))
-
-	return hex.EncodeToString(signature)
-}
-
-func hmacSHA256(key, data []byte) []byte {
-	h := hmac.New(sha256.New, key)
-	h.Write(data)
-	return h.Sum(nil)
 }

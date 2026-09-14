@@ -8,12 +8,22 @@ This ADR decides how compatibility questions are argued and how the product
 describes itself; it is a rule, not a feature. **Implemented today:** the
 user-facing reference and the security architecture state the scope as written
 here, and every general finding in them names the general condition first and a
-client only as an example. **Decided and not yet built:** most of the S3 surface
-a generic client exercises but a backup tool does not — a real listing document
-with plaintext sizes, conditional request headers, verification of client
-checksums, forwarding of the storage headers a `PUT` still drops, and a stored
-format whose ranged reads the proxy itself verifies. Those are separate
-decisions (see References) and all of them ship in the next major release, **5.0.0**.
+client only as an example.
+
+**Four of the five gaps are closed, the last two on 2026-09-11:** the stored format's ranged
+reads are verified by the proxy itself (ADR 0003), both listings answer a real S3 document stating
+the plaintext size under an encrypting provider and the stored size verbatim under the exit
+provider (ADR 0010, ADR 0025 D8), the storage headers a `PUT` used to drop are forwarded and the
+conditional request headers reach `GET`, ranged `GET`, `HEAD`, a single-request `PUT` and a
+client-driven `CompleteMultipartUpload` (ADR 0007), every checksum a client declares is verified
+(ADR 0012), and `ListParts` answers from the proxy's own part table — from the backend under the
+exit provider, which keeps none (ADR 0025) — instead of a fabricated empty document: a generic
+client that verifies its own upload used to be told it had no parts, which is the shape D2 and D3
+exist to forbid. **What is left of the conditional gap:** a `PUT` the proxy turns into its own
+multipart upload — anything above one segment size, or of undeclared length — carries no
+precondition, so a create-if-absent upload of a large object still overwrites what it was written
+to protect (ADR 0007 D7).
+
 **Proof today is narrow:** exactly one client — Velero, whose node agent uploads
 through kopia — has an end-to-end suite (`make e2e-up`, `make test-e2e-velero`).
 CloudNativePG Barman is a named client with no suite of its own.
@@ -163,22 +173,28 @@ documented configuration that nothing here runs.
   in this repository exercises a database backup path, so the CloudNativePG
   Barman claim rests on configuration and reasoning, not on a run. Unverified.
 
-- **Broad scope, narrow test matrix.** The integration suites are written against
-  one SDK. Behavioural differences of other clients — rclone, older SDKs,
-  infrastructure tools that drive S3 reflexively — are not exercised. Not
-  verified, and the most likely source of the next compatibility defect.
+- **Broad scope, narrow test matrix — narrowed 2026-09-13, and it paid.** The
+  integration suites are written against one SDK. Two non-SDK clients are now
+  exercised end to end, rclone and s3cmd, and between them they found four
+  behaviours no SDK-based suite could reach: an entity tag that refuses the
+  client's own upload *and* its download, a check per uploaded part that no
+  object-level answer can satisfy, and two bucket operations left unrouted
+  because a real client writes a trailing slash where an SDK does not. Older
+  SDKs and other infrastructure tools that drive S3 reflexively remain
+  unexercised, and are still the most likely source of the next compatibility
+  defect.
 
-- **Interfaces specified without a measured caller.** The decided upload
-  checksum surface covers algorithms because the header exists, not because any
-  observed client sends them. Whether a real client sends them is unverified; if
-  none does, that is untested cost once it is built.
+- **Interfaces specified without a measured caller.** The upload checksum
+  surface covers algorithms because the header exists, not because any observed
+  client sends them. It is built (ADR 0012); whether a real client sends any of
+  them is still unverified, so the cost is spent rather than pending.
 
-- **Customer-provided encryption keys are still open.** They are silently
-  dropped today; the decided rule refuses them with `501 NotImplemented`, because
-  carrying them on writes alone would produce objects the proxy can never read
-  back. Whether to carry them on every verb — the only known reason being a
-  backend policy that requires them, and none has shown up — is decided against
-  for now and not settled for good.
+- **Customer-provided encryption keys are still open.** The silent drop is gone:
+  they are refused with `501 NotImplemented` in front of every S3 route since
+  2026-09-11, because carrying them on writes alone would produce objects the
+  proxy can never read back (ADR 0007 D6). Whether to carry them on every verb —
+  the only known reason being a backend policy that requires them, and none has
+  shown up — is decided against for now and not settled for good.
 
 - **Filename encryption is open, and its value can only be measured for one
   client's key layout.** What a key leaks depends on the client's naming scheme,
@@ -189,10 +205,13 @@ documented configuration that nothing here runs.
   Two clients sharing one proxy share a trust domain; separation is a separate
   deployment. Accepted, and stated in the security architecture.
 
-- **Scope is a compatibility statement, not a security claim.** Until the stored
-  format is one the proxy verifies on every read, the backend must be treated as
-  trusted infrastructure — for every client, the named ones included. See
-  ADR 0001 and ADR 0003.
+- **Scope is a compatibility statement, not a security claim.** It says which
+  requests the proxy answers, not what it protects. The caveat it used to
+  carry — treat the backend as trusted infrastructure until the stored format
+  is one the proxy verifies on every read — is lifted as of 2026-09-12: the
+  format is an authenticated segment chain, and under an encrypting provider a
+  read that cannot verify it is refused, for every client, the named ones
+  included. See ADR 0001 and ADR 0003.
 
 ## References
 
@@ -205,5 +224,6 @@ documented configuration that nothing here runs.
 - ADR 0014 — Authentication is SigV4 on both forms; there is no rate limiting and no IP blocking
 - ADR 0019 — Integration and end-to-end tests are the product; they are never skipped
 - ADR 0023 — Filename encryption, if it ships, encrypts directory segments only
+- ADR 0025 — Leaving is a supported mode
 - [README.md](../../README.md) — user-facing reference, client usage and the documented limits
 - [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — threat model, trust boundaries, residual risks

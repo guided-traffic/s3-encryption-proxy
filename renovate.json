@@ -122,15 +122,18 @@
       "datasourceTemplate": "github-releases"
     },
     {
-      "description": "Velero e2e: MinIO backend image",
+      "description": "Velero e2e: MinIO backend image. Manages the manifest that is applied; MinIO was deleted from Docker Hub and ships no further community releases, so this is expected to find nothing.",
       "customType": "regex",
       "managerFilePatterns": [
-        "/^test/e2e/velero/versions\\.env$/"
+        "/^test/e2e/velero/manifests/minio\\.yaml$/",
+        "/^scripts/conformance-run\\.sh$/",
+        "/^docker-compose\\.demo\\.yml$/"
       ],
       "matchStrings": [
-        "MINIO_IMAGE=minio/minio:(?<currentValue>RELEASE\\.[0-9TZ-]+)\\s"
+        "quay\\.io/minio/minio:(?<currentValue>RELEASE\\.[0-9TZ-]+)"
       ],
       "depNameTemplate": "minio/minio",
+      "registryUrlTemplate": "https://quay.io",
       "datasourceTemplate": "docker"
     },
     {
@@ -143,9 +146,104 @@
         "KIND_NODE_IMAGE=(?<depName>kindest/node):(?<currentValue>v\\d+\\.\\d+\\.\\d+)\\s"
       ],
       "datasourceTemplate": "docker"
+    },
+    {
+      "description": "Velero e2e: the external-attacher sidecar. The snapshotter and the hostpath driver had managers; these four did not, so they were pinned and never bumped.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^test/e2e/velero/versions\\.env$/"
+      ],
+      "matchStrings": [
+        "CSI_ATTACHER_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)\\s"
+      ],
+      "depNameTemplate": "kubernetes-csi/external-attacher",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "description": "Velero e2e: the external-provisioner sidecar. The snapshotter and the hostpath driver had managers; these four did not, so they were pinned and never bumped.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^test/e2e/velero/versions\\.env$/"
+      ],
+      "matchStrings": [
+        "CSI_PROVISIONER_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)\\s"
+      ],
+      "depNameTemplate": "kubernetes-csi/external-provisioner",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "description": "Velero e2e: the external-resizer sidecar. The snapshotter and the hostpath driver had managers; these four did not, so they were pinned and never bumped.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^test/e2e/velero/versions\\.env$/"
+      ],
+      "matchStrings": [
+        "CSI_RESIZER_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)\\s"
+      ],
+      "depNameTemplate": "kubernetes-csi/external-resizer",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "description": "Velero e2e: the external-health-monitor sidecar. The snapshotter and the hostpath driver had managers; these four did not, so they were pinned and never bumped.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^test/e2e/velero/versions\\.env$/"
+      ],
+      "matchStrings": [
+        "CSI_HEALTH_MONITOR_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)\\s"
+      ],
+      "depNameTemplate": "kubernetes-csi/external-health-monitor",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "description": "rclone e2e: the rclone release the suite installs and asserts it is running. The suite records what ONE named release makes of this proxy, so 'latest' would make the claim move under its own feet (ADR 0006 D7).",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^test/e2e/rclone/versions\\.env$/"
+      ],
+      "matchStrings": [
+        "RCLONE_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)\\s"
+      ],
+      "depNameTemplate": "rclone/rclone",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "description": "s3cmd e2e: the s3cmd release the suite installs from PyPI. pypi rather than github-releases because the up-script installs it with pip, which is what resolves its python-dateutil dependency.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^test/e2e/s3cmd/versions\\.env$/"
+      ],
+      "matchStrings": [
+        "S3CMD_VERSION=(?<currentValue>\\d+\\.\\d+\\.\\d+)\\s"
+      ],
+      "depNameTemplate": "s3cmd",
+      "datasourceTemplate": "pypi"
+    },
+    {
+      "description": "The helm-unittest plugin version the Makefile installs and the Helm Chart job in test-pipeline.yml therefore runs. It gates semantic-release, so the rule below keeps it off automerge: a plugin bump must not reach a release gate unread.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^Makefile$/"
+      ],
+      "matchStrings": [
+        "HELM_UNITTEST_VERSION := (?<currentValue>v\\d+\\.\\d+\\.\\d+)\\s"
+      ],
+      "depNameTemplate": "helm-unittest/helm-unittest",
+      "datasourceTemplate": "github-releases"
     }
   ],
   "packageRules": [
+    {
+      "description": "The helm-unittest plugin is installed over the network by a job that gates semantic-release, so an upstream tag move must not merge itself. Everything else in this repository defaults to automerge: true; this is the exception.",
+      "matchDepNames": [
+        "helm-unittest/helm-unittest"
+      ],
+      "automerge": false,
+      "labels": [
+        "dependencies",
+        "ci-gate"
+      ]
+    },
     {
       "description": "conventional-changelog-conventionalcommits must stay in the generation @semantic-release/commit-analyzer and release-notes-generator are built on (conventional-changelog-angular 8.x, writer 8.x). The 10.x line changes the preset shape and needs Node 22; it once broke the release. Bump it only together with a semantic-release generation that moves its own conventional-changelog dependencies.",
       "matchPackageNames": [
@@ -164,6 +262,19 @@
       "labels": [
         "dependencies",
         "velero-e2e"
+      ]
+    },
+    {
+      "description": "The client e2e pins. A client release is not a dependency bump like any other: these suites record what one named version of one named client makes of this proxy, and a new version can change that verdict — which is the finding, not a flake. Never automerged; the suite has to be run and its verdict table read before the pin moves.",
+      "matchFileNames": [
+        "test/e2e/rclone/versions.env",
+        "test/e2e/s3cmd/versions.env"
+      ],
+      "groupName": "client e2e",
+      "automerge": false,
+      "labels": [
+        "dependencies",
+        "client-e2e"
       ]
     },
     {

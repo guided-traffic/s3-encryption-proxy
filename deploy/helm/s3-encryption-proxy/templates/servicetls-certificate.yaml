@@ -1,0 +1,28 @@
+{{- if and .Values.serviceTLS.enabled (not .Values.serviceTLS.existingSecret) }}
+{{- /*
+  TLS at the proxy's own Service (ADR 0026). Separate from templates/certificate.yaml,
+  which serves an Ingress: the two have different consumers and different names, and
+  a deployment may want one, the other, or both.
+*/}}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "s3-encryption-proxy.serviceTLSSecretName" . }}
+  labels:
+    {{- include "s3-encryption-proxy.labels" . | nindent 4 }}
+  {{- with .Values.serviceTLS.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  secretName: {{ include "s3-encryption-proxy.serviceTLSSecretName" . }}
+  issuerRef:
+    name: {{ .Values.serviceTLS.issuer.name }}
+    kind: {{ .Values.serviceTLS.issuer.kind }}
+  dnsNames:
+    {{- include "s3-encryption-proxy.serviceDNSNames" . | nindent 4 }}
+  usages:
+    - digital signature
+    - key encipherment
+    - server auth
+{{- end }}

@@ -47,7 +47,7 @@ func (v *LicenseValidator) ValidateLicense(tokenString string) *ValidationResult
 	if tokenString == "" {
 		return &ValidationResult{
 			Valid:   false,
-			Message: "No license token provided - running in read-only mode (encryption disabled)",
+			Message: "No license token provided - only the exit provider will start",
 		}
 	}
 
@@ -151,11 +151,12 @@ func checkClaims(now time.Time, claims *LicenseClaims) *ValidationResult {
 // ValidateProviderType checks if the provider type is allowed without a license
 func (v *LicenseValidator) ValidateProviderType(providerType string) error {
 	if v.info == nil || !v.info.Valid {
-		if providerType != "none" {
+		if providerType != "exit" {
 			return fmt.Errorf(
 				"license required for encryption provider type '%s'\n"+
 					"Please obtain a license from https://s3ep.com\n"+
-					"Or start with a provider of type 'none' for read-only mode",
+					"Or switch the active provider to type 'exit', which needs no license: it "+
+					"writes plaintext and still decrypts what this proxy encrypted earlier",
 				providerType,
 			)
 		}
@@ -227,16 +228,28 @@ func (v *LicenseValidator) Stop() {
 	}
 }
 
-// GetLicenseInfo returns the current license information
-func (v *LicenseValidator) GetLicenseInfo() *LicenseInfo {
-	return v.info
+// SetExpiryHandler supplies what a licence that lapses at runtime does instead
+// of ending the process on the spot. Call it before StartRuntimeMonitoring.
+//
+// The unlicensed state is fail-closed either way; what the handler buys is the
+// order. Exiting from the monitoring goroutine skips the whole shutdown tail:
+// readiness never goes false, requests in flight are cut mid-byte, and every
+// multipart upload this process holds is left at the backend with nothing able
+// to finish it (ADR 0029 D2). The handler hands the decision to the shutdown
+// path that already knows how to do all three.
+func (v *LicenseValidator) SetExpiryHandler(fn func()) {
+	v.onExpiry = fn
 }
 
-// gracefulShutdown initiates a graceful shutdown when license expires
 func (v *LicenseValidator) gracefulShutdown() {
 	logrus.Error("License has expired during runtime")
 	logrus.Error("Shutting down to prevent unlicensed encryption operations")
 	logrus.Info("Container will restart and perform normal license check")
+
+	if v.onExpiry != nil {
+		v.onExpiry()
+		return
+	}
 
 	// Give some time for logging to complete
 	time.Sleep(1 * time.Second)
@@ -287,88 +300,90 @@ func calculateTimeRemaining(now, expires time.Time) TimeRemaining {
 	}
 }
 
-// LoadLicenseFromEnv loads license token from environment variable
+// LicenseEnvVar is the one environment variable that carries the license token.
+//
+// One name and no alias: ADR 0016 D6 names a single variable, and three of them
+// meant an operator could not tell which one a running proxy had taken its token
+// from, so they could not tell which one to rotate.
+const LicenseEnvVar = "S3EP_LICENSE_TOKEN"
+
+// LoadLicenseFromEnv loads the license token from LicenseEnvVar.
 func LoadLicenseFromEnv() string {
-	// Try multiple environment variable names
-	envVars := []string{
-		"S3EP_LICENSE",
-		"S3EP_LICENSE_TOKEN",
-		"S3_ENCRYPTION_PROXY_LICENSE",
-	}
-
-	for _, envVar := range envVars {
-		if token := os.Getenv(envVar); token != "" {
-			logrus.Debugf("License loaded from environment variable: %s", envVar)
-			return strings.TrimSpace(token)
-		}
+	if token := os.Getenv(LicenseEnvVar); token != "" {
+		logrus.Debugf("License loaded from environment variable: %s", LicenseEnvVar)
+		return strings.TrimSpace(token)
 	}
 
 	return ""
 }
 
-// LoadLicenseFromFile loads license token from various file locations
-func LoadLicenseFromFile(configuredPath string) string {
-	// Try multiple file locations in order of preference
-	possiblePaths := []string{}
-
-	// If a specific path is configured, try it first
-	if configuredPath != "" {
-		possiblePaths = append(possiblePaths, configuredPath)
-	}
-
-	// Fallback paths
-	fallbackPaths := []string{
-		"license.jwt",           // Current directory
-		"build/license.jwt",     // Build directory
-		"/etc/s3ep/license.jwt", // System directory
-		"/opt/s3ep/license.jwt", // Alternative system directory
-		"/app/license.jwt",      // Docker container path
-		"./config/license.jwt",  // Config directory
-	}
-
-	// Add fallback paths only if they're not already in the list
-	for _, fallbackPath := range fallbackPaths {
-		if fallbackPath != configuredPath {
-			possiblePaths = append(possiblePaths, fallbackPath)
+// LoadLicenseFromFile loads the license token from license_file.
+//
+// license_file is the one file: there is no search list behind it. The license
+// is a startup gate (ADR 0016), and a gate that silently reads a different file
+// than the one it was given is not one - an image carrying a token of its own
+// would start happily while the mounted secret was missing, with nothing saying
+// so.
+//
+// binding says whether the operator wrote the key. A path they wrote must yield
+// a token or the start is refused naming it; the default path is an offer rather
+// than a promise, because a proxy whose active provider needs no license starts
+// without one.
+func LoadLicenseFromFile(configuredPath string, binding bool) (string, error) {
+	token, err := readLicenseFile(configuredPath)
+	if err != nil {
+		if binding {
+			return "", fmt.Errorf("license_file %q: %w", configuredPath, err)
 		}
+		return "", nil
 	}
-
-	// Get current working directory to make relative paths absolute
-	cwd, _ := os.Getwd()
-
-	for _, path := range possiblePaths {
-		var fullPath string
-		if filepath.IsAbs(path) {
-			fullPath = path
-		} else {
-			fullPath = filepath.Join(cwd, path)
-		}
-
-		// #nosec G304 - License file paths are controlled and validated
-		if data, err := os.ReadFile(fullPath); err == nil {
-			token := strings.TrimSpace(string(data))
-			if token != "" {
-				logrus.Debugf("License loaded from file: %s", fullPath)
-				return token
-			}
-		}
-	}
-
-	return ""
+	return token, nil
 }
 
-// LoadLicense attempts to load license from multiple sources in order of preference
-func LoadLicense(configuredPath string) string {
-	// 1. First try environment variables
+// readLicenseFile reads one token file. An empty file is an error rather than an
+// empty token: it carries no license, and under a binding path the difference
+// decides whether the start is refused.
+func readLicenseFile(path string) (string, error) {
+	fullPath := path
+	if !filepath.IsAbs(path) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		fullPath = filepath.Join(cwd, path)
+	}
+
+	// #nosec G304 - the path comes from the configuration, not from a request
+	data, err := os.ReadFile(fullPath)
+	if err != nil {
+		return "", err
+	}
+	token := strings.TrimSpace(string(data))
+	if token == "" {
+		return "", fmt.Errorf("the file is empty")
+	}
+	logrus.Debugf("License loaded from file: %s", fullPath)
+	return token, nil
+}
+
+// LoadLicense attempts to load the license from LicenseEnvVar first and from
+// license_file second. binding says whether the configuration wrote that key:
+// see LoadLicenseFromFile.
+func LoadLicense(configuredPath string, binding bool) (string, error) {
+	// 1. First the environment
 	if token := LoadLicenseFromEnv(); token != "" {
-		return token
+		return token, nil
 	}
 
-	// 2. Then try file locations (including configured path)
-	if token := LoadLicenseFromFile(configuredPath); token != "" {
-		return token
+	// 2. Then license_file
+	token, err := LoadLicenseFromFile(configuredPath, binding)
+	if err != nil {
+		return "", err
+	}
+	if token != "" {
+		return token, nil
 	}
 
-	logrus.Debug("No license found in environment variables or files")
-	return ""
+	logrus.Debug("No license found in the environment or in license_file")
+	return "", nil
 }

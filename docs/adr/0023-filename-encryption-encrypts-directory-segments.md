@@ -5,18 +5,25 @@
 **Accepted.** Date: 2026-09-07.
 
 Decided and specified; **not implemented**. No filename encryption exists today: every object
-key reaches the backend exactly as the client wrote it, and the key names are the one part of a
-stored object the proxy does not protect. The decision below fixes the shape of the feature so
-that neither the storage format nor the listing work can foreclose it by accident. It is not
-scheduled into the next major release: it depends on the authenticated segment chain (ADR 0003)
-and on the listing document rewrite (ADR 0010), and it lands in its own later release once the
-open listing question in *Residual risks* is answered. When it lands it is **opt-in and off by default**;
+key reaches the backend exactly as the client wrote it. Under an encrypting provider, key names
+are the largest part of a stored object the proxy does not protect — the user metadata and the
+object tags a client sets travel in the clear as well, deliberately (ADR 0007), and no feature
+here changes that. The decision below fixes the shape of the feature so that neither the storage
+format nor the listing work can foreclose it by accident. It does not ship in 5.0.0.
+
+**Both dependencies have cleared, verified 2026-09-12.** The authenticated segment chain
+(ADR 0003) and the listing document rewrite (ADR 0010) are both on the 5.0.0 branch: the proxy
+builds the listing documents itself, in both listing versions, and states a size the backend did
+not choose. What still blocks the feature is the open listing question in *Residual risks*.
+Nothing about the feature itself has been built, and neither the format work nor the listing work
+changed the name an object is stored under. When it lands it is **opt-in and off by default**;
 enabling it on an existing bucket is a rename pass, never a re-encryption.
 
 ## Context
 
-The backend is assumed hostile (ADR 0001). Every stored byte is encrypted and every stored byte
-is authenticated. The key name is not. Whoever holds the bucket reads it for free.
+The backend is assumed hostile (ADR 0001). Under an encrypting provider every stored byte is
+encrypted and every stored byte is authenticated. The key name is not, under any provider.
+Whoever holds the bucket reads it for free.
 
 For a backup bucket that is not a detail. Object keys carry whatever structure the client's naming
 scheme puts there, and the common backup layouts put the interesting nouns in the path: backup
@@ -93,7 +100,7 @@ startup and held for the process lifetime; there is no lazy unwrap on the reques
 
 **D7** With `enabled: true`, the proxy **refuses to start** when `wrapped_key` is absent, when
 `kek_fingerprint` names no configured provider, when the unwrap fails, or when the active provider
-is `none`. There is no fall back to cleartext names: a proxy that cannot decrypt names cannot serve
+is `exit`. There is no fall back to cleartext names: a proxy that cannot decrypt names cannot serve
 the bucket, and saying so at startup is the only honest failure (ADR 0013).
 
 **D8** The transform is applied at **exactly one place**: the boundary between the proxy and the
@@ -248,5 +255,6 @@ key-free, so a later implementation of those bodies does not inherit a wrong ans
 * ADR 0019 — Integration and end-to-end tests are the product; they are never skipped
 * ADR 0020 — Performance is measured before and after, never asserted
 * ADR 0021 — Key material and licenses are generated, never committed
-* [README.md](../../README.md) — user-facing reference: the `encryption.filename_encryption` block, the client-key-to-stored-key naming table, the residual leak, the delimiter restriction and the key-length limit
-* [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — what the backend learns anyway, and why the name key must be backed up like the key encryption key
+* ADR 0025 — Leaving is a supported mode
+* [README.md](../../README.md) — records today that object key names are stored in the clear and that encrypting them is specified and not implemented. The `encryption.filename_encryption` reference, the client-key-to-stored-key naming table, the residual leak, the delimiter restriction and the key-length limit are owed when the feature lands (2026-09-12)
+* [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — what the backend learns anyway, where key names are out of scope until this lands. Why the name key must be backed up like the key encryption key is owed with the feature (2026-09-12)

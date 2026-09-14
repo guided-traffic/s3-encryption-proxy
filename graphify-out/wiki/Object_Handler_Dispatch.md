@@ -1,69 +1,47 @@
 # Object Handler Dispatch
 
-> 253 nodes · cohesion 0.03
+> 17 nodes · cohesion 0.14
 
 ## Key Concepts
 
-- **New()** (338 connections) — `pkg/encryption/envelope/envelope.go`
-- **.Header()** (130 connections) — `internal/monitoring/server_coverage_test.go`
-- **ObjMiscnewHandler()** (43 connections) — `internal/proxy/handlers/object/dispatch_coverage_test.go`
-- **ObjGetnewHandler()** (41 connections) — `internal/proxy/handlers/object/getobject_coverage_test.go`
-- **getobject_coverage_test.go** (39 connections) — `internal/proxy/handlers/object/getobject_coverage_test.go`
-- **ObjGetdo()** (37 connections) — `internal/proxy/handlers/object/getobject_coverage_test.go`
-- **ObjGetpayload()** (32 connections) — `internal/proxy/handlers/object/getobject_coverage_test.go`
-- **Handler.Handle (base bucket route guard)** (31 connections) — `internal/proxy/handlers/bucket/handler.go`
-- **Handler.handleGetObject (GET object)** (28 connections) — `internal/proxy/handlers/object/operations.go`
-- **deleteobjects_coverage_test.go** (25 connections) — `internal/proxy/handlers/object/deleteobjects_coverage_test.go`
-- **Handler.handleGetObjectRange** (25 connections) — `internal/proxy/handlers/object/range.go`
-- **ObjGetstore()** (24 connections) — `internal/proxy/handlers/object/getobject_coverage_test.go`
-- **dispatch_coverage_test.go** (24 connections) — `internal/proxy/handlers/object/dispatch_coverage_test.go`
-- **ObjGetgetOutput()** (23 connections) — `internal/proxy/handlers/object/getobject_coverage_test.go`
-- **rangeread_coverage_test.go** (23 connections) — `internal/proxy/handlers/object/rangeread_coverage_test.go`
-- **itoa()** (22 connections) — `test/e2e/velero/hash.go`
-- **ComputePlaintextSize()** (21 connections) — `pkg/encryption/ciphertext_size.go`
-- **metadata_coverage_test.go** (21 connections) — `internal/proxy/handlers/object/metadata_coverage_test.go`
-- **writeVersionHeaders()** (20 connections) — `internal/proxy/handlers/object/helpers.go`
-- **Handler.handleHeadObject (reports plaintext length)** (20 connections) — `internal/proxy/handlers/object/operations.go`
-- **objectVersionID()** (19 connections) — `internal/proxy/handlers/object/helpers.go`
-- **object_test.go** (19 connections) — `internal/proxy/handlers/object/object_test.go`
-- **response.ErrorWriter.WriteS3Error** (18 connections) — `internal/proxy/response/errors.go`
-- **Handler.serveRangeByFullDecryption (GCM fallback)** (18 connections) — `internal/proxy/handlers/object/range.go`
-- **ObjGetrangeRequest()** (18 connections) — `internal/proxy/handlers/object/rangeread_coverage_test.go`
-- *... and 228 more nodes in this community*
+- **Handler** (20 connections) — `internal/proxy/handlers/object/handler.go`
+- **.Handle()** (5 connections) — `internal/proxy/handlers/object/handler.go`
+- **IsAWSProtocolQueryParam()** (4 connections) — `internal/proxy/request/queryparams.go`
+- **.handleBaseObjectOperations()** (4 connections) — `internal/proxy/handlers/object/handler.go`
+- **.HandleDeleteObjects()** (3 connections) — `internal/proxy/handlers/object/handler.go`
+- **.HandleObjectLegalHold()** (3 connections) — `internal/proxy/handlers/object/handler.go`
+- **.HandleObjectRetention()** (3 connections) — `internal/proxy/handlers/object/handler.go`
+- **.HandleObjectTorrent()** (3 connections) — `internal/proxy/handlers/object/handler.go`
+- **.HandleSelectObjectContent()** (3 connections) — `internal/proxy/handlers/object/handler.go`
+- **TestReqIsAWSProtocolQueryParam()** (3 connections) — `internal/proxy/request/queryparams_test.go`
+- **object/handler.go** (2 connections) — `internal/proxy/handlers/object/handler.go`
+- **ACLHandler** (2 connections)
+- **TaggingHandler** (2 connections)
+- **.GetACLHandler()** (2 connections) — `internal/proxy/handlers/object/handler.go`
+- **.GetTaggingHandler()** (2 connections) — `internal/proxy/handlers/object/handler.go`
+- **queryparams.go** (1 connections) — `internal/proxy/request/queryparams.go`
+- **queryparams_test.go** (1 connections) — `internal/proxy/request/queryparams_test.go`
 
 ## Relationships
 
-- No strong cross-community connections detected
+- [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (14 shared connections)
+- [Multipart Handler](Multipart_Handler.md) (8 shared connections)
+- [Config Structure](Config_Structure.md) (1 shared connections)
+- [Bucket Handler Routing](Bucket_Handler_Routing.md) (1 shared connections)
+- [Config Env Expansion](Config_Env_Expansion.md) (1 shared connections)
 
 ## Source Files
 
-- `internal/monitoring/server_coverage_test.go`
-- `internal/orchestration/metadata.go`
-- `internal/orchestration/rangeread.go`
-- `internal/orchestration/singlepart.go`
-- `internal/proxy/handlers/bucket/acl_test.go`
-- `internal/proxy/handlers/bucket/handler.go`
-- `internal/proxy/handlers/multipart/multipart_coverage_test.go`
-- `internal/proxy/handlers/object/delete_object_test.go`
-- `internal/proxy/handlers/object/deleteobjects_coverage_test.go`
-- `internal/proxy/handlers/object/dispatch_coverage_test.go`
-- `internal/proxy/handlers/object/getobject_coverage_test.go`
 - `internal/proxy/handlers/object/handler.go`
-- `internal/proxy/handlers/object/helpers.go`
-- `internal/proxy/handlers/object/metadata.go`
-- `internal/proxy/handlers/object/metadata_coverage_test.go`
-- `internal/proxy/handlers/object/object_test.go`
-- `internal/proxy/handlers/object/operations.go`
-- `internal/proxy/handlers/object/range.go`
-- `internal/proxy/handlers/object/range_test.go`
-- `internal/proxy/handlers/object/rangeread_coverage_test.go`
+- `internal/proxy/request/queryparams.go`
+- `internal/proxy/request/queryparams_test.go`
 
 ## Audit Trail
 
-- EXTRACTED: 1135 (42%)
-- INFERRED: 1586 (58%)
-- AMBIGUOUS: 2 (0%)
+- EXTRACTED: 43 (98%)
+- INFERRED: 1 (2%)
+- AMBIGUOUS: 0 (0%)
 
 ---
 
-*Part of the graphify knowledge wiki. See [[index]] to navigate.*
+*Part of the graphify knowledge wiki. See [index](index.md) to navigate.*

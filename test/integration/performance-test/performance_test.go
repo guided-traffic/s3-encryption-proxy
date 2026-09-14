@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -422,40 +423,11 @@ func EnsureBenchmarkEnvironment(b *testing.B) {
 	}
 }
 
-// cleanupBenchmarkBucket handles cleanup for benchmark tests
-func cleanupBenchmarkBucket(b *testing.B, client *s3.Client, bucket string) {
-	ctx := context.Background()
-
-	// List and delete all objects first
-	listResp, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-		Bucket: aws.String(bucket),
-	})
-	if err == nil && listResp.Contents != nil {
-		for _, obj := range listResp.Contents {
-			client.DeleteObject(ctx, &s3.DeleteObjectInput{
-				Bucket: aws.String(bucket),
-				Key:    obj.Key,
-			})
-		}
-	}
-
-	// Delete the bucket
-	_, err = client.DeleteBucket(ctx, &s3.DeleteBucketInput{
-		Bucket: aws.String(bucket),
-	})
-	if err != nil {
-		b.Logf("Warning: Failed to delete test bucket %s: %v", bucket, err)
-	}
-}
-
 // TestPerformanceComparison compares encrypted proxy performance vs unencrypted MinIO
 func TestPerformanceComparison(t *testing.T) {
-	// Allow skipping performance tests in CI environments where they might be unreliable
-	if os.Getenv("SKIP_PERFORMANCE_TESTS") == "true" {
-		t.Skip("Skipping performance tests (SKIP_PERFORMANCE_TESTS=true)")
-	}
-
-	// Ensure services are available
+	// No switch skips this comparison: the only legitimate skip is the backend
+	// being unreachable, which the availability check below decides
+	// (ADR 0019 D4).
 	EnsureMinIOAndProxyAvailable(t)
 
 	// Create test context with longer timeout for performance tests (10 minutes)
@@ -474,8 +446,11 @@ func TestPerformanceComparison(t *testing.T) {
 
 	testBucket := PerfTestBucketName
 
-	// Clear any existing data in the performance test bucket
-	clearPerformanceTestBucket(t, tc.ProxyClient, testBucket)
+	// Both buckets this test writes to, not the one it does not: the encrypted
+	// side used to be left untouched while the plain side was emptied every run,
+	// so the proxy leg was measured against a bucket that grew by the whole
+	// matrix on every run and the backend leg against an empty one.
+	clearPerformanceTestBucket(t, tc.ProxyClient, testBucket+"-encrypted")
 	clearPerformanceTestBucket(t, tc.MinIOClient, testBucket+"-unencrypted")
 
 	// Create buckets for both encrypted and unencrypted tests
@@ -572,35 +547,16 @@ func TestPerformanceComparison(t *testing.T) {
 				DownloadEfficiency: downloadEfficiency,
 			})
 
-			// Validate that encrypted operations are reasonably performant
-			// Allow up to 80% overhead for encryption (minimum 20% efficiency) in CI environments
-			// CI environments have variable performance characteristics
-			minEfficiency := 20.0
-			skipPerformanceChecks := false
-
-			if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
-				minEfficiency = 15.0 // Even more lenient in CI
-				t.Logf("Running in CI environment - using relaxed performance thresholds (%.1f%%)", minEfficiency)
-			}
-
-			// Allow completely skipping performance checks in unstable environments
-			if os.Getenv("SKIP_PERFORMANCE_CHECKS") == "true" {
-				skipPerformanceChecks = true
-				t.Log("Skipping performance validation checks (SKIP_PERFORMANCE_CHECKS=true)")
-			}
-
-			if !skipPerformanceChecks {
-				require.Greater(t, uploadEfficiency, minEfficiency,
-					"Encrypted upload efficiency too low: %.1f%% (%.2f vs %.2f MB/s)",
-					uploadEfficiency, encryptedResult.UploadThroughput, unencryptedResult.UploadThroughput)
-
-				require.Greater(t, downloadEfficiency, minEfficiency,
-					"Encrypted download efficiency too low: %.1f%% (%.2f vs %.2f MB/s)",
-					downloadEfficiency, encryptedResult.DownloadThroughput, unencryptedResult.DownloadThroughput)
-			} else {
-				t.Logf("Performance validation skipped - Upload: %.1f%%, Download: %.1f%%",
-					uploadEfficiency, downloadEfficiency)
-			}
+			// Measured and reported, never asserted: a throughput number is a
+			// property of the machine that produced it, and a build that can go
+			// red on one teaches people to ignore red (ADR 0020 D11). There used
+			// to be a minimum-efficiency assertion here with an environment
+			// switch beside it, and every pipeline step that ran this test set
+			// the switch - so the gate was disarmed wherever it ran and armed
+			// only where nobody looked. Both are gone: there is no assertion
+			// left for a switch to hide.
+			t.Logf("Efficiency against the direct leg - upload %.1f%%, download %.1f%%",
+				uploadEfficiency, downloadEfficiency)
 		})
 	}
 
@@ -659,13 +615,16 @@ func measureComparisonPerformance(t *testing.T, ctx context.Context, client *s3.
 	})
 	require.NoError(t, err, "Failed to download object")
 
-	// Read all data to measure complete download time
-	downloadedData, err := io.ReadAll(resp.Body)
+	// Drained, not collected: io.ReadAll grows its buffer by doubling, so on the
+	// larger sizes a good part of what used to be timed here was the test
+	// process reallocating and copying its own buffer. The length is still
+	// checked; the bytes are not needed.
+	received, err := io.Copy(io.Discard, resp.Body)
 	downloadDuration := time.Since(downloadStart)
 	resp.Body.Close()
 
 	require.NoError(t, err, "Failed to read downloaded data")
-	require.Equal(t, len(data), len(downloadedData), "Downloaded data size mismatch")
+	require.Equal(t, int64(len(data)), received, "Downloaded data size mismatch")
 
 	downloadThroughput := dataSize / downloadDuration.Seconds()
 
@@ -679,37 +638,116 @@ func measureComparisonPerformance(t *testing.T, ctx context.Context, client *s3.
 	}
 }
 
-// printComparisonSummary prints a summary of the comparison results
-func printComparisonSummary(t *testing.T, results []ComparisonResult) {
-	fmt.Printf("\n=== Performance Comparison Summary ===\n")
+// weightedLeg is one leg pair reduced to total bytes over total time.
+type weightedLeg struct {
+	proxy  float64 // MiB/s
+	direct float64 // MiB/s
+	ratio  float64 // percent of the direct leg the proxy leg retains
+	added  float64 // milliseconds the proxy leg adds per MiB
+}
 
-	var totalUploadEff, totalDownloadEff float64
-	var encryptedUpload, unencryptedUpload, encryptedDownload, unencryptedDownload float64
-
-	for _, result := range results {
-		totalUploadEff += result.UploadEfficiency
-		totalDownloadEff += result.DownloadEfficiency
-		encryptedUpload += result.Encrypted.UploadThroughput
-		unencryptedUpload += result.Unencrypted.UploadThroughput
-		encryptedDownload += result.Encrypted.DownloadThroughput
-		unencryptedDownload += result.Unencrypted.DownloadThroughput
+// weighLeg sums the bytes and the seconds rather than averaging the per-size
+// ratios, so a 1 GiB transfer counts for a thousand times what a 1 MiB one does
+// instead of exactly as much. The mean of the per-size ratios that used to be
+// published put about 60 % of its score on the six sizes that are about 1 % of
+// the bytes, where the number is request latency and not the cost of moving one.
+func weighLeg(results []ComparisonResult, times func(ComparisonResult) (time.Duration, time.Duration)) weightedLeg {
+	var mib, proxySeconds, directSeconds float64
+	for _, r := range results {
+		proxy, direct := times(r)
+		if proxy <= 0 || direct <= 0 {
+			continue
+		}
+		mib += float64(r.Encrypted.FileSize) / (1024 * 1024)
+		proxySeconds += proxy.Seconds()
+		directSeconds += direct.Seconds()
 	}
+	if mib == 0 || proxySeconds == 0 || directSeconds == 0 {
+		return weightedLeg{}
+	}
+	out := weightedLeg{proxy: mib / proxySeconds, direct: mib / directSeconds}
+	out.ratio = 100 * out.proxy / out.direct
+	// The ratio is not comparable between the two legs: it divides by a baseline
+	// that is itself faster on reads, so an equal absolute cost shows there as
+	// the worse percentage. This column divides by no baseline at all.
+	out.added = 1000 * (proxySeconds - directSeconds) / mib
+	return out
+}
 
-	avgUploadEff := totalUploadEff / float64(len(results))
-	avgDownloadEff := totalDownloadEff / float64(len(results))
-	avgEncUpload := encryptedUpload / float64(len(results))
-	avgPlainUpload := unencryptedUpload / float64(len(results))
-	avgEncDownload := encryptedDownload / float64(len(results))
-	avgPlainDownload := unencryptedDownload / float64(len(results))
+// summaryPath is where the markdown summary lands. The package runs from its own
+// directory, so the default walks back up to the repository.
+func summaryPath() string {
+	if v := os.Getenv("S3EP_PERF_SUMMARY"); v != "" {
+		return v
+	}
+	return filepath.Join("..", "..", "..", "test-results", "performance-summary.md")
+}
 
-	fmt.Printf("Average Upload Efficiency: %.1f%% (Encrypted: %.2f MB/s, Plain: %.2f MB/s)\n",
-		avgUploadEff, avgEncUpload, avgPlainUpload)
-	fmt.Printf("Average Download Efficiency: %.1f%% (Encrypted: %.2f MB/s, Plain: %.2f MB/s)\n",
-		avgDownloadEff, avgEncDownload, avgPlainDownload)
+// printComparisonSummary renders the comparison as markdown — one overall table,
+// then one row per object size — and writes it next to the two totals a badge
+// needs. Rendered here rather than parsed back out of the test log, so the
+// number a pull request shows is the number that was measured (ADR 0020 D16).
+func printComparisonSummary(t *testing.T, results []ComparisonResult) {
+	up := weighLeg(results, func(r ComparisonResult) (time.Duration, time.Duration) {
+		return r.Encrypted.UploadTime, r.Unencrypted.UploadTime
+	})
+	down := weighLeg(results, func(r ComparisonResult) (time.Duration, time.Duration) {
+		return r.Encrypted.DownloadTime, r.Unencrypted.DownloadTime
+	})
 
-	fmt.Printf("Encryption Overhead: Upload %.1f%%, Download %.1f%%\n",
-		100-avgUploadEff, 100-avgDownloadEff)
+	var b strings.Builder
+	b.WriteString("## 🚀 Proxy against direct backend\n\n")
+	b.WriteString("| | Proxy | Direct | Ratio | Proxy adds |\n")
+	b.WriteString("|---|---:|---:|---:|---:|\n")
+	fmt.Fprintf(&b, "| **Upload** | `%.2f MiB/s` | `%.2f MiB/s` | `%.1f%%` | `%+.2f ms/MiB` |\n",
+		up.proxy, up.direct, up.ratio, up.added)
+	fmt.Fprintf(&b, "| **Download** | `%.2f MiB/s` | `%.2f MiB/s` | `%.1f%%` | `%+.2f ms/MiB` |\n",
+		down.proxy, down.direct, down.ratio, down.added)
+	b.WriteString("\nTotal bytes over total time across every size, so a 1 GiB transfer weighs a thousand 1 MiB ones.")
+	b.WriteString(" The ratio compares a proxy path — one plaintext hop and one TLS hop — against a direct path of one TLS hop;")
+	b.WriteString(" it is not the cost of encryption. `Proxy adds` is the same measurement with no baseline in the denominator,")
+	b.WriteString(" which is the only column on which the upload and the download leg may be compared with each other.\n")
+	fmt.Fprintf(&b, "\nLegs: proxy %s, backend %s.\n", ProxyEndpoint, MinIOEndpoint)
 
-	t.Logf("Performance comparison complete - encryption adds %.1f%% upload overhead and %.1f%% download overhead",
-		100-avgUploadEff, 100-avgDownloadEff)
+	b.WriteString("\n### By object size\n\n")
+	b.WriteString("| Size | Upload proxy | Upload direct | Upload ratio | Download proxy | Download direct | Download ratio |\n")
+	b.WriteString("|---|---:|---:|---:|---:|---:|---:|\n")
+	for _, r := range results {
+		fmt.Fprintf(&b, "| `%s` | %.2f MiB/s | %.2f MiB/s | %.1f%% | %.2f MiB/s | %.2f MiB/s | %.1f%% |\n",
+			r.FileSize,
+			r.Encrypted.UploadThroughput, r.Unencrypted.UploadThroughput, r.UploadEfficiency,
+			r.Encrypted.DownloadThroughput, r.Unencrypted.DownloadThroughput, r.DownloadEfficiency)
+	}
+	b.WriteString("\nOne sample per size (ADR 0020 D7): repetition belongs to the local baseline suite, not to continuous integration.")
+	b.WriteString(" The rows at or below 10 MiB are about one percent of the bytes and measure request latency rather than throughput.\n")
+
+	summary := b.String()
+	fmt.Printf("\n%s", summary)
+	writeSummary(t, summary, up, down)
+
+	t.Logf("Byte-weighted against the direct leg - upload %.1f%% (%+.2f ms/MiB), download %.1f%% (%+.2f ms/MiB)",
+		up.ratio, up.added, down.ratio, down.added)
+}
+
+// writeSummary drops the markdown and the two ratios a badge needs side by side.
+// A failure here is logged and not fatal: the measurement is the product and the
+// file is a copy of it, and nothing about performance fails a run (ADR 0020 D11).
+func writeSummary(t *testing.T, summary string, up, down weightedLeg) {
+	path := summaryPath()
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Logf("performance summary directory %s: %v", dir, err)
+		return
+	}
+	if err := os.WriteFile(path, []byte(summary), 0o600); err != nil {
+		t.Logf("performance summary %s: %v", path, err)
+		return
+	}
+	totals := filepath.Join(dir, "performance-totals.env")
+	body := fmt.Sprintf("upload_ratio=%.1f\ndownload_ratio=%.1f\n", up.ratio, down.ratio)
+	if err := os.WriteFile(totals, []byte(body), 0o600); err != nil {
+		t.Logf("performance totals %s: %v", totals, err)
+		return
+	}
+	t.Logf("Performance summary written to %s and %s", path, totals)
 }

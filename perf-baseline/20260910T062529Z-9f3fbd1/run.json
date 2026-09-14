@@ -1,0 +1,386 @@
+{
+  "schema_version": 1,
+  "run": {
+    "id": "20260910T062529Z-9f3fbd1",
+    "label": "upload path decomposition",
+    "started_utc": "2026-09-10T06:25:29Z",
+    "finished_utc": "2026-09-10T06:25:36Z",
+    "duration_s": 7.744777208,
+    "repetitions": 7,
+    "git": {
+      "commit": "9f3fbd11351fd769ef69c602df80cb6548717e4c",
+      "branch": "feat/major-v5",
+      "dirty": true,
+      "describe": "v4.0.3-3-g9f3fbd1-dirty"
+    }
+  },
+  "hardware": {
+    "os": "darwin",
+    "arch": "arm64",
+    "os_version": "26.6.2",
+    "kernel": "Darwin 25.6.0",
+    "cpu_model": "Apple M5 Pro",
+    "cpu_physical": 18,
+    "cpu_logical": 18,
+    "memory_bytes": 68719476736,
+    "go_version": "go1.27.1",
+    "gomaxprocs": 18,
+    "docker": "Docker version 29.6.2, build dfc4efb",
+    "load_before": [
+      1.77,
+      1.59,
+      1.59
+    ],
+    "load_after": [
+      1.97,
+      1.63,
+      1.61
+    ],
+    "power_source": "battery"
+  },
+  "stack": {
+    "available": true,
+    "endpoints": {
+      "minio": "https://127.0.0.1:9000",
+      "proxy_http": "http://127.0.0.1:8080",
+      "proxy_tls": "https://127.0.0.1:8443"
+    },
+    "images": {
+      "minio": "minio/minio:latest",
+      "proxy": "s3-encryption-proxy-s3-encryption-proxy",
+      "proxy_tls": "s3-encryption-proxy-s3-encryption-proxy-tls"
+    },
+    "proxy_config": {
+      "integrity_verification": "strict",
+      "multipart_upload_concurrency": "4",
+      "provider_type": "aes",
+      "streaming_segment_size": "12582912",
+      "streaming_threshold": "5242880"
+    }
+  },
+  "instruments": [
+    {
+      "id": "selfcopy",
+      "status": "ok",
+      "reason": "single-leg profiling harness, not a gate"
+    },
+    {
+      "id": "uploadpath",
+      "status": "ok"
+    }
+  ],
+  "measurements": [
+    {
+      "instrument": "selfcopy",
+      "transport": "n/a",
+      "operation": "self_copy_replace",
+      "subject": "backend",
+      "size_bytes": 8388608,
+      "unit": "MiB/s",
+      "samples": [
+        4449.902992114771,
+        4757.540850921863,
+        4826.304323825715,
+        4751.18349011249,
+        4850.445604374617,
+        5581.8834391100245,
+        5177.574629884313
+      ],
+      "n": 7,
+      "median": 4826.304323825715,
+      "mean": 4913.547904334829,
+      "min": 4449.902992114771,
+      "max": 5581.8834391100245,
+      "p90": 5339.298153574598,
+      "stddev": 363.6946635562704,
+      "rsd_pct": 7.401874788590375,
+      "note": "server-side CopyObject onto itself with MetadataDirective=REPLACE, the operation the proxy runs after every multipart completion"
+    },
+    {
+      "instrument": "selfcopy",
+      "transport": "n/a",
+      "operation": "self_copy_replace",
+      "subject": "backend",
+      "size_bytes": 33554432,
+      "unit": "MiB/s",
+      "samples": [
+        5351.6556182851355,
+        6650.559842049204,
+        6823.632970429786,
+        6380.221313926827,
+        6620.2340004460375,
+        6455.354666263207,
+        6587.4688227452125
+      ],
+      "n": 7,
+      "median": 6587.4688227452125,
+      "mean": 6409.875319163631,
+      "min": 5351.6556182851355,
+      "max": 6823.632970429786,
+      "p90": 6719.789093401437,
+      "stddev": 487.79970739531956,
+      "rsd_pct": 7.610127859069939,
+      "note": "server-side CopyObject onto itself with MetadataDirective=REPLACE, the operation the proxy runs after every multipart completion"
+    },
+    {
+      "instrument": "selfcopy",
+      "transport": "n/a",
+      "operation": "self_copy_replace",
+      "subject": "backend",
+      "size_bytes": 134217728,
+      "unit": "MiB/s",
+      "samples": [
+        6077.019191701374,
+        7554.816836121798,
+        6934.411894423361,
+        7640.194586205867,
+        7567.993395033765,
+        7484.8513625470205,
+        7456.564202794546
+      ],
+      "n": 7,
+      "median": 7484.8513625470205,
+      "mean": 7245.121638403963,
+      "min": 6077.019191701374,
+      "max": 7640.194586205867,
+      "p90": 7596.873871502607,
+      "stddev": 565.6002844286216,
+      "rsd_pct": 7.806636143009167,
+      "note": "server-side CopyObject onto itself with MetadataDirective=REPLACE, the operation the proxy runs after every multipart completion"
+    },
+    {
+      "instrument": "uploadpath",
+      "transport": "http",
+      "operation": "upload",
+      "subject": "direct",
+      "size_bytes": 8388608,
+      "unit": "MiB/s",
+      "samples": [
+        166.79885823679555,
+        164.93386121240283,
+        171.24875900840718,
+        155.4673494274429,
+        158.0236487921245,
+        165.31401914542985,
+        150.81238294838283
+      ],
+      "n": 7,
+      "median": 164.93386121240283,
+      "mean": 161.79983982442653,
+      "min": 150.81238294838283,
+      "max": 171.24875900840718,
+      "p90": 168.5788185454402,
+      "stddev": 7.205646710928753,
+      "rsd_pct": 4.453432536613015,
+      "note": "single PutObject straight to the backend"
+    },
+    {
+      "instrument": "uploadpath",
+      "transport": "http",
+      "operation": "upload",
+      "subject": "proxy-streaming",
+      "size_bytes": 8388608,
+      "unit": "MiB/s",
+      "samples": [
+        172.33626035700533,
+        174.7125432686533,
+        179.81063692299045,
+        164.66495826772464,
+        168.85281461073274,
+        177.69781376158508,
+        173.45849925180843
+      ],
+      "n": 7,
+      "median": 173.45849925180843,
+      "mean": 173.07621806292858,
+      "min": 164.66495826772464,
+      "max": 179.81063692299045,
+      "p90": 178.54294302614724,
+      "stddev": 5.142457401214713,
+      "rsd_pct": 2.971209712558529,
+      "note": "single PutObject through a proxy with integrity verification off, which routes this size onto the streaming write path"
+    },
+    {
+      "instrument": "uploadpath",
+      "transport": "http",
+      "operation": "upload",
+      "subject": "proxy",
+      "size_bytes": 8388608,
+      "unit": "MiB/s",
+      "samples": [
+        97.37928012367168,
+        90.93341766498489,
+        98.02505130661818,
+        96.40644959147767,
+        96.75575884531774,
+        97.37903357346678,
+        100.22493105433033
+      ],
+      "n": 7,
+      "median": 97.37903357346678,
+      "mean": 96.7291317371239,
+      "min": 90.93341766498489,
+      "max": 100.22493105433033,
+      "p90": 98.90500320570304,
+      "stddev": 2.8413676312118747,
+      "rsd_pct": 2.93744767495042,
+      "note": "single PutObject; the auto-multipart write path"
+    },
+    {
+      "instrument": "uploadpath",
+      "transport": "http",
+      "operation": "upload",
+      "subject": "direct",
+      "size_bytes": 12582912,
+      "unit": "MiB/s",
+      "samples": [
+        169.14282840468513,
+        165.78526241133753,
+        176.40454548648538,
+        164.8881079604887,
+        166.1575207913252,
+        163.16467014977007,
+        165.23785493504334
+      ],
+      "n": 7,
+      "median": 165.78526241133753,
+      "mean": 167.25439859130503,
+      "min": 163.16467014977007,
+      "max": 176.40454548648538,
+      "p90": 172.04751523740524,
+      "stddev": 4.416720423183884,
+      "rsd_pct": 2.6407200410772895,
+      "note": "single PutObject straight to the backend"
+    },
+    {
+      "instrument": "uploadpath",
+      "transport": "http",
+      "operation": "upload",
+      "subject": "proxy-streaming",
+      "size_bytes": 12582912,
+      "unit": "MiB/s",
+      "samples": [
+        184.30655205031286,
+        185.4772574819555,
+        172.81831708255493,
+        155.36419146694547,
+        145.98799088188207,
+        184.1188557178824,
+        146.05380865733952
+      ],
+      "n": 7,
+      "median": 172.81831708255493,
+      "mean": 167.73242476269613,
+      "min": 145.98799088188207,
+      "max": 185.4772574819555,
+      "p90": 184.7748342229699,
+      "stddev": 18.16460936187702,
+      "rsd_pct": 10.829515752589804,
+      "note": "single PutObject through a proxy with integrity verification off, which routes this size onto the streaming write path"
+    },
+    {
+      "instrument": "uploadpath",
+      "transport": "http",
+      "operation": "upload",
+      "subject": "proxy",
+      "size_bytes": 12582912,
+      "unit": "MiB/s",
+      "samples": [
+        92.0674910563721,
+        89.52623878277261,
+        95.87421303250136,
+        90.03925171139106,
+        95.31437245581118,
+        96.5471652251786,
+        97.65936225636878
+      ],
+      "n": 7,
+      "median": 95.31437245581118,
+      "mean": 93.86115636005653,
+      "min": 89.52623878277261,
+      "max": 97.65936225636878,
+      "p90": 96.99204403765468,
+      "stddev": 3.276709391262005,
+      "rsd_pct": 3.491017496835825,
+      "note": "single PutObject; the auto-multipart write path"
+    },
+    {
+      "instrument": "uploadpath",
+      "transport": "http",
+      "operation": "upload",
+      "subject": "direct",
+      "size_bytes": 16777216,
+      "unit": "MiB/s",
+      "samples": [
+        165.48885148151308,
+        164.5182891640286,
+        163.85656917627512,
+        171.81876878428824,
+        164.3906000386359,
+        165.1355078755446,
+        173.87177916927845
+      ],
+      "n": 7,
+      "median": 165.1355078755446,
+      "mean": 167.01148081279484,
+      "min": 163.85656917627512,
+      "max": 173.87177916927845,
+      "p90": 172.63997293828433,
+      "stddev": 4.0630422466154785,
+      "rsd_pct": 2.432792181017658,
+      "note": "single PutObject straight to the backend"
+    },
+    {
+      "instrument": "uploadpath",
+      "transport": "http",
+      "operation": "upload",
+      "subject": "proxy-streaming",
+      "size_bytes": 16777216,
+      "unit": "MiB/s",
+      "samples": [
+        175.86677230250902,
+        188.92979560086889,
+        187.1594027860432,
+        176.0536743639717,
+        190.42055593709753,
+        184.39048141761708,
+        171.83583770642116
+      ],
+      "n": 7,
+      "median": 184.39048141761708,
+      "mean": 182.0937885877898,
+      "min": 171.83583770642116,
+      "max": 190.42055593709753,
+      "p90": 189.52609973536033,
+      "stddev": 7.387890536445247,
+      "rsd_pct": 4.057189755752404,
+      "note": "single PutObject through a proxy with integrity verification off, which routes this size onto the streaming write path"
+    },
+    {
+      "instrument": "uploadpath",
+      "transport": "http",
+      "operation": "upload",
+      "subject": "proxy",
+      "size_bytes": 16777216,
+      "unit": "MiB/s",
+      "samples": [
+        117.93090289830377,
+        106.51423343709995,
+        116.30291186437405,
+        102.18783059559469,
+        115.3038198361096,
+        110.7937654520083,
+        120.82230908423297
+      ],
+      "n": 7,
+      "median": 115.3038198361096,
+      "mean": 112.83653902396047,
+      "min": 102.18783059559469,
+      "max": 120.82230908423297,
+      "p90": 119.08746537267545,
+      "stddev": 6.650410325771603,
+      "rsd_pct": 5.893844656436521,
+      "note": "single PutObject; the auto-multipart write path"
+    }
+  ]
+}

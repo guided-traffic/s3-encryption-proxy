@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/health"
 	"io"
 	"net"
 	"os"
@@ -32,6 +33,9 @@ type AESProxyTestInstance struct {
 	cancel   context.CancelFunc
 	endpoint string
 	client   *s3.Client
+	// segmentSize is what this instance routes on: a PUT above it goes to the
+	// multipart producer instead of a single request.
+	segmentSize int64
 }
 
 // StartAESProviderProxyInstance starts a new proxy instance with aes-example.yaml config
@@ -62,7 +66,7 @@ func StartAESProviderProxyInstance(t *testing.T) *AESProxyTestInstance {
 	configPath := filepath.Join("..", "..", "..", "config", "aes-example.yaml")
 
 	// Use viper to load the specific config file
-	config.InitConfig(configPath)
+	require.NoError(t, config.InitConfig(configPath), "Failed to read aes-example.yaml")
 	cfg, err := config.Load()
 	require.NoError(t, err, "Failed to load aes-example.yaml config")
 
@@ -73,10 +77,10 @@ func StartAESProviderProxyInstance(t *testing.T) *AESProxyTestInstance {
 	cfg.LogLevel = "error"
 
 	// Override target endpoint to use localhost instead of minio service name
-	cfg.S3Backend.TargetEndpoint = "https://localhost:9000"
+	cfg.S3Backends[0].TargetEndpoint = "https://localhost:9000"
 
 	// Create proxy server
-	server, err := proxy.NewServer(cfg)
+	server, err := proxy.NewServer(cfg, health.BuildInfo{})
 	require.NoError(t, err, "Failed to create proxy server")
 
 	// Create context for the server
@@ -97,11 +101,12 @@ func StartAESProviderProxyInstance(t *testing.T) *AESProxyTestInstance {
 	require.NoError(t, err, "Failed to create proxy client")
 
 	return &AESProxyTestInstance{
-		server:   server,
-		ctx:      ctx,
-		cancel:   cancel,
-		endpoint: endpoint,
-		client:   client,
+		server:      server,
+		ctx:         ctx,
+		cancel:      cancel,
+		endpoint:    endpoint,
+		client:      client,
+		segmentSize: cfg.GetMultipartPartSize(),
 	}
 }
 

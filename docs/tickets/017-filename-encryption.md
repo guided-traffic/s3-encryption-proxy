@@ -1,762 +1,682 @@
 # Ticket 017: Filename encryption, directory segments only
 
-## Status (2026-09-06)
+## Status (2026-09-13)
 
-**Open, blocked.** This ticket carries the "Filename encryption" decision of the
-Velero path review (item 6 in its order of work; see the
-[label index](README.md#label-index)). It **must not start before storage format v2**
-([ticket 013](013-storage-format-v2.md)) has landed, and it should follow the
-`ListObjectsV2` rewrite that D-11 schedules after v2
-([ticket 018](018-listobjectsv2-document.md)), because that ticket is
-what makes `start-after`, `encoding-type` and a real `ListBucketResult`
-document exist at all — today
-[bucket/operations.go:28-43](../../internal/proxy/handlers/bucket/operations.go#L28-L43)
-forwards only `prefix`, `delimiter`, `max-keys` and `continuation-token`, and
-[:52](../../internal/proxy/handlers/bucket/operations.go#L52) XML-encodes the raw
-SDK struct. Four pre-work verifications (Stage 0 below) can change the design
-and must be done first; two of them are the open questions the findings doc
-left explicitly unanswered.
+**Open. Not started. Unblocked technically, gated on decisions.**
 
----
+The feature is specified in
+[ADR 0023](../adr/0023-filename-encryption-encrypts-directory-segments.md) and
+nothing of it is built. Both dependencies the ticket originally waited on have
+landed: the authenticated segment chain (ADR 0003) and the listing document
+rewrite (ADR 0010). What blocks it now is not code — it is **fourteen decisions,
+four of which expire at the first written object**, and **one census that ADR 0023
+made a precondition and nobody has run**.
 
-## Before you start
-
-Checked against the tree on 2026-09-07; the ticket's reasoning stands, these
-facts under it do not.
-
-- **`SECURITY_ARCHITECTURE.md` is not waiting on anything.** The ticket has it
-  created by the storage-format work; it exists at HEAD and already names this
-  feature as decided and unimplemented (§3.6 and the out-of-scope list, both
-  citing ADR 0023). Write into it. *Fixed in place.*
-- **The boundary table lists sites that are dead.** `Get/PutObjectLegalHold`,
-  `Get/PutObjectRetention`, `SelectObjectContent`, object ACL and object tagging
-  no longer reach the backend at all — they answer `NotImplemented`
-  ([operations.go:950-998](../../internal/proxy/handlers/object/operations.go#L950-L998),
-  [acl.go:63](../../internal/proxy/handlers/object/acl.go#L63),
-  [tagging.go:65](../../internal/proxy/handlers/object/tagging.go#L65)). Of the
-  object sub-resources only `?torrent` is still a live passthrough. Re-derive
-  the list before Stage 3 rather than transforming dead arms.
-- **Every line anchor in that table drifted.**
-  `internal/proxy/handlers/object/operations.go` is 1426 lines now: GetObject
-  :55, PutObject :549 and :676, DeleteObject :711, HeadObject :734,
-  DeleteObjects :858, Torrent :975, auto-multipart :1060/:1081/:1144/:1315,
-  post-Complete self-copy :1362. The five passthrough entry points sit at
-  [handler.go:229-271](../../internal/proxy/handlers/object/handler.go#L229-L271)
-  (:132-171 is now the sub-resource guard), the clear-key debug log at
-  [handler.go:191-196](../../internal/proxy/handlers/object/handler.go#L191-L196),
-  and the handlers are constructed at
-  [router.go:61-64](../../internal/proxy/router.go#L61-L64), not :39-42 — the
-  one-wrap argument holds, at those lines.
-- **The `UploadPartCopy` shadowing precondition is done.** The copy route is
-  registered before the plain part route and the handler answers 422. Nothing
-  for this ticket to wait on. *Fixed in place.*
-- **`<Location>` no longer needs mapping.** It is built from the proxy's own
-  scheme, host and request path, not echoed from the backend. Stage 4 item
-  ticked; whether to keep, configure or drop it is the S3 surface-fidelity
-  ticket's question, not this one.
-- **"No new dependency" for AES-SIV is true only today.**
-  `github.com/google/tink/go v1.7.0` is in `go.mod`, but its only production
-  import is the unreachable Tink KEK stub
-  ([keyencryption/tink.go](../../pkg/encryption/keyencryption/tink.go)), which the
-  Vault key-provider work replaces. If that lands first, this feature is the sole
-  consumer of a deprecated module path and Stage 1 has to pick one: the
-  `tink-crypto/tink-go/v2` import, or another AES-SIV implementation.
-- **The findings doc is gone.** Its two open questions survive only in this
-  ticket (Stage 0 items 1 and 4); durable decisions now live in `docs/adr/`, this
-  feature in ADR 0023. Nothing else to look up.
+This document was rewritten on 2026-09-13 after a full re-verification against
+the tree at HEAD. **The previous version must not be used as a work list.** Its
+boundary table was wrong in both directions, every line anchor had drifted
+including the ones in its own 2026-09-07 correction pass, and its "Before you
+start" section was *exactly inverted* on the most dangerous point — see the first
+row of the table below.
 
 ---
 
-## Context
+## Ground truth at HEAD
 
-The proxy exists for a **hostile** S3 endpoint: the backend can read every byte,
-change any byte, swap objects, serve stale versions and lie in listings. Format
-v2 makes every stored byte authenticated and unreadable. It does not touch the
-one thing the backend still reads for free: **the key**.
+Every claim here was read in the tree during the 2026-09-13 pass. Claims marked
+**UNVERIFIED** could not be settled from the repository and are listed again
+under *Stage 0*.
 
-Object keys carry whatever structure the client's naming scheme puts there, for
-every S3 client — Velero and database backups with CNPG Barman included. Taking
-the Velero layout as the concrete example, this is what it leaks today, in
-cleartext, to whoever holds the bucket:
+### What the previous version got wrong
 
-| Leak | Where | Why it matters |
+| It said | Reality at HEAD | Why it matters |
 |---|---|---|
-| Backup names | `backups/<name>/…` | Naming conventions, schedules, cluster identity, which backup to target for a rollback |
-| Restore names | `restores/<name>/…` | Which backups were actually restored, and when |
-| **Namespace names** | `kopia/<namespace>/…` | The tenant/application inventory of the cluster, for every namespace with volume data |
-| Object counts, sizes, timing | listings | Volume of data per namespace, backup cadence, growth |
+| Object tagging, retention and legal hold "no longer reach the backend at all"; only `?torrent` is a live passthrough | **Exactly inverted.** Tagging, retention and legal hold are live backend passthroughs again, re-added in `36bd3fd` (`object/tagging.go:72,:100,:117`, `object/objectlock.go:27,:71,:86,:111`). `?torrent` is refused with 422 (`object/operations.go:865`), and so is `SelectObjectContent` (`:873`) | Following the old note drops **seven live key-bearing operations** and keeps one unreachable method. A client setting an object tag would write it under a cleartext key |
+| "AES-SIV needs no new dependency — tink is in go.mod" | `grep -ci "tink\|x/crypto" go.mod` returns **0**. Both left the tree; the repo now has zero third-party crypto | The primitive has no source. Go 1.27.1's standard library has neither CMAC nor SIV |
+| The interface has 59 methods, 25 need overriding | **52 methods**, all one uniform signature shape. ~21 carry a key/prefix/marker in a typed field | The whole audit list must be rebuilt from the interface, not adjusted |
+| 25 call sites, listed with line numbers | **66** backend call sites in the handlers — 37 via `h.s3Backend`, 29 via `h.S3Backend` on `BaseSubResourceHandler` (`bucket/base.go`) | One wrap still covers all 66, but any hand-written site list is wrong by half. Classify by **interface method and input field**, never by call site |
+| "Handlers are constructed at `router.go:61-64` — the one-wrap argument holds" | Handlers are built at `router.go:89-92`, and wrapping there is **wrong** — see the sweeper row below | |
+| `ProviderManager.GetProviderByFingerprint` (Stage 2) | Does not exist and never did. `providers.go` exports `EncryptDEK`, `DecryptDEK`, `GetActiveFingerprint`, `GetActiveProviderAlias`, `GetActiveProviderAlgorithm`, `GetProviderAliases`, `GetLogger` | Stage 2 named a function that was never written |
+| `test-integration-performance` proves no regression | That suite measures **zero** of this feature and no longer asserts on throughput (`performance_test.go:550-560`). `test/perf/` holds eight instruments, none of which lists objects | The stated success criterion cannot be satisfied. A listing instrument has to be built first, with a BEFORE column on the pre-change commit (ADR 0020 D17) |
 
-kopia's own blob names are content hashes and leak nothing but the type letter
-(`p`, `q`, `x`, `xn`, `_log`, `kopia.`). Velero's layout is the leak.
+### What holds, and is load-bearing
 
-Sizes, counts and timing are traffic analysis and stay visible under any scheme
-short of padding and cover traffic; they are out of scope. Names are not: they
-are a straight, avoidable disclosure of the customer's internal structure.
+- **The payload cannot regress, structurally.** `Codec.aad` builds
+  `FormatID ‖ objectKey ‖ index` from the **client** key captured once at
+  `NewCodec` (`pkg/encryption/dataencryption/segmented_gcm.go:112-132`), fed from
+  the only two call sites in the orchestration manager
+  (`internal/orchestration/segmented.go:320` and `:386`). The KEK wrap takes a
+  constant AAD and no object key at all
+  (`pkg/encryption/keyencryption/aes.go:30-31,:106,:120`). So enabling the feature
+  is a **rename**, never a re-encryption, and main goals 2 and 3 are untouched by
+  construction. This is the premise the entire design rests on and it is verified,
+  not inherited.
+- **The KEK wrap is length-agnostic** (`aes.go:93-107`; the only length check is
+  `len <= wrapSaltSize` at `:110-113`), so a 64-byte name key wraps exactly like an
+  object DEK with no provider change. It also means a wrapped name key and a
+  wrapped object DEK are **interchangeable ciphertexts under the same KEK** — the
+  wrap AAD is the constant `s3ep-dek-wrap-v1` for both. A distinct AAD label costs
+  one constant.
+- **`base64url` is a fixed point under `QueryEscape`/`QueryUnescape`** (verified
+  over 200k random samples); base64 std is silently corrupted by the same round
+  trip. D5's choice is better founded than ADR 0023 argues, and the ADR should say
+  so.
 
-**The condition on the feature** is the one the repository owner set: lookups
-stay exact and reliable. No mapping index, no round trip added to the hot path,
-no scheme that turns a `GET` into "ask the adversary for the translation table
-first".
+### What the tree does that ADR 0023 did not anticipate
 
----
-
-## Scope
-
-**In**
-
-- A deterministic, keyed, wide-block transform over **directory segments only**;
-  the leaf name stays clear.
-- Applying it at exactly one place: the boundary between the proxy and the
-  backend SDK client, in both directions.
-- Prefix, delimiter and marker handling for listings.
-- Key management for the name key (generation, wrapping, startup unwrap,
-  failure modes).
-- Documentation of the residual leak, in the README and in
-  `SECURITY_ARCHITECTURE.md`, which already carries the decision
-  ([ADR 0023](../adr/0023-filename-encryption-encrypts-directory-segments.md)).
-
-**Out**
-
-- Encrypting the **leaf** name. Rejected by the decision, because clients list
-  with prefixes that end inside the leaf (kopia is the known case; every S3
-  client that does the same is affected alike), and an encrypted leaf has no
-  usable prefix.
-- Encrypting **bucket** names. The bucket is in the path, in the SigV4 signature
-  and in the backend's own namespace; it is also deliberately outside v2's AAD
-  so a ciphertext bucket can be replicated wholesale.
-- Hiding sizes, counts, timing.
-- Rewriting the `ListObjectsV2` response document — that is the D-11 ticket.
-  This ticket maps keys and prefixes in whatever document builder exists when it
-  lands; if the D-11 ticket has not landed, it maps the fields of the SDK struct
-  and does not touch the document shape.
-- Server-side copy. `CopyObject`
-  ([operations.go:373-385](../../internal/proxy/handlers/object/operations.go#L373-L385))
-  and `UploadPartCopy`
-  ([multipart/copy.go:43](../../internal/proxy/handlers/multipart/copy.go#L43))
-  answer 422 `NotSupportedWithEncryption` today and keep doing so; see
-  "Operations that stay refused".
-
-**Items this closes**: the "Filename encryption" decision of the findings doc
-(order of work, item 6), including both open questions it names — the
-cross-directory order dependency and the CopyObject / multipart-list question.
-It touches P-7 (`ListMultipartUploads`, once v2 forwards it, needs the same
-mapping as a listing) and D-11 (the same listing document) without closing them.
-
----
-
-## Why this is cheap after v2 and expensive before it
-
-This is the reason for the ordering, and it is not a scheduling preference.
-
-Format v2 binds **the object key as the client named it** into the AAD of every
-segment and of the trailer. The findings doc says why: it stops a hostile backend
-from serving object A's ciphertext under B's name. The consequence for this
-ticket is the whole design:
-
-- The AAD contains the **client's** key, never the stored key. Name encryption
-  changes only the stored key. So **the stored bytes are identical whether name
-  encryption is on or off**, and enabling it on an existing bucket is a *rename*,
-  not a re-encryption — a backend-side `CopyObject` of ciphertext stays
-  decryptable because the client key it is bound to never changed.
-- Rotating or losing the name key is a naming problem, never a data problem. The
-  object payload does not depend on the name key at all.
-- The transform therefore lives strictly **after** the crypto layer has taken the
-  key it needs. In the code as it stands the encryption manager already takes the
-  client key as associated data on the GCM path
-  ([singlepart.go:31-32](../../internal/orchestration/singlepart.go#L31-L32),
-  [:201-202](../../internal/orchestration/singlepart.go#L201-L202)). It also hands
-  the key to `ProviderManager.EncryptDEK`
-  ([:128](../../internal/orchestration/singlepart.go#L128),
-  [multipart.go:450](../../internal/orchestration/multipart.go#L450)), but **that
-  argument is only a log field today** — the KEK wrap takes no associated data at
-  all ([providers.go:160-198](../../internal/orchestration/providers.go#L160-L198),
-  over `KeyEncryptor.EncryptDEK(ctx, dek)` at
-  [interfaces.go:12](../../pkg/encryption/interfaces.go#L12)). v2 is what turns the
-  key binding into something real, on every segment and on the trailer.
-
-Done in the wrong order, all three of those invert:
-
-- Without v2's AAD rule settled, a transform applied anywhere upstream of the
-  encryption manager would bind **ciphertext names** into the AAD of every
-  object written. Every later change to the name key or the transform would then
-  make previously stored objects **undecryptable**, and there would be no way to
-  tell that from tampering.
-- The paths a transform has to be threaded through — `singlepart.go`'s GCM/CTR
-  split, `rangeread.go`, the sequential HMAC, the post-Complete self-`CopyObject`
-  at [operations.go:1507](../../internal/proxy/handlers/object/operations.go#L1507)
-  and [complete.go:225](../../internal/proxy/handlers/multipart/complete.go#L225) —
-  are code v2 deletes. Every line of name plumbing written into them is thrown
-  away.
-- The migration story would be "re-upload the bucket" instead of "rename the
-  keys".
-
-After v2 this ticket is a new package plus one decorator. Before it, it is a
-crypto-format decision taken by accident.
+- **D8's single boundary does not exist.** The multipart sweeper calls the
+  concrete SDK client *outside* `interfaces.S3BackendInterface`:
+  `internal/proxy/server.go:112` builds `s3Client`, and `:127-137` hands a closure
+  over that same raw client to `SetMultipartAbandoner`, aborting with the client
+  key from the session table — and `:133-136` converts `NoSuchUpload` to success
+  **by design**. Wiring the transform at `router.go:89-92` leaves every swept
+  upload leaking its parts at the backend, billed, with no error line anywhere, on
+  both the idle sweep and the shutdown sweep. The wrap has to be at the client
+  (`server.go:112`), and the closure must capture the **wrapped** value — it
+  captures the local variable, not the struct field, so changing the field type at
+  `:28` alone does not fix it.
+- **The listing is asymmetric across one call.** Both listing arms unconditionally
+  set `EncodingType: url` (`bucket/listing.go:90-93`, `:177`) and the handler
+  decodes with `url.QueryUnescape` **above** the backend interface
+  (`listing_params.go:44-62`). The SDK decodes nothing — there is no unescape
+  anywhere in `service/s3`. So a decorator below the interface receives **raw
+  client bytes on the way down and percent-encoded backend bytes on the way up, on
+  the same call**, while `ListMultipartUploads` is raw in both directions. One
+  shared decode/re-encode helper corrupts one of them.
+- **D11's drop breaks the page's own arithmetic.** `KeyCount` and `IsTruncated` are
+  copied verbatim from the backend (`listing.go:126-127`). Dropping entries without
+  recomputing `KeyCount` makes the document lie. Worse: V1 and `start-after`
+  clients advance by the last key of the page, so dropping the trailing entry of a
+  **truncated** page makes the client re-request the same page forever. Only
+  V2-with-continuation-token is safe.
+- **The audit surface is fields, not methods.**
+  `PutObjectInput.WebsiteRedirectLocation` and
+  `CreateMultipartUploadInput.WebsiteRedirectLocation` carry a client-supplied
+  object key under a different name, and the proxy sets both verbatim from
+  `x-amz-website-redirect-location` (`object/storage_headers.go:35,:120,:140`).
+  "Override the 21 key-bearing methods" would write a cleartext key into backend
+  metadata on every upload carrying that header.
+- **Reflection over the interface cannot be complete.** `ListObjectVersions` is a
+  key-bearing S3 listing with **no interface method and no route** — `GET
+  /{bucket}?versions` falls through to the plain object listing, which dispatches
+  on `list-type` only (`bucket/listing.go:16`). `CopyObject` and `UploadPartCopy`
+  are key-bearing and refused above the boundary, so they have no method either.
+  The audit test needs a second, hand-maintained list of key-bearing operations
+  that have no interface method, each with the reason recorded.
+- **ADR 0023 D18's allowlist is incomplete and was drafted against the read side
+  only.** Bucket **website** (`ErrorDocument.Key`, `IndexDocument.Suffix`,
+  `RoutingRule.Condition.KeyPrefixEquals`, `Redirect.ReplaceKeyWith`/
+  `ReplaceKeyPrefixWith`) and bucket **policy** (`arn:aws:s3:::bucket/prefix*`)
+  carry object keys in their bodies and are missing from it. `PutBucketPolicy`
+  (`bucket/policy.go:56,:111`) and `PutBucketLogging` (`bucket/logging.go:99,:120`)
+  are **live write paths** that forward a client document verbatim. With names on,
+  a bucket policy scoped to `arn:aws:s3:::b/backups/*` silently matches nothing.
+- **`DeleteObjects` is a page-scale operation hiding in the object handler**: up to
+  1000 keys forward (`object/operations.go:27-28,:736-746`), with
+  `Deleted[].Key`, `Errors[].Key` **and `Errors[].Message`** echoed back
+  (`:802-820`). `Errors[].Message` is a second, unguarded channel for a stored key
+  to reach the client.
+- **ADR 0023 contradicts itself.** D11 requires an undecryptable key to be "logged
+  at warn level"; D17 says "a stored key appears in logs only at debug". Both are
+  in the accepted ADR, on the one decision whose purpose is to stop the proxy
+  writing the mapping table D3 refuses to store. See decision **D-M**.
 
 ---
 
-## Lookups that must survive
+## The gate: what is cleared and what is not
 
-Checked against the two clients the e2e exercises, Velero and kopia (their
-listing shapes are read from their code, not yet captured — Stage 0 item 2);
-every S3 client is in scope, and a lookup shape another client adds is a new
-row. Every row is a hard constraint on
-the transform.
+ADR 0023's *Residual risks* names cross-directory listing **order** as "the gate,
+and it is UNVERIFIED". **That is the wrong half, and it is now cleared.** The
+gate that survives is D9.
 
-| Lookup | Who needs it | What the transform must preserve |
+**Order — CLEARED for every named client.** None of them trusts backend order:
+
+| Client | Evidence |
+|---|---|
+| Velero | `velero-plugin-for-aws` `object_store.go:504-507` re-sorts its own results, with a comment naming the bug that forced it |
+| rclone | `fs/list/list.go:210`, `sort.Stable(entries)` |
+| kopia | `repo/blob/storage.go:195-2xx` — lists inside one directory |
+| s3cmd | builds its own comparison lists |
+
+**The partial-directory prefix — BLOCKED, and the trigger has fired.** ADR 0023
+D9 returns an **empty listing** for a prefix ending inside a directory segment,
+and defers the fan-out fallback to "only if a client in use turns out to emit
+that shape". A client in use emits it on its most ordinary invocation:
+
+> `s3cmd` v2.4.0 (`s3cmd:1979-1983`) joins `basename(source)` onto the
+> destination **without a trailing slash** and lists that prefix at `:1987`.
+> `S3/FileLists.py:421-442` documents partial-prefix listing as intended
+> behaviour.
+
+So `s3cmd sync /local/dir s3://b/backups/` sees an empty remote, re-uploads the
+whole tree, and **never converges** — silent and unbounded. `s3cmd` has a
+release-gating e2e suite in this repository (ADR 0019). The same shape is what a
+human types: `aws s3 ls s3://bucket/back`.
+
+This is not a documentation matter. ADR 0007 D1 forbids answering a request the
+proxy understood with a silent partial answer, and ADR 0010 D7 forbids it for
+`prefix` specifically. D9 as written is a standing violation of both.
+
+---
+
+## What the feature is actually worth
+
+ADR 0023's *Context* builds the case on three Velero nouns. **The leaf census
+refutes two of them** — derived from `velero pkg/persistence/object_store_layout.go:72-138`
+at tag v1.18.2, the version the e2e pins:
+
+- **11 of 12 backup leaf shapes** embed the backup name (only `velero-backup.json`
+  does not). **5 of 5 restore leaf shapes** embed it.
+- A **scheduled** backup is named `<schedule>-<YYYYMMDDHHMMSS>`
+  (`pkg/apis/velero/v1/schedule_types.go:139-141`), so schedule identity and exact
+  backup cadence stay readable from key names alone. A default-named restore is
+  `<source-backup>-<YYYYMMDDHHMMSS>`.
+
+So in `backups/` and `restores/` the feature removes **one occurrence of a string
+that eleven sibling leaves still print**. It is worth zero there.
+
+**What it does hide, and this is the honest product claim:**
+
+| Hidden | Where |
+|---|---|
+| The tenant/namespace inventory | `kopia/<namespace>/` and legacy `restic/<namespace>/` — kopia's leaves are 16 random bytes plus a session id, and keyed content hashes (`kopia repo/content/content_manager.go:762-780`), so the namespace is the only noun there |
+| The operator-chosen BackupStorageLocation prefix | when one is configured |
+| The CNPG/Barman server name | `<server>/base/<id>/`, `<server>/wals/<hash>/` — the clean case: every identifying noun is a directory, every leaf is a constant, an OID or a WAL name |
+
+**And part of even that is given back through side channels the ADR does not name:**
+
+- `E(kopia)`, `E(backups)`, `E(restores)` are **per-deployment constants** — D4
+  puts an empty parent chain at depth 1, so the top-level directory set is a fixed
+  fingerprint of "this is a Velero bucket".
+- `kopia.repository`, `kopia.blobcfg`, `kopia.maintenance` are **constant literal
+  leaves** (`kopia repo/format/format_blob.go:31`, `blobcfg_blob.go:16`,
+  `repo/maintenance/maintenance_schedule.go:22`).
+- The deterministic directory ciphertext is a **stable pseudonym** joining each
+  hidden namespace to the cleartext backup names, write times and byte volumes in
+  the sibling subtree. Whether that recovers the namespace *name* depends on the
+  operator's naming convention.
+- **base64url-without-padding length is a bijection on plaintext length**:
+  `L = ceil(4*(16+n)/3)`, and `L mod 4 ∈ {0,2,3}` determines `(16+n) mod 3`
+  uniquely, so `n` is exactly recoverable. Every hidden name discloses its exact
+  byte length.
+
+The claim the README may make is **"the namespace inventory is hidden from an
+adversary who does not correlate against the cleartext half of the same bucket"**
+— never "backup names are hidden", and never "the bucket's contents are hidden".
+ADR 0023's *Context* must be amended to match.
+
+---
+
+## Decisions
+
+Ordered by how much they change the work. **D-A through D-D expire at the first
+written object** — changing any of them afterwards is a full bucket rename
+(D15). They are the cheapest decisions in the project and the ones most likely to
+be skipped.
+
+### D-A — The cryptographic primitive (blocks everything)
+
+`tink` and `golang.org/x/crypto` are both out of `go.mod`; Go 1.27.1 has no CMAC
+and no SIV. Measured on Apple M5 Pro, go1.27.1, per segment:
+
+| Option | Perf | Verdict |
 |---|---|---|
-| Exact key on GET, HEAD, DELETE, PUT | all clients | A one-to-one, deterministic, stateless map from client key to stored key, computable without asking the backend anything |
-| Prefix listing where the prefix ends **inside the leaf name** | kopia lists `p`, `q`, `x`, `xn`, `_log`, `kopia.` under its directory; `ListBlobs` builds `Prefix: s.Prefix + prefix` ([kopia s3_storage.go](https://github.com/kopia/kopia/blob/master/repo/blob/s3/s3_storage.go)) | A partial leaf must survive verbatim into the backend prefix |
-| Delimiter listing | Velero `ListCommonPrefixes` with `/` | `/` must remain a separator in the stored key, and `CommonPrefixes` must map back |
-| Key order with `StartAfter`/`marker` and continuation | unknown — **UNVERIFIED**, Stage 0 item 1 | Order within a directory; cross-directory order is *not* preserved (see Risks) |
+| **Hand-rolled RFC 5297 AES-SIV-CMAC** over `crypto/aes`, subkeys precomputed at construction | 229 ns @depth2, 403 ns @depth3, **1 alloc** | ~200 lines of subtle crypto to own forever (CMAC subkeys, GF(2^128) doubling, S2V, xorend). **Gated by published vectors** — RFC 5297 A.1/A.2 plus Wycheproof |
+| **`tink-crypto/tink-go/v2` v2.8.0** | 277 ns, 7 allocs | Maintained, reviewed, an auditor accepts it on sight. Re-adds a 4.56 MB module **and `golang.org/x/crypto`** — the exact dependency `60df187` deleted — plus protobuf, go-cmp, wycheproof, for one 175-line need |
+| **Stdlib SIV composition** — `IV = HMAC-SHA256(K_mac, injective_encoding)[:16]`, `AES-CTR(K_enc, IV)` | 179 ns pooled / 308 ns concurrency-safe, 4 allocs | ~60 lines, zero deps, a sound instantiation of the same Rogaway–Shrimpton theorem. **No published vectors** — the review burden of hand-rolling with none of the verifiability |
+| `secure-io/siv-go`, `jacobsa/crypto/siv` | — | Disqualified: neither has a tagged release; newest artifacts are 2018/2019 pseudo-versions |
+| AES-GCM-SIV with an all-zero nonce | — | No quality Go implementation without a dependency; "nonce = zeros" in the source is a misuse magnet |
+
+**Favourite: hand-rolled RFC 5297, in `internal/naming/`.** The performance gap is
+immaterial — 404 ns against ~850 ns on a request that costs ~1920 µs — and must
+not carry the decision. What carries it is **verifiability**: a seal/open round
+trip agrees with itself under a wrong construction exactly as under a right one,
+which is why `segmented_gcm_vector_test.go` exists and says so in its header.
+RFC 5297 publishes vectors covering the 512-bit configuration; the stdlib
+composition has none.
+
+**Dissent, and it is real:** this project's own instinct is not to hand-roll
+crypto, and 200 lines of GF(2^128) doubling in a security product is exactly the
+code that gets one subtle thing wrong for years. A from-scratch version written
+during this analysis had a real bug. If the project will not own crypto, take
+`tink-go/v2`, accept the `x/crypto` re-entry and add a Renovate exception. **Reject
+the stdlib composition either way** — it is the worst of both.
+
+**Key shape:** amend D6. Use a **32-byte master with HKDF-derived subkeys**
+(`prk = HKDF-Extract(SHA-256, K_name)`, `K_mac`/`K_enc` via `HKDF-Expand` with
+distinct info labels) rather than a configured 64-byte value. The `64` in D6 is a
+fact about a library the repo no longer contains; derivation makes key
+independence **structural** instead of something a reviewer verifies.
+
+### D-B — Is a name domain bound into the associated data?
+
+Irreversible. ADR 0023 D4 deliberately leaves the bucket out so a ciphertext
+bucket replicates wholesale.
+
+- **Bucket out (D4 as written)** — free DR replication; names in bucket A and B are
+  the same ciphertext, and a future per-client bucket-scoped authorization model
+  cannot be adopted without renaming everything.
+- **Bucket always in** — closes the oracle; a DR copy to a differently-named bucket
+  needs a full rename pass.
+- **`filename_encryption.domain`**, a string in the AAD beside the version label,
+  **defaulting to the bucket name**; an operator who wants wholesale replication
+  pins it to a constant.
+
+**Favourite: the configured domain, defaulting to the bucket name.** State the
+real reason and not the one ADR 0023 gives: D4's parent-ciphertext chain
+**already** confines a *prefix*-scoped tenant — a client scoped to `tenantA/` can
+only cause writes under parent chain `E(tenantA)`, so it never learns `tenantB`'s
+depth-0 ciphertext. The domain exists to extend that confinement to **bucket**-scoped
+tenancy. ADR 0023 files this as "fix it if per-client scoping is ever
+introduced", which reads as something a later ticket picks up. It is not: the knob
+costs one config key now and is unavailable later.
+
+**Dissent:** a configuration key added for a threat model nobody has asked for, in
+a project that refuses configuration keys on principle (ADR 0013, ADR 0017 D8).
+
+### D-C — AAD framing (not really a choice)
+
+The AAD must be **injective**. Length-prefix every variable field, length first,
+with a **fixed-width** depth field — never `uint8`, which wraps silently at depth
+256. A collision in the PRF input means two different `(AAD, segment)` pairs get
+the same synthetic IV, which reuses the CTR keystream across them. ADR 0023's
+sketch (`"s3ep-name-v1" || 0x00 || uint8(i) || 0x00 || parent chain`) uses `0x00`
+separators over data that can contain `0x00`. **Fix it in D4 before any code.**
+
+### D-D — Segment-length padding
+
+Genuinely open; the three analysis lenses split three ways.
+
+- **Accept and document** — zero cost, consistent with ADR 0023 already accepting
+  sizes, counts and timestamps as visible.
+- **Pad to a multiple of 16 before encryption**, length byte inside — turns "exactly
+  19 bytes" into "between 17 and 32", at ≤21 extra base64 characters per segment.
+
+**Favourite: pad.** The usual counter — "it spends the 1024-byte budget D13
+already rations" — is strongest exactly where the feature is worth nothing and
+weakest exactly where it is worth most. The deep trees that strain the limit are
+the `backups/<name>/` shapes whose plaintext eleven sibling leaves already print;
+the shallow ones — `kopia/<namespace>/` at depth 2, Barman `<server>/` at depth 1
+— are the whole case for the feature and have budget to spare. And unlike object
+size, hiding a *name's* length costs no cover traffic: the name is already being
+encrypted. If padding is declined, scope it by depth rather than declining it
+outright, and **write the decision into D5** rather than leaving it an omission.
+
+**Dissent:** exact name length is the same family as object size and count, which
+the ADR already concedes; this adds a format complication for a marginal gain.
+
+### D-E — Where the transform is installed, and by what mechanism
+
+| Option | Missed-site failure is… |
+|---|---|
+| Embed `interfaces.S3BackendInterface`, override ~21 methods (the old plan) | **Silent.** A method the interface gains later is promoted from the embedded value and forwarded untransformed. The interface gained and lost 24 methods across five commits in one week |
+| **Explicit forwarder**: named `inner` field, all 52 methods implemented — 31 pure forwarders, 21 transforming | **A build error.** A 53rd method does not compile until someone classifies it |
+| SDK `Initialize`-step middleware via `backendClientOptions` | **A runtime error.** `InitializeInput.Parameters` is `interface{}`, so the overrides become a type switch with no exhaustiveness |
+
+**Favourite: the explicit forwarder**, wrapped at `internal/proxy/server.go:112`,
+field type at `:28` changed to the interface, **and the abandoner closure pointed
+at the wrapped value**. Compile-time exhaustiveness is the property D8 is actually
+buying, and only this option delivers it. The wire point is not negotiable —
+see the sweeper row in *Ground truth*.
+
+**Plus a field-level audit test, not a method-level one** (`WebsiteRedirectLocation`),
+**plus a second hand-maintained list** of key-bearing operations with no interface
+method (`ListObjectVersions`, `CopyObject`, `UploadPartCopy`), each with its reason.
+
+**Dissent:** ~200 lines of mechanical forwarding to review and keep, justified by a
+hypothetical 53rd method. If that is judged too much, take the middleware — it at
+least covers the abandoner by construction, which embedding does not.
+
+### D-F — What the proxy answers for a partial-directory prefix
+
+The feature's actual gate (see above). The failure is not a blank listing; it is
+`s3cmd sync` re-uploading a whole tree forever.
+
+- **D9 as written** — zero code, zero round trips, and a silent partial answer that
+  ADR 0007 D1 and ADR 0010 D7 both forbid by name.
+- **Refuse every prefix not ending at a segment boundary** — honest, one line, and
+  it refuses kopia's shape too (`kopia/<ns>/p` has the same trailing partial
+  component), which is the one shape the segments-only design exists to preserve.
+  Unusable as a blanket rule.
+- **Structural probe**: when the trailing component is partial, list the translated
+  parent with `Delimiter: "/"` and a small `MaxKeys`, decrypt the returned
+  `CommonPrefixes` — that is the subdirectory set — and answer from it; refuse the
+  ambiguous arm; fall back to D9 only if the discovery page truncates.
+
+**Favourite: the structural probe, refusing in the ambiguous arm for v1; fan-out
+deferred. Rewrite D9 to say so.** ADR 0023's premise — "the proxy cannot
+distinguish that case from a root-level partial leaf" — is **false**: a delimiter
+listing bounded by a small `MaxKeys` returns the subdirectory set in one small
+request. Once you *can* tell the two apart, the empty answer stops being an
+unavoidable limitation and becomes a choice to lie, which ADR 0007 D1 does not
+leave open.
+
+**Dissent:** one extra round trip on the hot path of a client that lists
+constantly, for a case that client never hits, in a project whose CLAUDE.md says
+to stop and report an underperforming implementation. And a refusal, however
+honest, is still a broken `aws s3 ls` for a human at a terminal.
+
+**Related, and cheap: a reserved leading marker character** (`!`, outside the
+base64url alphabet) on every stored **directory** segment. It does not make the
+probe possible — bounding `MaxKeys` does that — but it earns its place on
+**detectability**, which is D-J. Decide it there, not here.
+
+### D-G — The listing override's contract
+
+Four separate silent failures in two methods; three are invisible to
+`make test-unit`. Decide them together:
+
+1. **Encoding** — decode → transform → re-encode **inside the wrapper**,
+   **per operation and per direction**, derived from `params.EncodingType` on the
+   input rather than hardcoded. `ListObjectsV2`/`ListObjects` are raw down and
+   percent-encoded up; `ListMultipartUploads` is raw both ways; everything else is
+   raw. One symmetric helper corrupts a client prefix of `a+b` into `a b`.
+   Measured ~139 µs per 1000-key page for the escape passes, against 26 µs for the
+   memoized transform.
+2. **Always `QueryUnescape` first, split on `/` second.** Whether the backend
+   escapes the separator as `%2F` is **UNVERIFIED** (Stage 0), and this ordering is
+   correct either way. Do not write the assumption into any ADR.
+3. **Recompute `KeyCount` after D11 drops.** Leave `IsTruncated` honest.
+4. **A drop never removes the last entry of a truncated page** — otherwise V1 and
+   `start-after` clients loop on the same page forever.
+
+**Rejected:** moving the transform above `decodeBackendValue` into the handler —
+it breaks D8 outright and makes the listing the one place the boundary is not the
+boundary. **Rejected:** dropping `encoding-type` when the feature is on — it
+contradicts ADR 0010 D9, and the leaf still carries arbitrary client bytes.
+
+### D-H — The exit path: ADR 0023 D7 versus ADR 0025
+
+Two **accepted** ADRs make incompatible promises to the same operator, and
+ADR 0023 was revised on 2026-09-12 — *after* ADR 0025 — without reconciling them.
+Nothing technical enforces D7: every configured provider is registered by
+fingerprint regardless of which is active (`providers.go:102-157`), and the
+licence gate inspects only the **active** provider. **D7's exit clause is a policy
+choice presented as a safety refusal.**
+
+- **Keep D7, ship the reverse rename pass** as a **launch requirement** — one
+  namespace at all times, no dual-namespace merge, no rollback oracle.
+- **Drop D7's exit clause**: names stay mapped under `exit`, payloads stop being
+  encrypted — but then the bucket is *permanently* unnavigable without the proxy,
+  which voids ADR 0025's promise outright.
+- **Asymmetric mapping under exit**: writes store the clear name, reads resolve
+  both. The only shape that truly lets names age out — and a prefixed listing in
+  the mixed state needs two backend listings merged behind one opaque continuation
+  token, which cannot be done honestly.
+
+**Favourite: keep D7, make `names unmap` a launch requirement, exempt
+`names map`/`unmap`/`verify` from the licence gate — and amend ADR 0025 with an
+explicit carve-out rather than claiming the pass restores its guarantee.** Names,
+unlike payloads, are *how you address an object*, so they cannot age out unless
+the write path stops mapping them. But be honest about what the pass is: ADR 0025
+promises that leaving needs no batch operation, no tool and no licence, and a
+reverse pass needs all three — plus a bucket-sized copy-then-delete that object
+lock refuses on exactly the buckets SECURITY_ARCHITECTURE recommends object lock
+for. **The pass is the mitigation, not the resolution.** Say both.
+
+The licence lever is `internal/config/config.go:695`, the binding license-file
+read inside `validate` — not the provider-type check at `:719`, which an
+exit-active deployment already passes. A narrow loader for `names map`/`unmap`
+must bypass `:695`.
+
+### D-I — Migration mechanics
+
+**D14's one sentence is wrong in every clause:**
+
+- The product writes objects up to **117 GiB** through the internal producer at
+  default settings and **5 TiB** client-driven (`docs/developer/multipart.md:43-44`),
+  far past S3's **5 GiB** single-copy limit. The large half of a backup bucket needs
+  `UploadPartCopy`.
+- **A multipart copy inherits nothing**, so the four `s3ep-*` metadata keys must be
+  re-supplied by hand (`internal/orchestration/metadata.go:114-117`). Losing the
+  wrapped DEK is **unrecoverable**, and every generic copy tool — `aws s3 cp`
+  switches to multipart above 8 MB — loses it silently on exactly those objects.
+- An object under **retention or legal hold** cannot have its source deleted.
+- The pass changes the **entity tag class** of every object above the copy
+  threshold, from the marked-digest shape to `<hex>-N` (ADR 0032 D1/D2; `etag.Mark`
+  leaves the multipart shape alone). ADR 0032 D8 exists because clients act on that
+  shape. Record it as an operator-visible effect, and make the feature-on client
+  e2e observe whether a supported client re-syncs afterwards.
+
+**Favourite: offline, into a second bucket** where the source is versioned or
+locked, otherwise in place. **Refuse read-compatibility mode explicitly in the
+ADR** — and lead with the right reason: with a 404 fallback there is **no
+observable difference between a finished migration and an unfinished one**, so the
+completeness tool the operator needs cannot exist. (It also dies on pagination,
+and hands the hostile backend a rollback lever, but those are secondary.)
+
+Pre-flight **refuses the whole migration by default** when it finds a locked, held
+or archived object, or a transformed key over 1024 bytes, with `--allow-partial`
+available and a report naming every skipped object. Separate `--apply` from the
+dry run.
+
+`names` surface: `wrap`, `map`, `unmap`, **`migrate`**, **`verify`** (proves a
+bucket is fully migrated), **`audit`** (lists undecryptable keys).
+
+### D-J — Name-key identity, and the off-state
+
+**Nothing in the design can tell four states apart**, and all four present
+identically as a quietly smaller bucket: right key; valid-but-wrong key;
+interrupted name-key rotation (D15); half-migrated bucket (D14). D11's
+load-bearing sentence — *"dropped means exactly 'not written by this proxy'"* —
+is **false in three of them**.
+
+The product already has the convention: every object records `kek-fingerprint`
+(`internal/orchestration/metadata.go:116`) precisely so a wrong or retired key is a
+**named** failure (`providers.go:52`, `ErrUnknownFingerprint`). Nothing analogous
+exists for the name key; D7 checks only that the unwrap succeeds.
+
+**And the reverse regression nobody had analysed:** the feature switched **off** on
+a bucket whose names are already mapped — one dropped Helm values block away. It
+starts cleanly, hands the client **ciphertext names behind a 200**, and 404s every
+exact GET. A backup client's remedy for objects it can see but not fetch is to
+write them again under clear names. This falsifies D1's sentence "when it is off
+the proxy behaves exactly as it does today", which is true only for a bucket that
+never had it on.
+
+Options: a fifth metadata key (a head-on collision with ADR 0009's "exactly four"
+— an ADR 0009 amendment, not a detail); the **reserved marker character** of D-F
+(detectability, not identity); a **fingerprint folded into the AAD domain** of D-B
+(identity, at the cost of making a wrong key indistinguishable from a forged name).
+
+**Favourite: the marker plus a fingerprint in the domain.** The marker makes the
+off-state detectable at the first listing — which is the cheapest fix for the worst
+operational accident — and the domain carries identity. Minimum acceptable: a
+startup or first-listing check that refuses, or loudly warns, when the feature is
+off and the bucket's names carry the marker.
+
+### D-K — Memoisation
+
+- **Per-request map** keyed on the whole ciphertext directory prefix, built in the
+  response builder and discarded with the response: **26 µs** for a 1000-key page
+  against 424 µs uncached — **16.1×**. One lookup per key, no lock, no eviction
+  policy, no tuning. Gives up cross-request reuse, measured at ~1.2 µs per page.
+- **The process-wide LRU ADR 0023 sketches**: three lookups per key, a lock on every
+  listing/delete-batch/multipart-list, a size and an eviction policy to tune — and
+  it holds **decrypted directory names in the heap indefinitely**, which is exactly
+  the data this feature exists to keep out of the adversary's hands.
+
+**Favourite: the per-request map, at all three page-scale sites (`ListObjectsV2`,
+`ListObjects`, `DeleteObjects`, `ListMultipartUploads`). Do not build the LRU.**
+The security argument settles it independently of the numbers.
+
+**Dissent:** a process-wide LRU already exists holding something strictly more
+sensitive — 1024 decrypted DEKs, keyed on `(fingerprint, objectKey, hash)`
+(`providers.go:345-390`) — so the heap-hygiene argument has been conceded once
+already.
+
+Note: **the crypto is not the listing's cost.** It is 0.02 % of a request; the
+feature's real listing cost is the **longer document**, ~10× the uncached transform
+and ~100× the memoized one, and no cache removes it. That belongs in the ADR's
+Consequences and in the README.
+
+### D-L — The refusal surface
+
+- **Delimiter (D10)**: refuse anything but `/` or empty in `handleListObjects`
+  (`bucket/listing.go:16`) **before** the V1/V2 split, plus
+  `multipart/list.go:214`. D8's invariant is about *keys* — "no request handler
+  ever sees a stored key" — not about a handler knowing a flag exists, so the
+  handler placement is not the violation it looks like.
+- **Over-long key (D13)**: `400` at the refusal site. **`KeyTooLongError` is
+  asserted from memory** — `git grep KeyTooLong` returns nothing. Verify it against
+  the AWS S3 error reference before it enters an ADR; if it is not real, the answer
+  is `400 InvalidArgument`.
+- **Prefix-in-body writes**: refuse `PutBucketPolicy` carrying an object-scoped
+  `arn:aws:s3:::<bucket>/…` resource (`400 InvalidArgument` naming the field);
+  **forward** `PutBucketLogging`'s `TargetPrefix` — the two are not analogous, and
+  treating them as one is the mistake: a delimiter is evaluated against keys the
+  proxy wrote, `TargetPrefix` names keys the proxy never sees. Either refuse only a
+  `TargetPrefix` containing `/`, or document that logs under a slashed prefix are
+  invisible to listings through the proxy.
+- **Extend D18's allowlist** with bucket **website** and bucket **policy** on the
+  read side.
+
+**Dissent on the policy refusal:** a substring guard over IAM policy JSON is a
+heuristic in a security product — a false negative ships the silent breakage
+anyway, a false positive refuses a legitimate policy.
+
+### D-M — Resolve the D11 / D17 contradiction in the ADR
+
+**Favourite:** the warn line **may name the stored value**, and D17 gains that
+carve-out in writing — a name this proxy did not produce cannot be half of a
+mapping pair. Note the alternative's consequence: read D17 strictly and D11's warn
+log can carry no name at all, which makes it a duplicate of the metric D11 already
+mandates — in which case **drop one of the two obligations** rather than
+implementing both.
+
+### D-N — Release label
+
+**Favourite: minor, no `release:major` label.** Argue it from ADR 0018 D5 as a
+per-change test, not a per-deployment one: an upgrade of a deployment that never
+enabled the feature breaks nothing. But **do not lean on D1's "off behaves exactly
+as today"** — D-J shows that is a per-bucket property, not a per-change one.
+
+The signal problem is real and it is a **documentation** gap the project owes
+anyway: the strings "back up", "backed up" and "escrow" appear **nowhere** in
+`README.md` or `SECURITY_ARCHITECTURE.md` today. The sentence a new key-custody
+section has to carry: *losing the KEK under `exit` still yields readable objects;
+losing the name key yields readable objects nobody can address.*
 
 ---
 
-## Alternatives rejected, and why
+## Stage 0 — before a line of code
 
-| Alternative | Why not |
-|---|---|
-| **Full per-segment deterministic encryption** (the rclone crypt model: every segment, leaf included) | Keeps exact lookup and delimiter listing, but breaks the partial-leaf prefix listing kopia relies on — an encrypted leaf has no usable prefix, so `Prefix: "…/p"` matches nothing and every kopia repository open fails. Also changes lexicographic order within a directory. |
-| **Prefix-preserving or order-preserving encryption** | Preserves exactly what it is supposed to hide. There is no security argument for it against an adversary who holds the whole bucket and can compare across time. |
-| **A mapping index stored in the bucket** | Every lookup then depends on an object the hostile backend can withhold, roll back to an older version, or serve selectively. It fails the reliability condition and hands the adversary a denial-of-service and a rollback oracle in one object. |
-| **Encrypting the leaf but keeping a searchable prefix token** | Reintroduces the index, or leaks the prefix it makes searchable. |
+Nothing below is optional, and all of it is cheap relative to the decisions it
+informs.
 
-**Decided form:** encrypt only the directory segments, leave the leaf clear;
-deterministic, wide-block, keyed per proxy. kopia's prefix becomes
-`<encrypted dirs>/<clear leaf prefix>`, Velero's common prefixes decrypt back,
-exact keys map one to one, and order within a directory is untouched.
+- [ ] **Obtain a licence token out of band** (`S3EP_LICENSE_TOKEN` or
+      `config/license.jwt`). `make e2e-up` aborts without one, and it is the
+      precondition of the census below. Not in the repository.
+- [ ] **Run the Velero leaf census against a real bucket.** ADR 0023 made it a
+      precondition and it has never been run. `make e2e-up && make test-e2e-velero`,
+      then dump the full backend listing. **The suite names every backup and restore
+      explicitly and never creates a Schedule**, so add one Schedule-created backup
+      and one default-named restore by hand — those are the two worst real-world leaf
+      shapes and the suite as-is under-reports them.
+- [ ] **Settle the `/` escaping question.** One raw request at the backend, not
+      through the proxy: `./start-demo.sh`, PUT a directory-bearing key through the
+      proxy, then
+      `curl -s --aws-sigv4 … 'http://localhost:9000/<bucket>?list-type=2&encoding-type=url'`
+      and read the XML. Repeat directly against LocalStack. **Not** via
+      `make test-conformance` — that target drives the suite through the proxy and
+      never exposes the backend's raw XML.
+- [ ] **Record the listing shapes every supported client emits.** A one-line shape
+      log at `bucket/listing.go:16` and `multipart/list.go` (bucket, list-type,
+      prefix, delimiter, marker, start-after, token-present, max-keys, encoding-type),
+      then one rclone run and one s3cmd run (5 s and 8 s warm) and one Velero run.
+      The specific question left open: **does any client synthesise a marker it did
+      not receive, rather than echoing one?**
+- [ ] **Build the listing performance instrument and record its BEFORE column on the
+      pre-change commit** (ADR 0020 D17). `test/perf/` has no listing instrument at
+      all. A benchmark written by someone who already knows what the change costs is
+      a different instrument from one written blind.
+- [ ] **Verify `KeyTooLongError`** against the AWS S3 error reference (D-L).
+- [ ] **Take D-A through D-D and D-J**, and write them into ADR 0023 **in the same
+      session** — not back-filled from the code.
+- [ ] **Answer the business question in D-H**: is name mapping a licensed
+      capability, and may `names map`/`unmap`/`verify` run without a valid licence?
 
-**Residual leak, stated plainly:** leaf names, sizes, counts, timing. See Risks
-for what "leaf names" costs specifically in the Velero layout — it is more than
-the findings doc assumed, and Stage 0 item 3 measures it.
+**Fix regardless of the build decision** — these are live defects this analysis
+surfaced:
 
----
-
-## Construction
-
-### The name key
-
-One 64-byte key, `K_name`, per proxy deployment. It is **not** derived from the
-KEK. That is deliberate:
-
-- Rotating the active provider — which is a KEK change — is a supported
-  operation (e2e scenario V9, `TestV9_ProviderRotation`,
-  [scenarios_lifecycle_test.go:165](../../test/e2e/velero/scenarios_lifecycle_test.go#L165)).
-  A name key derived from KEK material would rename every object in the bucket
-  the moment the KEK changes, which turns a metadata-only rotation into a full
-  bucket rewrite.
-- Two of three KEK providers cannot produce raw key material at all: RSA has a
-  key pair, Tink/KMS has a handle. There is no `ikm` to run HKDF over.
-
-Instead the name key is wrapped by the active KEK, exactly like an object DEK:
-
-```yaml
-encryption:
-  filename_encryption:
-    enabled: true                       # default false
-    wrapped_key: "base64(KEK-wrapped 64 bytes)"
-    kek_fingerprint: "<fingerprint of the KEK that wrapped it>"
-```
-
-At startup the proxy resolves the provider by fingerprint
-([providers.go:305](../../internal/orchestration/providers.go#L305)), unwraps once
-via `KeyEncryptor.DecryptDEK`
-([interfaces.go:16](../../pkg/encryption/interfaces.go#L16)), and holds the key for
-the process lifetime. Startup **fails** when: the fingerprint names no configured
-provider, the unwrap fails, or `enabled: true` is combined with the `none`
-provider. No lazy unwrap on the request path, and no silent fall back to
-cleartext names — a proxy that cannot decrypt names cannot serve the bucket at
-all, and saying so at startup is the only honest failure mode.
-
-Rotating the KEK re-wraps the same `K_name` under the new KEK and changes nothing
-in the bucket.
-
-### The per-segment transform
-
-`AES-SIV-CMAC` (RFC 5297) with a 512-bit key, from
-`github.com/google/tink/go/daead/subtle` — **already a dependency**
-(`github.com/google/tink/go v1.7.0` in [go.mod](../../go.mod), used by the Tink KEK
-provider). `NewAESSIV` requires exactly 64 bytes and the package documents why:
-a 128-bit MAC key is insufficient in the multi-user setting. The instance is
-constructed once and is safe to share — `EncryptDeterministically` and `s2v`
-allocate their working buffers locally and never mutate the receiver.
-
-For a key `d_1/d_2/…/d_n/leaf`:
-
-```
-stored_i = base64url_nopad( AES-SIV(K_name).EncryptDeterministically(d_i, AAD_i) )
-AAD_i    = "s3ep-name-v1" || 0x00 || uint8(i) || 0x00 || stored_1/…/stored_{i-1}
-stored   = stored_1/stored_2/…/stored_n/leaf
-```
-
-Properties this buys:
-
-- **Deterministic** — the same client key always yields the same stored key, so
-  exact GET/HEAD/DELETE/PUT need no state and no round trip.
-- **Wide-block in effect** — SIV is a deterministic AEAD, not a block-by-block
-  mode. One changed byte of a segment changes the whole output, and different
-  segments are computationally unlinkable. There is no partial match, no length
-  ladder beyond the length itself, and no chosen-prefix distinguisher.
-- **Authenticated** — a segment the backend forged does not decrypt. Injected
-  names are detectable, not confusable with real ones.
-- **Position-bound** — the AAD carries the depth and the *ciphertext* of the
-  parent chain, so a directory subtree the backend moves or duplicates fails to
-  decrypt in its new place. Using the ciphertext parent rather than the plaintext
-  parent means each segment is verifiable independently, without decrypting its
-  ancestors first — which is what a listing needs.
-- **The bucket is deliberately not in the AAD**, mirroring v2's reasoning: a
-  ciphertext bucket can be copied wholesale to another bucket or provider for
-  disaster recovery, names included, without a rename pass. The residual is in
-  Risks.
-
-**Encoding.** `base64.RawURLEncoding`: the alphabet is `[A-Za-z0-9_-]`, every
-character of which is in AWS's "safe characters" set, none of which is `/`, and
-none of which needs URL escaping in a key. Expansion is 16 bytes of SIV tag then
-4/3: a segment of `n` bytes becomes `ceil(4*(n+16)/3)` characters
-(`RawURLEncoding.EncodedLen`, no padding) — a 63-character Kubernetes namespace
-becomes 106. Base32 (rclone's choice, 60 % expansion) is the
-fallback **only** if a backend that folds key case ever has to be supported; S3
-keys are case-sensitive by specification and such a backend is already broken for
-ordinary keys.
-
-**Length guard.** S3 caps a key at 1024 bytes. The transform inflates only the
-directory part, so the effective limit on a client key is roughly
-`1024 - sum_i(ceil(4*(n_i+16)/3) - n_i)`. A PUT (or any exact-key operation)
-whose transformed key exceeds 1024 bytes is refused with a distinct, documented
-error rather than sent to the backend to fail obscurely.
-
-**Edge cases**, all decided by the same split rule — split on `/`, everything
-before the last `/` is a directory segment, the remainder is the leaf:
-
-| Client key | Stored key |
-|---|---|
-| `foo.txt` (no `/`) | `foo.txt` — unchanged, no directory segments exist |
-| `a/b/c.txt` | `E(a)/E(a,b)/c.txt` |
-| `a/b/` (directory marker) | `E(a)/E(a,b)/` — empty leaf, round-trips |
-| `a//b.txt` | `E(a)/E(a,"")/b.txt` — an empty segment encrypts to a 22-character token |
-
-### Cost per request
-
-- **Exact-key operations** (GET, HEAD, PUT, DELETE, every multipart call): one
-  AES-SIV per directory segment. The Velero layout, for example, is two or three
-  segments, and the cost is linear in depth. Each
-  is a CMAC over the 15-byte AAD header plus the parent ciphertext chain (nothing
-  for the first segment, ~100 bytes for the second) and a ≤64-byte segment, then a
-  short CTR pass — on the order of a microsecond in total, against a backend round
-  trip in the millisecond range. **Zero per-byte cost:** the transform never touches the
-  object payload, so upload and download throughput cannot move.
-- **Listings** pay one decrypt per returned key per directory segment: a
-  1000-key page at three segments is 3000 SIV operations. Tink's `ctrCrypt`
-  re-expands the AES key schedule on every call, so this is the one place the
-  cost is worth measuring rather than asserting. Where a listing page has **one**
-  distinct directory path — the Velero and kopia layouts do — a small bounded LRU
-  over `(parent ciphertext, segment)` collapses it to a handful of operations per
-  page; a client that spreads a page over many directories gains less.
-  The LRU is a work item **conditioned on the benchmark**, not built up front.
-- Startup: one KEK unwrap.
+- [ ] The abandoner's raw-client call at `internal/proxy/server.go:127-137`.
+- [ ] The three e2e assertions that would go **vacuously green** under the transform
+      rather than failing — including the Velero deletion gate. They must be repaired
+      **before** the transform lands, not after: a change to `test/e2e/harness/` is a
+      change to all three suites and needs a real Velero run (~45 min plus the
+      licence) before it lands.
 
 ---
 
-## Where a key crosses the proxy boundary
+## Staged plan
 
-Every site was read for this ticket. The point of the list is that it is long,
-which is the argument against transforming at the call sites.
+Ordering corrected against the analysis. **Chart and `envexpand` work comes before
+any feature-on e2e job; the D18 amendment comes before the audit test that is built
+against it; the performance instrument comes first of all.**
 
-**Where the clear key enters** (must stay clear — the SigV4 signature is computed
-over the client-visible path at
-[s3auth_robust.go:308](../../internal/proxy/middleware/s3auth_robust.go#L308) and
-[s3auth_presigned.go:189](../../internal/proxy/middleware/s3auth_presigned.go#L189),
-and the encryption manager binds it as AAD):
+| Stage | Goal | Exit criterion | Effort |
+|---|---|---|---|
+| **0** | The list above | Every decision written into ADR 0023; census recorded; BEFORE column on the pre-change commit | 3-5 d |
+| **1** | `internal/naming`: the transform, per D-A/D-B/D-C/D-D | RFC 5297 vectors green; round-trip, depth-move, bit-flip, length-guard and edge-case tests; benchmark recorded | 1 w |
+| **2** | Config block, startup unwrap, **Helm chart + `envexpand`**, `names wrap` | A feature-on proxy starts in the demo stack **and in kind**; wrapped key reaches the pod from a **Secret**, not a ConfigMap | 1 w |
+| **3** | D18 amendment, then the explicit forwarder + field-level audit test + the no-method list | A 53rd interface method fails the build; `WebsiteRedirectLocation` is covered; the sweeper test passes | 1 w |
+| **4** | Listings, `DeleteObjects`, `ListMultipartUploads`, the D-F probe, the D-L refusals, the D-K memo | Pagination over 2500 objects across three directories; `s3cmd sync` converges | 1.5 w |
+| **5** | `names map/unmap/migrate/verify/audit` — the copier | A bucket with an object above the copy threshold migrates with its four metadata keys intact and is provably complete | 2-3 w |
+| **6** | Tests: the feature-on integration package, the e2e repairs, the client suites' feature-on scenario | Nothing green that does not check something | 1.5-2 w |
+| **7** | README, `SECURITY_ARCHITECTURE.md` key-custody section, ADR amendments, and `docs/developer/` — **`package-map.md`, `request-paths.md`, `configuration.md`, `testing.md`, `errors.md`, `performance.md`** by name | | 0.5 w |
 
-- [object/handler.go:88-90](../../internal/proxy/handlers/object/handler.go#L88-L90),
-  and the five passthrough entry points at
-  [:132-171](../../internal/proxy/handlers/object/handler.go#L132-L171)
-- [multipart/create.go:50-52](../../internal/proxy/handlers/multipart/create.go#L50-L52),
-  [multipart/upload.go:51-53](../../internal/proxy/handlers/multipart/upload.go#L51-L53),
-  [multipart/complete.go:66-68](../../internal/proxy/handlers/multipart/complete.go#L66-L68),
-  [multipart/abort.go:48-50](../../internal/proxy/handlers/multipart/abort.go#L48-L50),
-  [multipart/list.go:42-44](../../internal/proxy/handlers/multipart/list.go#L42-L44)
-- [object/acl.go:41-43](../../internal/proxy/handlers/object/acl.go#L41-L43),
-  [object/tagging.go:41-43](../../internal/proxy/handlers/object/tagging.go#L41-L43)
-- [handleDeleteObjects](../../internal/proxy/handlers/object/operations.go#L841-L866):
-  keys arrive in the XML body, not the path
+**Effort: 8-10 focused weeks for one person, and that is the floor.** The old
+stage list implied 3-4. The distribution is the surprise: the transform is ~1 week
+and the boundary ~1, but **the copier is 2-3 and the tests are 1.5-2** — and the
+copier is a second S3 write path inside the binary, using the backend credential,
+bypassing every proxy invariant (no SigV4 client auth, no request parser, no
+checksum verifier, no drain guard) with delete rights on the whole bucket. That is
+a materially new attack surface, and the feature's entire migration story rests on
+it. Keeping D7 makes it a **launch** requirement, not follow-on work.
 
-**Where a key leaves for the backend** (must be transformed — 25 sites):
+### The test matrix
 
-| Site | Operation |
-|---|---|
-| [operations.go:41](../../internal/proxy/handlers/object/operations.go#L41) | GetObject |
-| [range.go:124](../../internal/proxy/handlers/object/range.go#L124), [range.go:203](../../internal/proxy/handlers/object/range.go#L203) | ranged GetObject, whole-object fallback |
-| [operations.go:566](../../internal/proxy/handlers/object/operations.go#L566), [:658](../../internal/proxy/handlers/object/operations.go#L658) | PutObject, direct and streaming |
-| [operations.go:741](../../internal/proxy/handlers/object/operations.go#L741) | DeleteObject |
-| [operations.go:762](../../internal/proxy/handlers/object/operations.go#L762) | HeadObject |
-| [operations.go:866](../../internal/proxy/handlers/object/operations.go#L866) | DeleteObjects, per object in the body |
-| [operations.go:992](../../internal/proxy/handlers/object/operations.go#L992), [:1015](../../internal/proxy/handlers/object/operations.go#L1015) | Get/PutObjectLegalHold |
-| [operations.go:1047](../../internal/proxy/handlers/object/operations.go#L1047), [:1070](../../internal/proxy/handlers/object/operations.go#L1070) | Get/PutObjectRetention |
-| [operations.go:1100](../../internal/proxy/handlers/object/operations.go#L1100) | GetObjectTorrent |
-| [operations.go:1147](../../internal/proxy/handlers/object/operations.go#L1147) | SelectObjectContent |
-| [operations.go:1226](../../internal/proxy/handlers/object/operations.go#L1226), [:1254](../../internal/proxy/handlers/object/operations.go#L1254), [:1314](../../internal/proxy/handlers/object/operations.go#L1314), [:1474](../../internal/proxy/handlers/object/operations.go#L1474) | auto-multipart: Create, Abort, UploadPart, Complete |
-| [operations.go:1507](../../internal/proxy/handlers/object/operations.go#L1507) | the post-Complete self-copy — **deleted by v2**, listed so its absence is confirmed, not assumed |
-| [create.go:63](../../internal/proxy/handlers/multipart/create.go#L63), [:111](../../internal/proxy/handlers/multipart/create.go#L111) | CreateMultipartUpload, and the abort on init failure |
-| [upload.go:227](../../internal/proxy/handlers/multipart/upload.go#L227) | UploadPart |
-| [complete.go:196](../../internal/proxy/handlers/multipart/complete.go#L196), [:225](../../internal/proxy/handlers/multipart/complete.go#L225) | CompleteMultipartUpload, self-copy (**deleted by v2**) |
-| [abort.go:73](../../internal/proxy/handlers/multipart/abort.go#L73) | AbortMultipartUpload |
-| object ACL and tagging sub-handlers | Get/PutObjectAcl, Get/Put/DeleteObjectTagging |
-| [bucket/operations.go:29](../../internal/proxy/handlers/bucket/operations.go#L29), [:63](../../internal/proxy/handlers/bucket/operations.go#L63), [:69](../../internal/proxy/handlers/bucket/operations.go#L69) | ListObjectsV2 `Prefix`, ListObjects `Prefix` and `Marker` |
+Running the **existing** integration suite with the feature on would be green and
+would prove nothing: almost every integration key is flat, and D2 stores a key
+with no `/` unchanged. **A false green here ships a missed call site.**
 
-**Where a key prefix hides in a payload** (deliberately left alone): bucket
-lifecycle, replication, notification and logging configurations carry key
-prefixes inside their bodies, and those methods sit on the same interface
-([s3_backend.go:34-58](../../internal/proxy/interfaces/s3_backend.go#L34-L58)).
-`PutBucketLifecycleConfiguration` with a body answers 501 today
-([lifecycle.go:81](../../internal/proxy/handlers/bucket/lifecycle.go#L81)), so
-nothing can be written through the proxy; a `Get` returns whatever the operator
-configured on the backend, untranslated. They stay untransformed — but the
-Stage 3 allowlist records them as **deliberately** untransformed, not as
-key-free, so that a later implementation of the `Put` body does not inherit a
-wrong answer in silence.
+**Favourite: targeted, not doubled.** One new integration package with
+purpose-built directory-bearing fixtures, driven the way
+`scripts/conformance-run.sh` already drives a proxy (built binary, heredoc config,
+free port) — no third compose service, no committed config, no production change.
+The client suites get one feature-on scenario each; they cost 5 s and 8 s.
+**Do not parameterise existing tests on the flag** — ADR 0019 D4 says build tags
+select which suite runs, they never soften one.
 
-**Where a stored key would come back to the client** (must be mapped back):
-
-| Site | What |
-|---|---|
-| [bucket/operations.go:52](../../internal/proxy/handlers/bucket/operations.go#L52), [:79](../../internal/proxy/handlers/bucket/operations.go#L79) | `Contents[].Key`, `CommonPrefixes[].Prefix`, echoed `Prefix`, `StartAfter`, `Marker`, `NextMarker` |
-| [operations.go:923](../../internal/proxy/handlers/object/operations.go#L923), [:937](../../internal/proxy/handlers/object/operations.go#L937) | `DeleteObjectsOutput.Deleted[].Key` and `Errors[].Key`, echoed into the `DeleteResult` document |
-| [complete.go:295-305](../../internal/proxy/handlers/multipart/complete.go#L295-L305) | `<Location>` — already built from the proxy's own scheme, host and request path, so it needs no mapping |
-| [list.go:66-76](../../internal/proxy/handlers/multipart/list.go#L66-L76) | today a fabricated document echoing the client's key; after P-7 it is built from the session's part table, which holds the clear key |
-| `ListMultipartUploads` — 501 today ([list.go:97](../../internal/proxy/handlers/multipart/list.go#L97)), forwarded after P-7 | `Uploads[].Key`, `CommonPrefixes`, `NextKeyMarker` |
-| [response/errors.go:40-43](../../internal/proxy/response/errors.go#L40-L43) | `<Resource>`; `WriteS3Error` builds it from the bucket and key the handler passes in, which are the clear ones, so it stays correct for free |
-
-### The boundary decorator
-
-Transforming at 25 call sites is 25 chances to forget one, and forgetting one is
-silent: the object is written under a clear name, or read from a name that does
-not exist. Instead, **one decorator implements the transform once**, and no
-handler ever sees a stored key.
-
-`s.s3Backend` is the concrete SDK client
-([server.go:23](../../internal/proxy/server.go#L23),
-[:125](../../internal/proxy/server.go#L125)) and the handlers take the interface
-`interfaces.S3BackendInterface`
-([s3_backend.go:11](../../internal/proxy/interfaces/s3_backend.go#L11)). A struct
-that **embeds** that interface inherits all 59 methods and overrides only the 25
-that carry a key or a prefix in their input or output
-([s3_backend.go:69-99](../../internal/proxy/interfaces/s3_backend.go#L69-L99)); each
-override is three to six lines. It is wired in at
-[router.go:39-42](../../internal/proxy/router.go#L39-L42), where the handlers are
-constructed — one wrap, no handler change.
-
-Two invariants follow, and both are testable:
-
-1. Above the decorator, every key is the client's. Signatures, AAD, logs, error
-   documents and the encryption manager are correct by construction.
-2. Below it, every key is the stored one. There is exactly one place to audit.
-
-When filename encryption is disabled the decorator is not installed at all, so
-the feature costs nothing when off.
-
-### Listings in detail
-
-**Prefix rule.** Split the client's prefix on `/`. Everything before the last `/`
-is a complete directory segment and is encrypted; the remainder is a partial leaf
-and is passed through verbatim. `kopia/ns/p` → `E(kopia)/E(kopia,ns)/p`. A prefix
-ending in `/` has an empty partial leaf and works out to the same rule.
-
-**The one shape that cannot work** is a prefix that ends *inside a directory
-segment*: `backups/vel` where `vel…` is a directory. Deterministic encryption is
-not prefix-preserving, so no partial directory prefix can be translated. The
-proxy cannot distinguish that case from a root-level partial leaf, and would
-return an empty listing — a silently wrong answer. Stage 0 item 2 establishes
-whether Velero or kopia emit that shape; any other S3 client can, since a
-user-typed prefix is not bound to a segment boundary. If a client in use does,
-the fallback
-is a bounded fan-out (list the parent with `Delimiter: "/"`, decrypt the returned
-common prefixes, keep those whose plaintext matches the partial segment, and
-issue one listing per match) at the cost of one extra round trip plus N. It is
-**not** in the base scope; it is built when a client in use needs it — Stage 0
-answers that for Velero and kopia only.
-
-**Delimiter.** Only `/` and the empty delimiter are meaningful: any other
-delimiter groups on characters inside base64url ciphertext and produces
-nonsense. A listing with a different delimiter is **refused** with
-`InvalidArgument` rather than answered wrongly.
-
-**Common prefixes** come back encrypted and are decrypted segment by segment. One
-that does not decrypt is dropped from the response and logged at warn with a
-counter — the alternative, failing the whole listing, hands the backend a
-one-object denial of service. AES-SIV means the backend cannot forge a name that
-decrypts, so dropping is exactly "objects this proxy did not write", which is the
-same class as a foreign object in the bucket today.
-
-**Order.** Within a directory, keys sort by the clear leaf, so order is
-unchanged. Across directories, the backend sorts by ciphertext, which is a
-permutation of the plaintext order. Consequences:
-
-- `continuation-token` is opaque and backend-order-consistent; it passes through
-  untouched, in both directions, and keeps working.
-- `StartAfter`/`marker` is a client key. It is transformed forward and resumes
-  correctly *in backend order* — which is the wrong set for a client that expects
-  plaintext order across directories.
-- The proxy does not re-sort. Sorting one page is a lie that looks like an order;
-  sorting globally means buffering the whole listing. Backend order is returned
-  and documented.
-
-Stage 0 item 1 decides whether that is acceptable for the two clients whose
-listing code can be read, kopia and Velero: kopia lists inside one directory, so
-it is expected to be unaffected; Velero's `ListCommonPrefixes` usage is expected
-to be order-insensitive. Both are **unverified today**, and every other S3 client
-gets the documented backend order with no check at all.
-
-### Operations that stay refused
-
-`CopyObject` and `UploadPartCopy` answer 422 `NotSupportedWithEncryption`
-([operations.go:373-385](../../internal/proxy/handlers/object/operations.go#L373-L385),
-[copy.go:43](../../internal/proxy/handlers/multipart/copy.go#L43); the router
-already registers the copy route ahead of the plain part route
-([router.go:92-93](../../internal/proxy/router.go#L92-L93)), so `UploadPartCopy`
-is no longer shadowed). This ticket keeps them refused, and
-the reason is v2, not names: v2 binds the client key into the AAD, so a
-backend-side copy to a *different* key produces an object whose AAD no longer
-matches its name and which is undecryptable. Server-side copy under v2 can only
-ever mean decrypt-and-re-encrypt through the proxy, which is a separate ticket.
-If that ticket is ever written, `x-amz-copy-source` becomes another key crossing
-the boundary and must go through the decorator — recorded here so it is not
-missed.
-
-The one copy that *is* valid is a rename to the **same** client key, which is
-exactly the migration below.
-
-### Migration and the mapping tool
-
-Enabling the feature on a bucket that already holds objects is a rename pass:
-for every key, `CopyObject` on the backend from the clear key to the transformed
-key with the same client key, then delete the source. The stored bytes are valid
-under both names because the AAD binds the client key, which does not change.
-The pass runs against the backend directly (the proxy refuses copies) and needs
-the transform, so the proxy binary gets a `names` subcommand
-([cmd/s3-encryption-proxy/main.go:31](../../cmd/s3-encryption-proxy/main.go#L31)
-is the only Cobra command today) with:
-
-- `names wrap` — generate a 64-byte key, wrap it with the configured active KEK,
-  print the `filename_encryption` config block;
-- `names map <key>` and `names unmap <stored-key>` — the transform, for scripting
-  a migration and for debugging a listing.
-
-The alternative for a fresh deployment is simply to enable it before the first
-object is written, which is what the README should recommend.
-
-### Logging
-
-The proxy logs the clear key at debug on most paths (for example
-[object/handler.go:92-97](../../internal/proxy/handlers/object/handler.go#L92-L97)).
-That is fine — the proxy is trusted. What must not happen is a log line carrying
-**both** the clear and the stored key above debug level: many deployments ship
-logs to the same cloud provider that holds the bucket, and such a line is the
-mapping table this design refuses to store. Rule: the stored key appears in logs
-only at debug, and never in the same entry as its plaintext.
-
----
-
-## Work breakdown
-
-### Stage 0 — pre-work; these can change the design
-
-- [ ] **Order dependency (open question 1).** Read kopia's `ListBlobs`
-      ([s3_storage.go](https://github.com/kopia/kopia/blob/master/repo/blob/s3/s3_storage.go))
-      and Velero's object-store layer (`pkg/persistence`, `ListObjects` and
-      `ListCommonPrefixes`) and record for each call: the prefix shape, the
-      delimiter, whether a marker or `StartAfter` is used, and whether the caller
-      relies on the returned order. Write the answer into this ticket.
-- [ ] **Same question, empirically.** Add a temporary debug log of
-      `prefix / delimiter / marker / start-after / continuation-token` to
-      [handleListObjects](../../internal/proxy/handlers/bucket/operations.go#L15),
-      run the full e2e (`make e2e-velero`), and collect the distinct listing
-      shapes Velero and kopia actually emit. Confirm that no prefix ends inside a
-      directory segment; if one does, schedule the fan-out fallback.
-- [ ] **Measure the real leak (leaf names).** Dump a complete bucket listing
-      after scenario V1 and record which leaf names embed the backup name.
-      Velero's `object_store_layout.go` names objects such as
-      `backups/<name>/<name>-logs.gz` and `<name>-resource-list.json.gz`, which
-      would mean the backup name survives in the leaf even after the directory is
-      encrypted, while the kopia namespace is fully hidden because kopia's leaves
-      are hashes. Confirm or refute, and write the confirmed residual into this
-      ticket, the README and `SECURITY_ARCHITECTURE.md`. **This determines how
-      much the feature is actually worth in the Velero layout — the one layout
-      the e2e can measure, not its worth for every S3 client — so it is done
-      before any code.**
-- [ ] **Decide the copy and multipart-list question (open question 2)** and record
-      it here: `CopyObject` and `UploadPartCopy` stay 422 for the AAD reason
-      above; `ListParts` after P-7 answers from the session part table and needs
-      no mapping; `ListMultipartUploads` after P-7 is forwarded and needs the full
-      listing mapping. Confirm against the v2 implementation as it actually
-      landed, not as ticket 013 planned it.
-
-### Stage 1 — the transform
-
-- [ ] New package `internal/naming`: `Transformer` with `EncryptKey`,
-      `DecryptKey`, `EncryptPrefix`, `DecryptPrefix`, built over
-      `github.com/google/tink/go/daead/subtle.NewAESSIV`. No new dependency.
-- [ ] Unit tests: round-trip over the edge-case table (no directory, trailing
-      slash, empty segment, unicode, `&`, `<`, spaces, `+`, a 1024-byte key);
-      determinism across instances; a segment moved to another depth or another
-      parent fails to decrypt; a flipped ciphertext bit fails to decrypt.
-- [ ] Prefix rule unit tests, including `kopia/ns/p` → `E/E/p` and the
-      partial-directory case asserting the **documented** behaviour.
-- [ ] Length guard: a transformed key over 1024 bytes returns a typed error.
-
-### Stage 2 — key management
-
-- [ ] `encryption.filename_encryption` config block, validation, and the startup
-      unwrap through `ProviderManager.GetProviderByFingerprint`.
-- [ ] Refuse to start: unknown fingerprint, failed unwrap, `enabled` with the
-      `none` provider, `enabled` with no `wrapped_key`.
-- [ ] `names wrap|map|unmap` subcommand on the proxy binary.
-- [ ] Config example in `config/` showing an enabled deployment.
-
-### Stage 3 — the boundary decorator
-
-- [ ] `internal/proxy/backend/namemapper.go`: struct embedding
-      `interfaces.S3BackendInterface`, overriding every key- and prefix-bearing
-      method in both directions.
-- [ ] Wire it in at [router.go:39-42](../../internal/proxy/router.go#L39-L42); not
-      installed when the feature is off.
-- [ ] A test that fails if a new key-bearing method is added to the interface
-      without an override (reflection over the interface's method set against an
-      explicit allowlist, which separates methods that carry no key at all from
-      the bucket-configuration methods deliberately left untransformed).
-- [ ] Handler-level test with a mock backend: for each of GET, HEAD, PUT, DELETE,
-      DeleteObjects and the four multipart calls, assert the mock saw the
-      **stored** key and the client saw the **clear** key.
-
-### Stage 4 — listings
-
-- [ ] Map `Prefix`, `Marker`/`StartAfter` forward; map `Contents[].Key`,
-      `CommonPrefixes[].Prefix`, the echoed `Prefix`, `NextMarker` and
-      `Uploads[].Key` back.
-- [ ] Pass `continuation-token` through untouched, both directions, with a test
-      that paginates 2500 objects across three directories.
-- [ ] Refuse a delimiter other than `/` or empty with `InvalidArgument`.
-- [ ] Drop undecryptable keys and common prefixes, log at warn, expose a counter
-      in the monitoring endpoint.
-- [x] `<Location>` in the CompleteMultipartUpload response is already built from
-      the proxy, not echoed from the backend: scheme + `r.Host` +
-      `r.URL.EscapedPath()`
-      ([complete.go:295-305](../../internal/proxy/handlers/multipart/complete.go#L295-L305)),
-      i.e. the client-visible path. Correct under name encryption for free.
-
-### Stage 5 — tests that are the contract
-
-- [ ] Integration suite (both transports): write and read back keys with 0, 1 and
-      3 directory levels; kopia-shaped partial-leaf prefix listing; delimiter
-      listing with common prefixes; pagination; DeleteObjects; multipart upload
-      of a 3-level key; assert **on the MinIO backend directly** that no
-      plaintext directory segment appears in any stored key.
-- [ ] e2e: enable filename encryption in
-      [values-proxy.yaml](../../test/e2e/velero/values-proxy.yaml) and run the full
-      suite. `listBackendObjects`
-      ([backend.go:96](../../test/e2e/velero/backend.go#L96)) and the at-rest
-      assertions at
-      [scenarios_atrest_test.go:39](../../test/e2e/velero/scenarios_atrest_test.go#L39),
-      [:91](../../test/e2e/velero/scenarios_atrest_test.go#L91) and
-      [:126](../../test/e2e/velero/scenarios_atrest_test.go#L126) use literal
-      `backups/<name>/` and `kopia/` prefixes against the backend and **will
-      break**: give them the transform, and add an assertion that the raw backend
-      listing contains neither the namespace name nor the string `backups/`.
-- [ ] Decide and record whether the e2e runs with the feature on permanently or
-      as an extra scenario. Permanently is the stronger contract; an extra
-      scenario keeps the suite's other assertions readable.
-
-### Stage 6 — measurement
-
-- [ ] Benchmark the transform: exact-key (2 and 3 segments) and a 1000-key
-      listing decrypt, in ns/op and allocs/op.
-- [ ] Re-run `make test-integration-performance` and compare against the numbers
-      ticket 013 recorded. Expect no movement — the transform never touches the
-      payload. Any movement is a bug, not a cost.
-- [ ] **Only if** the listing benchmark shows the decrypt above ~1 % of a listing
-      request: add a bounded LRU over `(parent ciphertext, segment)` in both
-      directions and re-measure.
-
-### Stage 7 — documentation
-
-- [ ] README: the `filename_encryption` block in the full reference, the
-      naming-conventions table (client key → stored key), the residual leak
-      confirmed in Stage 0 item 3, the recommendation to enable it before the
-      first object is written, the delimiter restriction, the cross-directory order
-      behaviour, and the key-length limit.
-- [ ] `SECURITY_ARCHITECTURE.md`: what the transform hides, what it does not,
-      the deterministic-encryption residual, the name-key loss consequence, and
-      the fact that the name key is as critical to back up as the KEK.
-- [ ] `CLAUDE.md`: the transform boundary rule — keys are transformed only in the
-      backend decorator, never above it.
+Gate performance on **deterministic quantities** — primitive calls per request,
+allocations per key — not wall time.
 
 ---
 
 ## Success criteria
 
-- `make test-unit` green, with the `internal/naming` tests above.
-- `make test-integration` and `make test-integration-tls` green with the feature
-  **on** and with it **off**; the suite runs both ways.
-- `make test-integration-performance` shows no regression against the numbers
-  ticket 013 recorded on upload, download or small-object throughput.
-- `./start-demo.sh` with filename encryption enabled: `aws s3 cp` up and down
-  through the proxy round-trips; `mc ls` against MinIO directly shows no
-  plaintext directory segment.
-- `make e2e-velero` green with the feature enabled, all 13 scenarios, including
-  V2 and V3 (kopia restores, which is where a broken prefix listing would show
-  up first) and V9 (KEK rotation, which must **not** rename anything).
-- A backend listing taken during the e2e contains no namespace name and no
-  `backups/` or `restores/` segment; the assertion is in the suite, not in a
-  reviewer's head.
-- Stage 0's four answers are written into this ticket, the README and
-  `SECURITY_ARCHITECTURE.md` — including the leaf-name residual, honestly, even
-  where it is larger than the findings doc assumed.
+- `make test-unit` green, including the RFC 5297 vectors.
+- The feature-on integration package green over both transports; the default-off
+  configuration keeps its existing coverage unchanged.
+- `make e2e-velero`, `make e2e-rclone`, `make e2e-s3cmd` green with the feature on
+  — **including `s3cmd sync` converging on a second run**, which is the D-F gate.
+- A backend listing taken during the e2e contains **no namespace name**; the
+  assertion is in the suite, not in a reviewer's head. It must **fail** if the
+  transform is not installed — the current at-rest assertions would pass vacuously.
+- The listing instrument shows the document build, not the crypto, as the cost; the
+  byte path shows **no movement at all**, and any movement is a bug, not a cost.
+- Stage 0's answers are in ADR 0023, the README and `SECURITY_ARCHITECTURE.md` —
+  **including the leaf-name residual, honestly, as the census found it.**
 
 ---
 
-## Risks and open questions
+## Open question for the repository owner
 
-- **The leaf still carries the backup name.** Velero's own layout embeds the
-  backup name in most leaf names (`<name>-logs.gz`,
-  `<name>-resource-list.json.gz`). If Stage 0 item 3 confirms it, then in the
-  Velero layout this feature fully hides only the **kopia namespace** (whose
-  leaves are hashes) and the directory occurrences of backup and restore names,
-  while the backup name itself remains readable in the leaf. That is still worth
-  shipping — the namespace inventory is the most sensitive of the three — but the
-  README must not claim backup names are hidden. **UNVERIFIED against a real
-  bucket; verify before writing any code.**
-- **Cross-directory order changes.** Whether kopia or Velero depend on it is
-  **UNVERIFIED**, and they are the only clients Stage 0 checks — every other S3
-  client gets the documented backend order unchecked. It is Stage 0 item 1 and
-  it is the one finding that could stop
-  the feature. `StartAfter` resumption across directories is semantically wrong
-  under the transform, and `start-after` is not even forwarded today
-  ([bucket/operations.go:28-43](../../internal/proxy/handlers/bucket/operations.go#L28-L43)),
-  so it cannot be tested until the D-11 listing ticket lands.
-- **A partial-directory prefix returns an empty listing, not an error.** The
-  proxy cannot distinguish it from a root-level partial leaf. Documented, tested,
-  and fixable with the fan-out only if a client needs it.
-- **Losing the name key makes the bucket unnavigable.** The objects stay
-  decryptable — v2 binds the client key, not the stored one — but nothing can
-  find them without re-deriving every name. It must be backed up exactly like the
-  KEK, and the README must say so in those words.
-- **Rotating the name key renames the whole bucket.** There is no incremental
-  rotation. Wrapping it under the KEK means KEK rotation does not force it, which
-  is the case that actually occurs.
-- **Deterministic encryption is a dictionary target.** Anyone who can make the
-  proxy write a chosen name learns that name's ciphertext. Today every configured
-  client can reach every bucket
-  ([config.go:74-79](../../internal/config/config.go#L74-L79) has no bucket scope),
-  so a client colluding with the backend learns nothing it could not read
-  directly. **If per-client bucket authorization is ever added, this becomes a
-  real cross-tenant leak and the bucket has to enter the AAD** — at the cost of
-  the wholesale bucket-copy property. Record the coupling now so the authorization
-  ticket does not silently break it.
-- **Tink's AES-SIV re-expands the AES key schedule per call.** Fine for exact-key
-  operations, measurable on large listings. Measured in Stage 6, cached only if
-  the measurement says so.
-- **The e2e's own at-rest assertions are written against clear keys** and are
-  part of the end-user contract; they get the transform, they do not get relaxed.
-- **Ordering against the D-11 listing ticket is a real sequencing risk.** If this
-  ticket lands first, the listing mapping has to be written twice — once against
-  the SDK struct, once against the new document builder. Prefer D-11 first.
+**Is there a named customer asking for this?** The analysis converges on: build it
+if a CNPG/Barman or data-mover-heavy customer is asking, because the tenant
+inventory and the database server name are the one thing on the leak list a
+customer cannot re-derive and the thing a compliance conversation is actually
+about — and do not build it if the ask is generic, because in the Velero layout
+the census shows it hides a duplicate of a string eleven sibling leaves still
+print, at a cost of 8-10 weeks, a permanent second critical key, a copier with
+delete rights on the bucket, and a doubled operational surface.
