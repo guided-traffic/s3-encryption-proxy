@@ -94,6 +94,19 @@ This is why server-side copy is refused rather than forwarded — `CopyObject` a
 produces an object that is undecryptable under its new name, and the client would
 only find out on the first read.
 
+**The key in that additional data is the decoded key the client asked for** —
+the router's path variable, percent-escapes resolved and nothing cleaned
+(`SkipClean(true)` in `internal/proxy/router.go`, the derivation pinned by
+`TestRtPxObjectKeyRouting`), the same string the backend stores the object
+under. It is the additional data's one variable field, so a change in how it is
+derived — decoding differently, trimming, a prefix — re-seals new writes under a
+string the previous build never used and stops every existing object from
+opening. Nothing captured catches that: the vectors are opened with whatever
+string the test passes, and `TestSegVectorObjectIsBoundToItsKey` pins only that
+a *different* string fails. Keeping the binding on the client-visible key is
+also what leaves filename encryption a rename pass rather than a re-encryption
+(ADR 0023).
+
 **2. The stored length is a pure function of the plaintext length.**
 
 ```

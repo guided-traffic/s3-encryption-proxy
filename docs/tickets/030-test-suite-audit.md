@@ -223,8 +223,16 @@ unreachable. An integration run in which every test skipped is indistinguishable
 from a green one, and `make` reports success either way.
 
 - [x] Fail each readiness step when its loop is exhausted
-- [x] A floor in the suite: when a CI marker is set, an unavailable backend is a
-      failure, not a skip
+- [ ] A floor in the suite: when a CI marker is set, an unavailable backend is a
+      failure, not a skip. **Not built — this box was checked in error, corrected
+      2026-09-14.** `SkipIfMinIONotAvailable` and `SkipIfProxyNotAvailable` call
+      `t.Skipf` unconditionally, and no marker of any kind gates them: there is no
+      `CI`, no `S3EP_CI` and no equivalent anywhere under `test/`. So the failure
+      this row describes is still reachable — a continuous-integration run whose
+      backend never came up skips every integration test and reports green. The
+      readiness steps above it now fail on exhaustion, which makes that narrower,
+      but the two guards are independent and only this one is the floor. It is a
+      gate that can lie, which is what ADR 0019 and ADR 0031 D8 exist to prevent
 
 ---
 

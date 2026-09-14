@@ -4,6 +4,13 @@
 
 **Accepted.** Date: 2026-09-11. Owner decision the same day: it ships in 5.0.0.
 
+**Amended 2026-09-14: D9 and D10 write down the two refusals the chart has been shipping since
+2026-09-11** — an enabled Ingress that does not terminate TLS for every host it serves, and a
+cert-manager `Certificate` nothing consumes. Both are breaking: a configuration that rendered
+before 5.0.0 now fails before anything is applied. They were built in the same chart round as this
+decision and stated only in the chart's own documentation, and D7 named the second one in passing
+as though it were already decided somewhere. It was not.
+
 **Implemented on the 5.0.0 branch**, in the chart round that closed
 [ADR 0013](0013-a-configuration-key-exists-only-if-code-reads-it.md)'s deployment half. The chart
 issues or accepts a certificate for the in-cluster Service names, mounts it, and turns the proxy's
@@ -82,6 +89,21 @@ consume one, beside an `ingress.tls` entry.
 supported and keeps its own values. The two are independent: a deployment may do both, and one
 that does neither is refused only if it *claims* to do one.
 
+**D9. An enabled Ingress terminates TLS for every host it serves.** `ingress.enabled: true` with an
+empty `ingress.tls` refuses the render, and so does a host under `ingress.hosts` that no
+`ingress.tls` entry covers; the refusal names that host. A non-empty `tls` block is not the bar,
+covering the rule set is — the hop that stays plaintext is the one nobody listed. It carries the
+client's Signature V4 credentials and every object key in front of a proxy whose whole job is to
+keep that data confidential, and an Ingress that answers a host in plaintext looks like every other
+Ingress once it is applied.
+
+**D10. A cert-manager `Certificate` this chart renders has a consumer it can see.**
+`certificate.enabled: true` refuses the render unless `certificate.secretName` is named by an
+`ingress.tls` entry of an enabled Ingress, or is the Secret the pod mounts for its own listener —
+the second of those is D7. A certificate that is issued, renewed and never served reads as "TLS is
+configured" and is not, and it is the one part of a TLS setup that reports itself healthy while
+nothing uses it.
+
 ## Consequences
 
 An operator who wants in-cluster TLS sets four lines instead of hand-writing a volume, a volume
@@ -104,6 +126,18 @@ The cert-manager arm ships with a render test and no run. Two ways to close that
 scheduled: install cert-manager in the end-to-end cluster, or add a second cluster profile that
 does. Until one of them happens, this ADR's status block is where the gap is recorded.
 
+D9 and D10 break deployments that rendered before 5.0.0. An Ingress that served some of its hosts
+in plaintext has to state TLS for all of them or be turned off, and a `Certificate` rendered here
+for a consumer this chart cannot see — another workload's Ingress in the same namespace — has to be
+moved out of this release or given `certificate.enabled: false`. The chart's own development
+profile shipped the first case and lost its Ingress rather than gaining a certificate no
+development cluster would issue, which is also how the proxy is actually deployed: beside its
+client, as an in-cluster Service.
+
+D9 matches a host by literal name. A `tls` entry that covers a host by wildcard does not count as
+covering it, and the operator has to list the exact name alongside the wildcard. That false refusal
+costs one line in the values file; the hop it is there to catch costs the credentials.
+
 ## Alternatives rejected
 
 - **Leave it to `volumes`, `volumeMounts` and the raw `config` string.** This is the status quo,
@@ -117,5 +151,11 @@ does. Until one of them happens, this ADR's status block is where the gap is rec
   produces is a proxy serving with a certificate the operator did not think they had configured.
 - **Discover the cluster domain at render time.** Helm cannot; a lookup would need a live cluster
   and would make `helm template` behave differently from `helm install`.
+- **Render the two configurations of D9 and D10 anyway and document the gap.** Rejected: a
+  control that lives only in the values file is worse than none, because it gets relied upon.
+  Neither failure announces itself afterwards — an Ingress with no `tls` entry is a valid Ingress,
+  and a `Certificate` nothing consumes goes Ready like any other — so the documentation would be
+  the only thing between the operator and a plaintext hop in front of the proxy. The softer
+  channel, a note printed after the install command, scrolls past in whatever automation ran it.
 - **Issue the certificate for a wildcard.** Rejected: a wildcard over `*.<namespace>.svc` covers
   every service in the namespace, which is a certificate the proxy has no business holding.

@@ -1,12 +1,26 @@
 # Ticket 010: Performance Improvements — Streaming Throughput
 
+## Archived 2026-09-14
+
+Closed with the 5.0.0 cut. The work finished on 2026-04-25 and every number below
+measures a tree this release deleted — the AES-CTR path, the whole-object HMAC and
+the part loop they ran in — so nothing here is a baseline and nothing here is a
+current fact. The measurement rule it worked under is ADR 0020. What was durable
+and had no other home was one convention, now in `docs/developer/performance.md`:
+a per-request handler log line is `Debug`, because the field map is built whether
+or not the record is emitted.
+
+The five directories beside this file hold `pprof -top` text and test logs from
+that round. The profiles themselves were never committed, so nothing in them can
+be reopened.
+
 ## Status (2026-04-25)
 
 **Tier 4.2 + 4.3 complete.** Pooled 128 KiB `io.CopyBuffer` now serves all
 three GET-response copy sites (streaming HMAC, standard, torrent passthrough)
-in [internal/proxy/handlers/object/operations.go](../../internal/proxy/handlers/object/operations.go),
+in [internal/proxy/handlers/object/operations.go](../../../internal/proxy/handlers/object/operations.go),
 backed by a `sync.Pool[*[]byte]` defined in
-[helpers.go](../../internal/proxy/handlers/object/helpers.go#L16-L34). Eighteen
+[helpers.go](../../../internal/proxy/handlers/object/helpers.go#L16-L34). Eighteen
 per-request `Info` lines in `handlers/object/operations.go` and one in
 `handlers/multipart/abort.go` are demoted to `Debug` so their
 `WithFields` map allocs no longer fire at the default log level. Full
@@ -34,10 +48,10 @@ v4-chunked `ReadBody` path rather than anything in orchestration. Tier 3.1
 **Done so far:**
 - Baseline captured (client + proxy pprof) → [docs/tickets/010-baseline/](010-baseline/)
 - Proxy pprof wired up behind `monitoring.pprof_enabled` flag
-  ([internal/monitoring/server.go](../../internal/monitoring/server.go),
-  [internal/config/config.go](../../internal/config/config.go),
-  [cmd/s3-encryption-proxy/main.go](../../cmd/s3-encryption-proxy/main.go),
-  [config/aes-example.yaml](../../config/aes-example.yaml))
+  ([internal/monitoring/server.go](../../../internal/monitoring/server.go),
+  [internal/config/config.go](../../../internal/config/config.go),
+  [cmd/s3-encryption-proxy/main.go](../../../cmd/s3-encryption-proxy/main.go),
+  [config/aes-example.yaml](../../../config/aes-example.yaml))
 - Demo stack rebuilt and running with pprof enabled (verified `:9090/debug/pprof/` → 200)
 
 **Local baseline numbers (2026-04-23, 1 GB run):** upload **78.42 MB/s**,
@@ -244,7 +258,7 @@ just to recover the raw DEK for HMAC.
 - [x] HMAC-enabled round-trip verified: unit suite (`go test -short ./...`) and integration suite (HMAC validation + small-object CTR) green; `TestStreamingPerformance` unchanged as expected (1 GB path is auto-multipart, not singlepart-CTR)
 
 **Note on scope:** the handler routes HMAC-enabled objects ≥ 5 MiB to
-auto-multipart ([internal/proxy/handlers/object/operations.go:470-486](../../internal/proxy/handlers/object/operations.go#L470-L486)),
+auto-multipart ([internal/proxy/handlers/object/operations.go:470-486](../../../internal/proxy/handlers/object/operations.go#L470-L486)),
 so this single-part HMAC path only ever sees small objects. The win here is
 plaintext-pass count (3 → 1) and eliminating the `DecryptDEK` KEK call per
 object, not bulk throughput.
@@ -271,7 +285,7 @@ EOF-triggered buffer path handles that case unchanged.
 
 ### 2.3 Stream directly to ResponseWriter (no ReadAll)
 
-**File**: [internal/orchestration/singlepart.go:287-305](../../internal/orchestration/singlepart.go#L287-L305) and the GET handler in [internal/proxy/handlers/object/operations.go:265-331](../../internal/proxy/handlers/object/operations.go#L265-L331)
+**File**: [internal/orchestration/singlepart.go:287-305](../../internal/orchestration/singlepart.go#L287-L305) and the GET handler in [internal/proxy/handlers/object/operations.go:265-331](../../../internal/proxy/handlers/object/operations.go#L265-L331)
 
 `DecryptDataWithMetadata` ended with `io.ReadAll` on the stream, and the
 handler did a second `io.ReadAll` on the encrypted body. For a 1 GB object
@@ -304,7 +318,7 @@ handler.
 
 ### 2.4 Parallel S3 UploadPart in putObjectAutoMultipart
 
-**File**: [internal/proxy/handlers/object/operations.go:1170-1395](../../internal/proxy/handlers/object/operations.go#L1170-L1395)
+**File**: [internal/proxy/handlers/object/operations.go:1170-1395](../../../internal/proxy/handlers/object/operations.go#L1170-L1395)
 
 At 1 GB / 12 MB parts = 86 S3 round-trips done strictly sequentially. CTR
 encryption must be in order, but once the part is encrypted the upload is
@@ -317,9 +331,9 @@ independent of the next part.
   sees them in order — `partsMap[int]string` + final `sort.Ints` before
   building `completedParts`
 - [x] Bound worker pool from config — new `optimizations.multipart_upload_concurrency`
-  (default 4, validated 1–32) in [internal/config/config.go](../../internal/config/config.go)
+  (default 4, validated 1–32) in [internal/config/config.go](../../../internal/config/config.go)
   with helper `getMultipartUploadConcurrency()` in
-  [internal/proxy/handlers/object/helpers.go](../../internal/proxy/handlers/object/helpers.go)
+  [internal/proxy/handlers/object/helpers.go](../../../internal/proxy/handlers/object/helpers.go)
 - [x] Integration test: 1 GB `TestStreamingPerformance` + `TestMultipartUploadCorruption`
   (1 GB round-trip with SHA-256 verify) + `TestHMACValidation` suite + `TestLargeMultipart500MB`
   all green against a fresh proxy; parallel dispatch confirmed in proxy logs
@@ -479,7 +493,7 @@ workloads, which matches the actual user of this code path.
 
 ### 3.2 DEK cache copy avoidance
 
-**File**: [internal/orchestration/providers.go:188-249](../../internal/orchestration/providers.go#L188-L249)
+**File**: [internal/orchestration/providers.go:188-249](../../../internal/orchestration/providers.go#L188-L249)
 
 `append([]byte(nil), cachedDEK...)` on every cache hit = 32-byte alloc per
 request.
@@ -522,8 +536,8 @@ cache-hit path. No change to measured throughput on the 1 GB loopback
   [internal/orchestration/singlepart.go:153](../../internal/orchestration/singlepart.go#L153) and
   [internal/orchestration/multipart.go:329](../../internal/orchestration/multipart.go#L329) — `bytes.Reader` is already a zero-copy in-memory source; wrapping in bufio added a 4 KiB buffer alloc plus an extra copy per read for no gain.
 - Dropped the `if br, ok := encryptedReader.(*bufio.Reader); ok { … } else { bufio.NewReader(…) }` dance in
-  [internal/orchestration/manager.go:106-136](../../internal/orchestration/manager.go#L106-L136) (`EncryptData`) — with the field now `io.Reader`, the reader is assigned straight through.
-- `internal/proxy/request/` had nothing to remove: the only call is `bufio.NewReaderSize(src, 64*1024)` in [streaming_aws_decoder.go:37](../../internal/proxy/request/streaming_aws_decoder.go#L37), which is the reader's primary buffer, not a wrap.
+  [internal/orchestration/manager.go:106-136](../../../internal/orchestration/manager.go#L106-L136) (`EncryptData`) — with the field now `io.Reader`, the reader is assigned straight through.
+- `internal/proxy/request/` had nothing to remove: the only call is `bufio.NewReaderSize(src, 64*1024)` in [streaming_aws_decoder.go:37](../../../internal/proxy/request/streaming_aws_decoder.go#L37), which is the reader's primary buffer, not a wrap.
 
 **Impact:** pure hygiene / allocation-count win on the singlepart-CTR and multipart-ordered paths. Each affected code site drops one `bufio.Reader{}` (a 4 KiB `buf` slice + struct header) per part / per small HMAC upload. Not measurable on the 1 GB `TestStreamingPerformance` throughput number (crypto floor dominates), but removes unambiguous dead allocation from the hot paths. Full unit + integration suite green against a fresh proxy (`make test-integration` — all packages PASS incl. `performance-test` @ 141.2 s, `360-degree-variants` @ 232.9 s).
 
@@ -535,7 +549,7 @@ cache-hit path. No change to measured throughput on the 1 GB loopback
 
 **Files**:
 - [internal/validation/hmac_calculator.go:49-78](../../internal/validation/hmac_calculator.go#L49-L78) — 32 KB → 128 KB
-- [internal/proxy/request/streaming_aws_decoder.go:35-40](../../internal/proxy/request/streaming_aws_decoder.go#L35-L40) — 64 KB → 128 KB
+- [internal/proxy/request/streaming_aws_decoder.go:35-40](../../../internal/proxy/request/streaming_aws_decoder.go#L35-L40) — 64 KB → 128 KB
 
 - [x] Increase `AddFromStream` buffer from 32 KB to 128 KB
 - [x] Increase `bufio.NewReaderSize` in streaming AWS decoder to 128 KB (kept at 128, not 256 — the 12 MiB part workload doesn't benefit from more in-flight bytes per read, and 256 KB doubles the per-request bufio footprint for no measurable win)
@@ -568,13 +582,13 @@ PASS, including `TestStreamingPerformance` all sizes,
 ### 4.2 Pooled io.CopyBuffer in GET path
 
 - [x] Introduce a package-level `sync.Pool` of 128 KiB buffers in
-  [internal/proxy/handlers/object/helpers.go](../../internal/proxy/handlers/object/helpers.go#L16-L34)
+  [internal/proxy/handlers/object/helpers.go](../../../internal/proxy/handlers/object/helpers.go#L16-L34)
   (stores `*[]byte` to avoid the staticcheck SA6002 pitfall) plus a small
   `copyWithPooledBuffer(dst, src)` helper.
 - [x] Replaced all three GET-response `io.Copy` sites with the pooled helper:
-  the streaming HMAC GET branch ([operations.go:371](../../internal/proxy/handlers/object/operations.go#L371)),
-  the standard non-streaming GET branch ([:390](../../internal/proxy/handlers/object/operations.go#L390)),
-  and the GetObjectTorrent passthrough ([:1078](../../internal/proxy/handlers/object/operations.go#L1078)).
+  the streaming HMAC GET branch ([operations.go:371](../../../internal/proxy/handlers/object/operations.go#L371)),
+  the standard non-streaming GET branch ([:390](../../../internal/proxy/handlers/object/operations.go#L390)),
+  and the GetObjectTorrent passthrough ([:1078](../../../internal/proxy/handlers/object/operations.go#L1078)).
 
 **Impact:** removes `io.Copy`'s per-call 32 KiB scratch allocation on the GET
 response path; each GET that doesn't trip the stdlib `WriterTo` /
@@ -588,12 +602,12 @@ either; full unit + integration suite green.
 
 - [x] Swept `internal/proxy/handlers/{object,multipart}/` for per-request
   `Info` lines and demoted them to `Debug`. Eighteen sites in
-  [internal/proxy/handlers/object/operations.go](../../internal/proxy/handlers/object/operations.go)
+  [internal/proxy/handlers/object/operations.go](../../../internal/proxy/handlers/object/operations.go)
   (GET streaming entry/exit, early-HMAC-validation tracing, HMAC-capability
   branches, force-aes-ctr decision, "Using direct/streaming upload",
   per-PUT/multipart success terminals) plus the "Successfully aborted
   multipart upload" line in
-  [internal/proxy/handlers/multipart/abort.go:96](../../internal/proxy/handlers/multipart/abort.go#L96).
+  [internal/proxy/handlers/multipart/abort.go:96](../../../internal/proxy/handlers/multipart/abort.go#L96).
   Also dropped the stale `"DEBUG:"` prefix from the force-aes-ctr message so
   the log level is consistent with the message.
 - [x] Verified the demoted strings aren't asserted on by any test

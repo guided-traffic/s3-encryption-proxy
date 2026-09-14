@@ -405,6 +405,19 @@ encodes a bug as intended behaviour is worse than no test.
 **For crypto, a green suite is not evidence.** See the mutation-round convention
 in [storage-format.md](storage-format.md).
 
+**On an error path, assert how many plaintext bytes were released before the
+error, not that an error arrived.** A bare `assert.Error` is also satisfied by a
+reader that hands out unauthenticated bytes and *then* fails, which is the one
+outcome the format exists to prevent — so the test counts what it got and
+compares it against the object's own prefix.
+`TestSegForgedTrailerChecksumFails`
+([segmented_gcm_test.go](../../pkg/encryption/dataencryption/segmented_gcm_test.go))
+pins both shapes at the codec, because how much is out when the trailer's verdict
+lands is a property of the size rather than a detail (ADR 0003 D6), and
+`TestSegmentChainRefusesTamperedBytes`
+([segment_tamper_test.go](../../test/integration/360-degree-variants/segment_tamper_test.go))
+does it per tamper case against a real backend.
+
 **When the defect is an omission, test the source, not the behaviour.** Some gaps
 cannot be caught by a behavioural test, because the thing that goes wrong is a
 call site nobody wrote a test for. `x-amz-expected-bucket-owner` was dropped on 63
@@ -421,3 +434,8 @@ found, not a list of them, so adding a verb does not edit the test. And it was
 **proven to bite**: one call site's line was removed, the test named the file and
 the line, and the line was put back. A guard test nobody has watched fail is a
 guard test nobody knows works.
+
+**A claim that something is untested is a claim about absent code, and absence is
+what people get wrong.** Prove it before you act on it — quote the search that
+came back empty, or read the production line and the test that should cover it
+side by side — and where neither was done, do not make the claim.

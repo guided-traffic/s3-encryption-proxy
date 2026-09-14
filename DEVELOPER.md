@@ -327,6 +327,18 @@ table, and to `tests/deployment_test.yaml`. Then revert your template change and
 confirm the test goes red — an assertion that passes against both the fixed and
 the broken chart is not a test.
 
+**A shipped values file.** Rendering it is not the check. `make helm-test`
+lints, renders the chart's defaults and every override that ships — the three
+`values-*.yaml` plus `test/e2e/velero/values-proxy.yaml` — and runs
+`helm unittest`, whose cases build their values with `set:` and never load one
+of those files. A green Helm Chart job therefore says the templates produce
+manifests, and nothing about whether a manifest describes a pod that starts:
+when the two unrenderable override files were repaired for 5.0.0, both still
+described a pod that exits at startup — neither declared `s3_clients`, and the
+credentials both carried were under the 16-character minimum. Extract the
+rendered ConfigMap and start the binary against it; the configuration is
+validated before the license is read, so this needs no token.
+
 **An end-to-end client suite.** A new package under `test/e2e/<client>/` with the
 `e2e` tag, a `versions.env` carrying the one pinned client release, and an
 `e2e-up.sh`/`e2e-down.sh` pair beside the tests — CI runs the same scripts a

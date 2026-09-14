@@ -1,5 +1,13 @@
 # Ticket 015: Configuration hygiene: dead knobs out, real controls in
 
+## Archived 2026-09-14
+
+Closed with the 5.0.0 cut, which is the condition this ticket set for itself.
+Nothing durable is left: what it decided is ADR 0013 and ADR 0014, and the
+operator-facing half is in `README.md`. Its own wording asked to be *deleted*; it
+predates the 2026-09-13 amendment to ADR 0022 D4, under which a closed ticket is
+moved here instead.
+
 ## Status (2026-09-11) — every item landed
 
 **Closed on `feat/major-v5`**, across waves 0 to 3 of the 5.0.0 bundle, and
@@ -12,7 +20,7 @@ re-verified item by item against the tree on 2026-09-11:
 | 5 / 6 (D5, plain-HTTP backend) | Both halves. An encrypting provider refuses to start against `http://`; the `exit` provider starts and logs what it costs, plus a second line naming the endpoint when it is plain HTTP |
 | 8b | The example configurations carry the key item 4 added |
 | 9 (`testRateLimiting`) | Gone with the rate limiter (ADR 0014) — `git grep` finds no such symbol |
-| 10 (documentation) | `README.md`, `CLAUDE.md`'s configuration table and [ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md) all describe the surface that ships |
+| 10 (documentation) | `README.md`, `CLAUDE.md`'s configuration table and [ADR 0013](../../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md) all describe the surface that ships |
 | 11 (verification) | The upgrade rehearsal of 2026-09-11 is the end-to-end one: a 4.0.3 configuration is refused by name on a 5.0.0 binary |
 | 14 (prefix shape) | `metadataKeyPrefixPattern` is `^[a-z0-9][a-z0-9-]{2,}-$`, and ADR 0013 D7 was amended so it no longer names the weaker rule |
 | 15 (D11, unknown key refuses the start) | `viper.Unmarshal` runs with `ErrorUnused = true`; the refusal names the offending key, which the upgrade rehearsal exercised |
@@ -22,8 +30,8 @@ merge lands; what is durable out of it is already in ADR 0013 and ADR 0014, and
 the operator-facing half is in `README.md`.
 
 The decisions behind every item live in
-[ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md) and
-[ADR 0014](../adr/0014-authentication-is-sigv4-no-rate-limiting.md); the standing
+[ADR 0013](../../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md) and
+[ADR 0014](../../adr/0014-authentication-is-sigv4-no-rate-limiting.md); the standing
 gap is `SECURITY_ARCHITECTURE.md` §8, H-10. This ticket is the work list, nothing
 else. Every anchor below was read in the tree at `6eea6c3`.
 
@@ -33,13 +41,13 @@ else. Every anchor below was read in the tree at `6eea6c3`.
 
 | Item | Closed by | Verified now |
 |---|---|---|
-| **1** — delete `SecurityMetrics`, the failed-attempt map, `getClientIP`, the brute-force branch | dead-code round 2026-09-10 | `grep -rn SecurityMetrics internal/ cmd/ pkg/` is empty. `logSecurityEvent` ([s3auth_robust.go:409-419](../../internal/proxy/middleware/s3auth_robust.go#L409-L419)) logs `remote_addr` and `x_forwarded_for` as two raw fields, exactly as ADR 0013 D2 specifies. The three remaining `SecurityMetrics` hits are the Prometheus subtest name in [auth_test.go:143-144, 430](../../test/integration/authentication/auth_test.go#L143), which is what the success criterion always allowed |
-| **3** — delete the six dead `s3_security` keys, `GetS3SecurityConfig`, plus `streaming_buffer_size` and `enable_adaptive_buffering` | same | `S3SecurityConfig` ([config.go:64-68](../../internal/config/config.go#L64-L68)) carries `MaxClockSkewSeconds` and nothing else; `validateS3Security` ([config.go:717-729](../../internal/config/config.go#L717-L729)) checks only that one. `OptimizationsConfig` ([config.go:70-94](../../internal/config/config.go#L70-L94)) has no buffer or threshold field. `GetStreamingBufferSize`, `GetStreamingThreshold`, `GetS3SecurityConfig`, `GetProviderByAlias`, `GetProviderConfig`, `ValidateS3ClientCredentials`, `IsS3ClientAuthEnabled` all have zero hits |
-| **7** — delete `use_tls` from both structs, both defaults, the migration and the `server.go` fallback; rewrite the misleading comment | same | `grep -rn "use_tls\|UseTLS" internal/ cmd/ pkg/ config/ deploy/ test/` is empty. `migrateLegacyConfig` is gone with the whole legacy block. `backendClientOptions` ([server.go:130-171](../../internal/proxy/server.go#L130-L171)) reads `TargetEndpoint` and `InsecureSkipVerify` only; the transport is `o.BaseEndpoint` at [server.go:153](../../internal/proxy/server.go#L153). `SECURITY_ARCHITECTURE.md` §6.6 states it |
+| **1** — delete `SecurityMetrics`, the failed-attempt map, `getClientIP`, the brute-force branch | dead-code round 2026-09-10 | `grep -rn SecurityMetrics internal/ cmd/ pkg/` is empty. `logSecurityEvent` ([s3auth_robust.go:409-419](../../../internal/proxy/middleware/s3auth_robust.go#L409-L419)) logs `remote_addr` and `x_forwarded_for` as two raw fields, exactly as ADR 0013 D2 specifies. The three remaining `SecurityMetrics` hits are the Prometheus subtest name in [auth_test.go:143-144, 430](../../../test/integration/authentication/auth_test.go#L143), which is what the success criterion always allowed |
+| **3** — delete the six dead `s3_security` keys, `GetS3SecurityConfig`, plus `streaming_buffer_size` and `enable_adaptive_buffering` | same | `S3SecurityConfig` ([config.go:64-68](../../../internal/config/config.go#L64-L68)) carries `MaxClockSkewSeconds` and nothing else; `validateS3Security` ([config.go:717-729](../../../internal/config/config.go#L717-L729)) checks only that one. `OptimizationsConfig` ([config.go:70-94](../../../internal/config/config.go#L70-L94)) has no buffer or threshold field. `GetStreamingBufferSize`, `GetStreamingThreshold`, `GetS3SecurityConfig`, `GetProviderByAlias`, `GetProviderConfig`, `ValidateS3ClientCredentials`, `IsS3ClientAuthEnabled` all have zero hits |
+| **7** — delete `use_tls` from both structs, both defaults, the migration and the `server.go` fallback; rewrite the misleading comment | same | `grep -rn "use_tls\|UseTLS" internal/ cmd/ pkg/ config/ deploy/ test/` is empty. `migrateLegacyConfig` is gone with the whole legacy block. `backendClientOptions` ([server.go:130-171](../../../internal/proxy/server.go#L130-L171)) reads `TargetEndpoint` and `InsecureSkipVerify` only; the transport is `o.BaseEndpoint` at [server.go:153](../../../internal/proxy/server.go#L153). `SECURITY_ARCHITECTURE.md` §6.6 states it |
 | **8**, deletion half — strip the dead keys from every config surface | same | Nothing left in `config/*.yaml`, `deploy/helm/…/values-production.yaml` or `test/e2e/velero/values-proxy.yaml`, the four-line D-5 comment in the latter included. There are **four** example configs: `config/rsa-example.yaml` went with the `rsa` provider (`2fa4b9c`), and `config/none-example.yaml` is now `config/exit-example.yaml` (`0ccface`). `config/multi-example.yaml` also lost a top-level `streaming.segment_size` block no code ever read |
-| **12** — pprof on its own loopback listener | 2026-09-07 | `monitoring.pprof_bind_address` with `requireLoopbackAddress` ([config.go:328-357](../../internal/config/config.go#L328-L357)); ADR 0013 D8 |
-| **13** — validate `metadata_key_prefix` at startup | 2026-09-07 | `metadataKeyPrefixPattern` = `^[a-z0-9-]+$` ([config.go:490](../../internal/config/config.go#L490)), checked first in `validateEncryption` ([config.go:501-508](../../internal/config/config.go#L501-L508)). Item **14** below still changes the pattern |
-| **13a** — delete the dead `MetadataManager.ValidateConfiguration` whose "empty is valid" comment contradicted the live rule | dead-code round 2026-09-10 | Zero hits for `ValidateConfiguration` outside a test *name* in [manager_test.go:183](../../internal/orchestration/manager_test.go#L183) |
+| **12** — pprof on its own loopback listener | 2026-09-07 | `monitoring.pprof_bind_address` with `requireLoopbackAddress` ([config.go:328-357](../../../internal/config/config.go#L328-L357)); ADR 0013 D8 |
+| **13** — validate `metadata_key_prefix` at startup | 2026-09-07 | `metadataKeyPrefixPattern` = `^[a-z0-9-]+$` ([config.go:490](../../../internal/config/config.go#L490)), checked first in `validateEncryption` ([config.go:501-508](../../../internal/config/config.go#L501-L508)). Item **14** below still changes the pattern |
+| **13a** — delete the dead `MetadataManager.ValidateConfiguration` whose "empty is valid" comment contradicted the live rule | dead-code round 2026-09-10 | Zero hits for `ValidateConfiguration` outside a test *name* in [manager_test.go:183](../../../internal/orchestration/manager_test.go#L183) |
 
 Three premises later changes removed, so nobody re-derives them:
 
@@ -49,7 +57,7 @@ Three premises later changes removed, so nobody re-derives them:
 - **`TestIntegrityVerificationWithDefaults` is gone** with
   `internal/config/integrity_verification_test.go`. Item 5's abstention rule no
   longer has that test to keep green — the test it must keep green is
-  `TestLoad_ValidExitConfig` ([config_test.go:11-51](../../internal/config/config_test.go#L11-L51)),
+  `TestLoad_ValidExitConfig` ([config_test.go:11-51](../../../internal/config/config_test.go#L11-L51)),
   which loads `s3_backend.target_endpoint: "http://localhost:9000"` with an `exit`
   provider, i.e. exactly item 6's warning case, not item 5's refusal case.
 - **The pass-through provider is no longer called `none`.** Every occurrence of the
@@ -175,8 +183,8 @@ helm template t deploy/helm/s3-encryption-proxy -f deploy/helm/s3-encryption-pro
 a lint finding, so `go build ./...` is what catches it.
 
 **Integration** — both demo proxies already point at `https://minio:9000`
-([aes-example.yaml:15](../../config/aes-example.yaml#L15),
-[aes-tls-example.yaml:24](../../config/aes-tls-example.yaml#L24)), so item 5 changes
+([aes-example.yaml:15](../../../config/aes-example.yaml#L15),
+[aes-tls-example.yaml:24](../../../config/aes-tls-example.yaml#L24)), so item 5 changes
 nothing for them; item 2 does tighten the demo's header-auth window to the 300 s
 those files configure.
 
@@ -189,7 +197,7 @@ make test-integration-tls    # TLS proxy listener, the SDK's default framing
 Both green with no test skipped or removed other than `testRateLimiting`.
 
 **Performance** — `make test-integration-performance` on an idle machine, three
-runs, against the numbers in [012](012-performance-audit-round2.md). Expected: no
+runs, against the numbers in [012](../012-performance-audit-round2.md). Expected: no
 change. The only hot-path edit is one function call replacing a constant in the
 clock-skew check. Movement beyond run-to-run noise is a finding, reported before the
 ticket closes.
@@ -203,8 +211,8 @@ a failure there is not necessarily this ticket's.
 **One manual probe** (item 6, `exit` provider). Start the proxy with the `exit`
 provider against `http://minio:9000` and PUT an object on each write path — one
 at or below `optimizations.streaming_segment_size` (12 MiB # default,
-[config.go:244](../../internal/config/config.go#L244)) and one above it, since those
-are the two paths [operations.go:231-243](../../internal/proxy/handlers/object/operations.go#L231-L243)
+[config.go:244](../../../internal/config/config.go#L244)) and one above it, since those
+are the two paths [operations.go:231-243](../../../internal/proxy/handlers/object/operations.go#L231-L243)
 chooses between. Add a client-driven multipart upload for the third path. Per the
 readings under item 6, only the first is expected to fail; record the result here
 either way. If the small one fails with `failed to seek body to start`, item 6's
@@ -221,9 +229,9 @@ ADR rather than here.
   single-request one (readings under item 6). The probe settles it. It does not
   block the ticket: the refusal for encrypting providers is the security-relevant
   half and is unaffected.
-- **`X-Forwarded-For` stays in the logs** ([s3auth_robust.go:409-419](../../internal/proxy/middleware/s3auth_robust.go#L409-L419)).
+- **`X-Forwarded-For` stays in the logs** ([s3auth_robust.go:409-419](../../../internal/proxy/middleware/s3auth_robust.go#L409-L419)).
   Accepted: it is a log field, not a key or a decision input. `SECURITY_ARCHITECTURE.md`
-  §4.2 ([:443](../../SECURITY_ARCHITECTURE.md#L443)) already says so and should keep
+  §4.2 ([:443](../../../SECURITY_ARCHITECTURE.md#L443)) already says so and should keep
   saying it, so the next reader does not mistake it for a trusted client identity.
 - **Nothing prevents the next dead knob.** ErrorUnused (item 15) does not help: a
   field that is declared and never read passes it, and so does one whose reader
@@ -232,15 +240,15 @@ ADR rather than here.
   code that reads it and a test that proves the effect.
 - **`streaming_segment_size` accepts a value the segment chain cannot use, and no
   decision covers it yet.** `validateOptimizations`
-  ([config.go:634-663](../../internal/config/config.go#L634-L663)) checks only the
+  ([config.go:634-663](../../../internal/config/config.go#L634-L663)) checks only the
   5 MiB–5 GiB range. The proxy's own multipart producer uses that value as the part
-  size ([operations.go:620](../../internal/proxy/handlers/object/operations.go#L620))
+  size ([operations.go:620](../../../internal/proxy/handlers/object/operations.go#L620))
   and `SegmentedUpload.SealPart` refuses a non-final part whose length is not a
   multiple of `dataencryption.SegmentSize` = 65536
-  ([segmented.go:121-126](../../internal/orchestration/segmented.go#L121-L126),
-  [segmented_gcm.go:25](../../pkg/encryption/dataencryption/segmented_gcm.go#L25)),
+  ([segmented.go:121-126](../../../internal/orchestration/segmented.go#L121-L126),
+  [segmented_gcm.go:25](../../../pkg/encryption/dataencryption/segmented_gcm.go#L25)),
   so e.g. `10000000` passes startup and fails every upload above one part with
   `ErrPartNotAligned`. ADR 0013 D7 is the principle ("a configuration that cannot
-  work refuses to start") but does not name this case, and [023](023-major-v5.md)
-  already announces the check as shipped ([:760-762](023-major-v5.md#L760)). Decide
+  work refuses to start") but does not name this case, and [023](../023-major-v5.md)
+  already announces the check as shipped ([:760-762](../023-major-v5.md#L760)). Decide
   it in an ADR before writing either the check or the release note.

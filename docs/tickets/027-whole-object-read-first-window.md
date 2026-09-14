@@ -12,6 +12,12 @@ What is already decided and shipped stays as it is: a whole-object read takes th
 object's end first, and the size of that first read is the constant ADR 0003 D14
 names. **Any change to it is an amendment to that ADR, not a code edit.**
 
+**Correction, 2026-09-12: option C below has since been built** — not as this
+evaluation's outcome, but as one of the free costs removed in the 5.0.0
+performance round. It changed *when* the second backend read is issued, not the
+window ADR 0003 D14 fixes, so the question this file exists for is unchanged.
+What it bought is recorded under option C and under question 2.
+
 ## Why this exists
 
 A whole-object `GET` reads the object's end before its beginning, because the
@@ -37,6 +43,13 @@ half a megabyte, where a 100 KB download is about 40 % slower. Uploads and range
 reads are untouched — kopia, the client that reads with small ranges, is on the
 ranged path and still costs one request per range.
 
+**Both columns are the tree before option C.** They are the read before and after
+ADR 0003 D14 made it tail-first, measured on 2026-09-11; the two backend reads
+were still serialised in both. Since they overlap, the "After" column is
+pessimistic for every size in it that needs a second request — by the 44–100 µs
+named under option C, which is noise at 10 MiB and above. No row here was
+measured against the tree as it stands.
+
 ## What the shape of the code is today
 
 Three facts the evaluation rests on, verified in this tree:
@@ -46,9 +59,10 @@ Three facts the evaluation rests on, verified in this tree:
   `serveWholeObject` ([operations.go](../../internal/proxy/handlers/object/operations.go)),
   under `If-Match` on the first answer's entity tag.
 - **The object's stored length arrives in the headers of the first answer**, in
-  its `Content-Range`, and the code already reads it before it touches the body.
-  The second request therefore has everything it needs before the first body byte
-  is read — it is simply issued after.
+  its `Content-Range`, and the code reads it before it touches the body. Since
+  option C that is where the second request is issued from: `fetchObjectTail`
+  calls back with the stored length and the entity tag before it reads the tail,
+  and `serveWholeObject` starts the remainder there.
 - The bytes of the first read are held until the response ends, because they are
   the **last** bytes written. A slow client on a large object pins them for the
   whole transfer.
@@ -64,11 +78,19 @@ time of the window to time-to-first-byte for every object *above* it: about 4 ms
 for 1 MiB against this backend.
 
 **C. Issue the second request on the first answer's headers**, instead of after
-its body. The round trip then overlaps the first read's transfer rather than
-following it. No configuration, no extra memory, and it is what makes B cheap —
-on its own, at today's window, it saves about a quarter of a millisecond. Costs
-one wasted backend request whenever the trailer turns out not to open, which has
-to be cancelled rather than left hanging.
+its body. **Built 2026-09-12 and measured; this is what the tree does now.** The
+round trip overlaps the first read's transfer rather than following it, with no
+configuration and no extra memory, as predicted. What the prediction got wrong is
+the size: the quarter-millisecond above was arithmetic, and the measurement is
+**44–100 µs per read across 70 KiB–256 KiB, 1.4 to 3.6 points of the
+proxy-versus-backend ratio**. An object served by one request issues nothing
+extra and is unchanged.
+
+Two costs, as built. The second request is in flight before the trailer is
+opened, so a trailer that does not authenticate wastes it — a foreign object does
+not, because that is decided on the first answer's metadata, before the request
+is issued. And the answer is collected and its body closed rather than cancelled,
+so a refused read waits for it before writing the error.
 
 **D. A configuration key over the window.** B, decided per deployment. It needs a
 startup rule — a multiple of 65536 and at least 65604, or the read breaks — and a
@@ -90,9 +112,14 @@ the honest third point of the triangle, not because it looks good.
    reads ranged; its metadata objects are small. If the band is empty for the
    deployments in scope, the answer is A and this ticket is archived. Needs a
    size distribution from a real deployment, not a guess.
-2. **How much does C alone buy, measured?** The quarter-millisecond above is
-   arithmetic, not a measurement. If C closes enough of the gap on its own, B and
-   D never have to be argued.
+2. **How much does C alone buy, measured? Answered, 2026-09-12: 44–100 µs per
+   read across 70 KiB–256 KiB, 1.4 to 3.6 points of the proxy-versus-backend
+   ratio.** It does not close the gap. The second backend request was measured on
+   the same machine at about 300 µs over the direct leg — an object served by one
+   request costs the proxy 229–300 µs over it, one that needs two costs
+   545–628 µs — so C recovers between a seventh and a third and the rest is still
+   there. B and D are not settled by it; what C removed is the reason to hurry
+   them.
 3. **What bounds the number of concurrent whole-object reads?** Nothing in the
    proxy does today. A per-request buffer that scales with a configurable window
    multiplies against a number nobody caps, which may make bounding concurrency
@@ -123,7 +150,10 @@ the honest third point of the triangle, not because it looks good.
   The instrument has to exist before the argument.
 - Memory under N concurrent whole-object reads at each candidate window, against
   the same container limit the deployment uses.
-- C, measured rather than reasoned about, on the same instrument.
+- ~~C, measured rather than reasoned about, on the same instrument.~~ **Done,
+  2026-09-12**, against the demo stack — the numbers are under question 2. Not on
+  the same instrument: the band benchmark the first bullet asks for was never
+  built, so 128 KiB, 512 KiB and 2 MiB are still unmeasured against C.
 
 ## Success criteria
 

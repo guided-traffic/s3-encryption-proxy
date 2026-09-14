@@ -1,5 +1,22 @@
 # Ticket 028: The 5.0.0 performance round — what landed, what is left
 
+## Archived 2026-09-14
+
+Closed with the 5.0.0 cut. The status line below is stale in one word: the work is
+committed, and has been since 2026-09-12. What landed is recorded where it
+belongs — the forwarding change in ADR 0012 D7 and ADR 0024, the idle clock in
+ADR 0028, the shutdown budget in ADR 0029.
+
+The analytical half of the round had no home and now does. In
+`docs/developer/performance.md`: the crypto floor and its headroom over the link,
+the measured price of the second backend request of a tail-first read, the three
+suspicions this round falsified, and the caveat that the published comparison
+still runs its two legs over different transports. Ticket 027 was updated
+directly, because it was still asking a question this round answered.
+
+What stays unfinished is deliberate: the two comparison legs still run over
+different transports.
+
 ## Status (2026-09-12)
 
 **Everything below is in the working tree and nothing is committed.** All four
@@ -81,10 +98,10 @@ in the `Legs:` line and switchable with `S3EP_TEST_PROXY_ENDPOINT`.
 
 | Change | Where | Measured |
 |---|---|---|
-| `readAllSized` reserved exactly the hint, so `bytes.Buffer.ReadFrom`'s final read reallocated to 2× and copied the whole payload | [parser.go](../../internal/proxy/request/parser.go) | per 5 MiB part: 15.7 MB and 306 µs → 5.25 MB and 63 µs |
-| The two backend reads of a whole-object `GET` were serialised; the second is now issued from the first answer's headers | [tail.go](../../internal/proxy/handlers/object/tail.go), [operations.go](../../internal/proxy/handlers/object/operations.go) | 70–256 KiB reads: 44–100 µs each, +1.4 to +3.6 points; one-request objects unchanged |
-| Part writers kept a running CRC32C nothing read | [segmented_gcm_io.go](../../pkg/encryption/dataencryption/segmented_gcm_io.go) | one full pass per uploaded byte on both multipart paths |
-| Three `regexp.MustCompile` per authenticated request | [s3auth_robust.go](../../internal/proxy/middleware/s3auth_robust.go) | hoisted to package variables |
+| `readAllSized` reserved exactly the hint, so `bytes.Buffer.ReadFrom`'s final read reallocated to 2× and copied the whole payload | [parser.go](../../../internal/proxy/request/parser.go) | per 5 MiB part: 15.7 MB and 306 µs → 5.25 MB and 63 µs |
+| The two backend reads of a whole-object `GET` were serialised; the second is now issued from the first answer's headers | [tail.go](../../../internal/proxy/handlers/object/tail.go), [operations.go](../../../internal/proxy/handlers/object/operations.go) | 70–256 KiB reads: 44–100 µs each, +1.4 to +3.6 points; one-request objects unchanged |
+| Part writers kept a running CRC32C nothing read | [segmented_gcm_io.go](../../../pkg/encryption/dataencryption/segmented_gcm_io.go) | one full pass per uploaded byte on both multipart paths |
+| Three `regexp.MustCompile` per authenticated request | [s3auth_robust.go](../../../internal/proxy/middleware/s3auth_robust.go) | hoisted to package variables |
 
 `EncryptReader.Checksum()` now returns `(Checksum, bool)` so a part reader cannot
 silently report a checksum it does not keep. The compiler found the one caller.
@@ -228,7 +245,7 @@ the bucket configuration, but it belongs in the operator documentation.
 
 ## Related record
 
-Ticket [027](027-whole-object-read-first-window.md) is the evaluation of the
+Ticket [027](../027-whole-object-read-first-window.md) is the evaluation of the
 whole-object read's first window. Piece 2 above changed that path — the two reads
 now overlap — without changing the window size ADR 0003 D14 fixes, so 027's
 question is unchanged and its measured numbers predate the overlap.
@@ -248,4 +265,4 @@ question is unchanged and its measured numbers predate the overlap.
       because they share `segmented_session.go`, and the other order leaves an
       intermediate commit that does not build
 - [ ] Deleted, once 5.0.0 is cut. It is listed from
-      [023](023-major-v5.md) until then because the branch is still open
+      [023](../023-major-v5.md) until then because the branch is still open

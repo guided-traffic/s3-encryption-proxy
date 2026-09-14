@@ -22,6 +22,23 @@ be reconstructed later; the profiles a run captures are not. The record also
 carries the commit and whether the working tree was clean. Record from a clean
 tree — otherwise the commit in the directory name does not identify what ran.
 
+## A per-request log line is Debug
+
+`logrus` builds the `logrus.Fields` map inside every `WithFields()` call whether
+or not the record is ever emitted, so an `Info` line on a per-request path pays
+for a map allocation at production log levels and then discards it. Handler code
+therefore logs per request at `Debug` and at nothing else. `Info` is for what a
+process emits a bounded number of times — startup, shutdown, a provider it
+registered, a session the sweeper ended — and `Warn` and `Error` mark a request
+that actually failed, which is not a per-request rate.
+
+Nothing enforces this: no linter rule, no test, and
+[CLAUDE.md](../../CLAUDE.md) asks for `logrus.WithFields()` and "appropriate
+levels" without saying which level a per-request line takes. A handler written to
+those instructions alone would put the allocation back and every suite would stay
+green. Check it by hand when you add one — `internal/proxy/handlers/` carries no
+`.Info(` call at all.
+
 ## What ruins a comparison
 
 **A different power source.** A laptop on battery throttles. If the before column
@@ -49,6 +66,17 @@ comparison. The crypto floor's rows were renamed when the segment chain landed:
 the rows measuring the old format were deleted rather than kept as a comparison
 against nothing, and the `v2_` prefix on the surviving ones went with them. Its
 rows in the pre-v2 column therefore pair with a new run's only for `crc32c`.
+
+**Two transports inside one ratio.** The published proxy-versus-backend
+comparison still runs its legs over different transports: the proxy endpoint
+defaults to `http://127.0.0.1:8080` and the backend endpoint to
+`https://127.0.0.1:9000`
+([`minio_test_helper.go`](../../test/integration/minio_test_helper.go)), so the
+SDK frames and checksums the two legs differently and both code paths sit inside
+one number. The run names both on its `Legs:` line, and
+`S3EP_TEST_PROXY_ENDPOINT` pointed at the TLS listener removes the asymmetry.
+This is not a historical caveat: it is live on the figure the pipeline comments
+onto every pull request.
 
 ## What the instrument can and cannot separate
 
@@ -84,12 +112,48 @@ backend refuses an aws-chunked chunk larger than that, while both proxies decode
 the framing and re-frame towards it — so 24, 64 and 256 MiB compare the two proxy
 write paths with each other and carry no backend ratio.
 
+**The cipher is ruled out, and cannot become the bottleneck at these rates.**
+The in-process crypto floor is the instrument that separates it absolutely.
+Measured 2026-09-12 on an Apple M5 Pro (18 cores): the shipped codec runs at
+4257 MiB/s decrypting and 4263 MiB/s encrypting, per-segment AES-GCM alone at
+8776 MiB/s and CRC32C at 11501 MiB/s, against a local link that caps at about
+245 MB/s whatever the concurrency — roughly 17× headroom. A CPU profile of a
+sustained `GET` puts `gcmAesDec` at 2.2 % and `castagnoliUpdate` at 0.8 %; the
+rest is I/O. Every round starts by suspecting the cipher, and this is the answer
+until either the codec or the link changes. The ratio is what a later run has to
+recompute, not the absolute numbers.
+
+**The second backend request of a whole-object read is worth about 300 µs.** A
+tail-first `GET` reads the object's end first and its beginning second, so an
+object of at most one segment costs one backend request and a larger one costs
+two ([ADR 0003 D14](../adr/0003-objects-are-an-authenticated-segment-chain.md)).
+Measured across that boundary, against the direct leg: an object served by one
+request costs the proxy 229–300 µs, one that needs a second costs 545–628 µs.
+That is the standing cost of the tail-first design, and the datum any proposal to
+change the first window's size has to beat.
+
 What the instrument **cannot** do is attribute a change to one commit when several
 landed together. The segment chain, the producer restructuring and the removal of
 the post-completion self-copy are one commit ("read and write the segment chain
 end to end"), so a before/after across them measures the release, not any one of
 them. Say so in the report rather than implying an attribution the numbers do not
 support.
+
+## What is already ruled out
+
+Three suspicions the 2026-09-12 round measured and falsified. Re-open one only
+against a measurement that contradicts what is written here.
+
+- **The backend connection is not burnt per request.** MinIO's own
+  `PassiveOpens` counter — read from the backend rather than inferred from the
+  proxy's side — stayed flat across 40 reads, so the transport is being reused.
+  That counter is the cheap way to settle this question; no packet capture is
+  needed.
+- **Debug logging costs 2–5 %.** Enough to keep off a recording run, never the
+  explanation for a double-digit gap.
+- **There is no per-byte download deficit.** At 12 MiB and above the proxy tracks
+  the direct leg at 98–103 %. What the small sizes measure is per-request
+  latency — the fixed cost above — and not the cost of decrypting a byte.
 
 ## The after column, and what it is allowed to say
 

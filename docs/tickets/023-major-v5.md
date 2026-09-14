@@ -46,7 +46,7 @@ Waves 0 to 7 are done. **Every decision this release carries is implemented, and
 every performance claim it makes is measured.**
 
 **One round landed after wave 7 and has its own file:
-[028](028-upload-and-read-performance-round.md).** It began as an analysis of the
+[028](archive/028-upload-and-read-performance-round.md).** It began as an analysis of the
 reported encryption overhead and ended in four pieces of work, all committed on
 this branch: the performance comparison stopped measuring its own harness, four
 costs came off the read and write paths, a client-driven part is now forwarded
@@ -93,7 +93,7 @@ as open are the dated progress records they were written as:
 
 | Was listed as owed | Where it actually stands |
 |---|---|
-| Work item 9 of [016](016-helm-chart-fixes.md) | **Done.** ADR 0026 shipped with the chart's own TLS listener; 016's status table says 20 of 21 and item 9 is one of the twenty |
+| Work item 9 of [016](archive/016-helm-chart-fixes.md) | **Done.** ADR 0026 shipped with the chart's own TLS listener; 016's status table says 20 of 21 and item 9 is one of the twenty |
 | The upgrade rehearsal | **Run 2026-09-11** and recorded below |
 | Open question 1, the metadata-prefix pattern | **Closed.** ADR 0013 D7 was amended and names no pattern; ADR 0009 D2 and the validator agree on `^[a-z0-9][a-z0-9-]{2,}-$` |
 | Open question 2, `max_clock_skew_seconds: 0` | **Closed.** The loader refuses anything below 1 at startup, so there is no value that means 900 by accident |
@@ -557,7 +557,7 @@ set of behaviour changes weeks later:
 
 | Out | Where instead | Why |
 |---|---|---|
-| The Helm chart round ([016](016-helm-chart-fixes.md)) | `main`, now | It closes a live deployment defect and gives continuous integration a render of the values files this release edits. Squash-merged under a non-breaking title |
+| The Helm chart round ([016](archive/016-helm-chart-fixes.md)) | `main`, now | It closes a live deployment defect and gives continuous integration a render of the values files this release edits. Squash-merged under a non-breaking title |
 | Filename encryption ([017](017-filename-encryption.md)) | A later release | Depends on the listing work and on a client-behaviour check that has not started. Enabling it later is a rename pass, not a re-encryption, so it costs an operator nothing to wait |
 | Vault as a key provider ([025](025-tink-kms-hcvault.md)) | A later release | Parked: its own five decisions are deferred and recorded on the ticket. Purely additive, and with the local provider kept there is no gap at 5.0.0 |
 | SSE-C on every verb ([026](026-sse-c-passthrough.md)) | A later release | Purely additive: a request that answers `501` today starts working |
@@ -573,7 +573,7 @@ set of behaviour changes weeks later:
    **The baseline is done (2026-09-09); the Helm chart round is not started.**
 2. **[013](archive/013-storage-format-v2.md)** first on the branch — it deletes the code
    the others would otherwise be written against, and it is the largest change.
-3. **[015](015-configuration-hygiene.md)** — after 013, so the example
+3. **[015](archive/015-configuration-hygiene.md)** — after 013, so the example
    configurations and values files are edited once for both.
 4. The client-visible corrections, in dependency order.
 5. **The S3-surface ticket** — the storage headers and the location
@@ -615,7 +615,7 @@ this branch: no line of a commit message may start with the words `BREAKING CHAN
 unless it is the footer — the parser reads it as one, and the dry run computed 5.0.0 from a
 sentence that did.
 
-Still open on step 1: the Helm chart round ([016](016-helm-chart-fixes.md)), not started.
+Still open on step 1: the Helm chart round ([016](archive/016-helm-chart-fixes.md)), not started.
 The performance baseline of [021](021-relative-performance-thresholds.md) is **recorded**
 (2026-09-09) — see the progress block below.
 
@@ -650,9 +650,9 @@ work item. Delete this block when the rows below are all in flight.
 |---|---|
 | CRC32C in the 40-byte trailer; `x-amz-checksum-crc32c` on whole-object GET and HEAD, served tail-first, no configuration key; ranged reads none, path kept open | ADR 0003 D2/D6/D9/D12a/D13/D14, ADR 0012 D10, ADR 0010 D5; [013](archive/013-storage-format-v2.md) items 1, 2d, 3, 5 |
 | A `;` in the raw query is refused with `InvalidArgument` | ADR 0007 D13; the S3-surface ticket item 23 |
-| Every declared upload checksum is verified, `Content-MD5` included; no `verify_upload_digests` key; `DeleteObjects` requires a digest | ADR 0012 D3/D4/D14; [015](015-configuration-hygiene.md) |
-| `metadata_key_prefix` must match `^[a-z0-9][a-z0-9-]{2,}-$` | ADR 0009 D2; [015](015-configuration-hygiene.md) item 14 |
-| `streaming_buffer_size` and `enable_adaptive_buffering` are deleted | ADR 0013 D9; [015](015-configuration-hygiene.md) items 3 and 8, [013](archive/013-storage-format-v2.md) item 12 |
+| Every declared upload checksum is verified, `Content-MD5` included; no `verify_upload_digests` key; `DeleteObjects` requires a digest | ADR 0012 D3/D4/D14; [015](archive/015-configuration-hygiene.md) |
+| `metadata_key_prefix` must match `^[a-z0-9][a-z0-9-]{2,}-$` | ADR 0009 D2; [015](archive/015-configuration-hygiene.md) item 14 |
+| `streaming_buffer_size` and `enable_adaptive_buffering` are deleted | ADR 0013 D9; [015](archive/015-configuration-hygiene.md) items 3 and 8, [013](archive/013-storage-format-v2.md) item 12 |
 | No migration of any kind; data is uploaded again from its source; one proxy version at a time | ADR 0017 D3/D5/D6, ADR 0001 D5, ADR 0003 D10; release notes below |
 | `optimizations.multipart_short_part_buffer_size`, default 64 MiB, minimum 5 MiB; copy refusal stays unconditional under `none` | ADR 0011 D5/D9, ADR 0020 D14; [013](archive/013-storage-format-v2.md) items 9 and 12 |
 | 4.0.x and earlier are end-of-life at 5.0.0; a version dry run on every pull request; the full performance baseline before 013 | ADR 0018 D6/D11, ADR 0020 D17; [021](021-relative-performance-thresholds.md), step 1 of the order |
@@ -682,7 +682,7 @@ measurement run, a shared-runner module-cache wipe, an uncleaned comparison buck
 summary line that does not name what it measures. None of them block the branch.
 
 **Step 1 is therefore down to the Helm chart round**
-([016](016-helm-chart-fixes.md), not started), which blocks nothing, so
+([016](archive/016-helm-chart-fixes.md), not started), which blocks nothing, so
 [013](archive/013-storage-format-v2.md) can begin.
 
 ### What the baseline found, and where each finding now lives
@@ -869,7 +869,7 @@ release-blocking. Ordered by how much it costs a client to live without:
    Every size-comparing client re-transfers its whole dataset on every run. The
    reason this waited — that the plaintext size was not computable from the
    stored size — is spent: it is arithmetic now.
-2. **The deletions** (ADR 0013, [015](015-configuration-hygiene.md), 013 items
+2. **The deletions** (ADR 0013, [015](archive/015-configuration-hygiene.md), 013 items
    12–14). Two dead keys are *security* settings, and the previous format's
    decrypt path still compiles.
 3. **Client checksum verification** (ADR 0012).
@@ -934,7 +934,7 @@ detail, the four defects the session found, and the order of what is left.
    and the same power source.
 4. **013 item 5 — the ranged read path.** Call the codec's window planner rather than re-deriving
    the window; the note is on the item.
-5. **[016](016-helm-chart-fixes.md), the Helm chart round**, on `main` whenever convenient. It
+5. **[016](archive/016-helm-chart-fixes.md), the Helm chart round**, on `main` whenever convenient. It
    blocks nothing and nothing blocks it.
 6. **[021](021-relative-performance-thresholds.md)'s continuous-integration cleanup**, likewise.
 
@@ -979,7 +979,7 @@ Also removed because nothing called them: 17 methods of the backend interface,
 13 Prometheus metrics that were registered and never observed, and the dead
 accessors on `Config`, `Manager`, `MetadataManager` and `ProviderManager`.
 
-This closes [015](015-configuration-hygiene.md) items 1, 3, 7, 8 and 13a,
+This closes [015](archive/015-configuration-hygiene.md) items 1, 3, 7, 8 and 13a,
 [013](archive/013-storage-format-v2.md) items 13 and 14 and the deletion half of item 12,
 [025](025-tink-kms-hcvault.md) work-list item 1, [012](012-performance-audit-round2.md)
 item 1.3, and the `CS-2`, `CS-3` and `S-4` findings of
@@ -1027,7 +1027,7 @@ needs an answer here rather than in its own ticket.
 
 | Where it sat | What it is | Answer |
 |---|---|---|
-| [016](016-helm-chart-fixes.md) items 6 and 9 | The chart round was scheduled out of the bundle, but two of its items are breaking: item 6 flips a default install's metadata prefix, and every object already stored then reads back as `InvalidObjectState`; item 9 is the certificate/ingress consistency guard, which refuses a configuration that installs today | **Recommended: the two items move into the bundle**, the rest of the chart round stays out. Not yet decided by the owner. Item 6 has to move `metadata_key_prefix` without changing the shipped default, or it is a data-loss change dressed as a chart fix |
+| [016](archive/016-helm-chart-fixes.md) items 6 and 9 | The chart round was scheduled out of the bundle, but two of its items are breaking: item 6 flips a default install's metadata prefix, and every object already stored then reads back as `InvalidObjectState`; item 9 is the certificate/ingress consistency guard, which refuses a configuration that installs today | **Recommended: the two items move into the bundle**, the rest of the chart round stays out. Not yet decided by the owner. Item 6 has to move `metadata_key_prefix` without changing the shipped default, or it is a data-loss change dressed as a chart fix |
 | [025](025-tink-kms-hcvault.md) work-list 1 | Deleting the Tink stub removes a provider type an operator can write today | **Done this session.** The type is gone from the tree and from `go.mod`; configuration still refuses `type: "tink"` with a named error |
 | [024](archive/024-coverage-round-findings.md) X-2a | `WriteXML` commits `200` before marshalling can fail, so a marshalling failure reaches the client as a truncated body behind a success status. Fixing it turns that into a `500` | **Recommended: in.** It is one function, it sits in the same file the listing rewrite of [018](018-listobjectsv2-document.md) touches, and shipping a truncated body behind a `200` into a major that rewrites every XML document would be hard to defend. Not yet decided by the owner |
 | the S3-surface ticket's unfolded item 3 | Two XML writers produce different bytes for the same structure; unifying them changes the response bytes of roughly twenty bucket sub-resource documents | **Open question 4 below.** The ticket says "record it, do not start it here", but a byte-level response change is exactly what a major is for, and the next major after this one is unscheduled |
@@ -1065,7 +1065,7 @@ off a ticket's status line.
    ([ADR 0012](../adr/0012-client-checksums-are-verified-never-forwarded.md)).
    Nothing of the verification exists; a wrong `Content-MD5` is still answered
    `200`.
-4. **The rest of [015](015-configuration-hygiene.md)**: the clock skew that the
+4. **The rest of [015](archive/015-configuration-hygiene.md)**: the clock skew that the
    header-signed path ignores, the pre-signed ceiling, the plain-HTTP backend
    refusal, and the prefix shape rule. The deletion half is done.
 5. **[013](archive/013-storage-format-v2.md)'s remainder**: the sealed checksum on the
@@ -1096,7 +1096,7 @@ argument against is scope: it is not a defect, only an inconsistency.
   "s3_backend.target_endpoint is required" and names no migration path.
   **Decided 2026-09-10 and taken into this release** as
   [ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md) D11;
-  the work sits in [015](015-configuration-hygiene.md). Measured before deciding:
+  the work sits in [015](archive/015-configuration-hygiene.md). Measured before deciding:
   three of the four shipped examples pass unchanged, and the fourth was refused
   because it carried a `streaming.segment_size` block no code has ever read —
   now removed.
@@ -1271,11 +1271,11 @@ carrying decided-but-unbuilt rules. Ordered as the work will be taken:
 | Wave | Content | State |
 |---|---|---|
 | 0 | Lint, the `;` refusal, key material, the stale ADR statuses | **Done 2026-09-11** |
-| 1 | Configuration and startup: [015](015-configuration-hygiene.md) items 2, 4, 5, 6, 8b, 9, 10, 14, 15, and the wall clocks and shutdown deadline (ADR 0015, [012](012-performance-audit-round2.md) items 1.2 and 4.1) | **Done 2026-09-11.** [015](015-configuration-hygiene.md) has one item left, its own verification pass |
+| 1 | Configuration and startup: [015](archive/015-configuration-hygiene.md) items 2, 4, 5, 6, 8b, 9, 10, 14, 15, and the wall clocks and shutdown deadline (ADR 0015, [012](012-performance-audit-round2.md) items 1.2 and 4.1) | **Done 2026-09-11.** [015](archive/015-configuration-hygiene.md) has one item left, its own verification pass |
 | 2 | The S3 surface: the S3-surface ticket and [024](archive/024-coverage-round-findings.md) as **one** package — they overlap so heavily that splitting them creates the ownership holes below | **Done 2026-09-11.** 022 is deleted; 024 keeps one row, S-3, which needs a decision |
 | 3 | Client checksum verification (ADR 0012) — nothing of it exists | **Done 2026-09-11.** 014 is deleted; two pre-existing defects were found on the way in and fixed |
 | 4 | The format remainder ([013](archive/013-storage-format-v2.md)): 4a, the reserved trailer part, `ListParts`, and item 2d with ADR 0003 D14 | **Done 2026-09-11.** ADR 0003, ADR 0009, ADR 0011 and ADR 0012 are fully implemented; 013 keeps the after-column and the documentation, which are wave 5 |
-| 5 | The chart ([016](016-helm-chart-fixes.md)), the release notes, the upgrade rehearsal, the performance after-column | **Mostly done 2026-09-11.** The chart is 20 of 21 items, the after column exists, the two configuration remainders and the documentation are closed. Left: the upgrade rehearsal, the release notes, the label, and one undecided chart item |
+| 5 | The chart ([016](archive/016-helm-chart-fixes.md)), the release notes, the upgrade rehearsal, the performance after-column | **Mostly done 2026-09-11.** The chart is 20 of 21 items, the after column exists, the two configuration remainders and the documentation are closed. Left: the upgrade rehearsal, the release notes, the label, and one undecided chart item |
 
 ### Ownership holes — closed by wave 2, except one
 
@@ -1739,7 +1739,7 @@ owner has not decided.
   The memory formula has one home, `docs/developer/performance.md`, with all four
   terms — including the 65604-byte tail buffer ADR 0003 D14 added, which no
   existing statement of the formula knew about.
-- **The chart round ([016](016-helm-chart-fixes.md)): twenty of twenty-one work
+- **The chart round ([016](archive/016-helm-chart-fixes.md)): twenty of twenty-one work
   items.** A config or credential change now rolls the pods, the probe scheme is
   derived from the config the pod will actually receive, the Service can pin a
   node port, both unrenderable values files render *and start the real binary*,
@@ -2380,6 +2380,11 @@ refused afterwards like any other. An `rsa` deployment configures an `aes` key f
       0005 (no KMS provider), 0023 (filename encryption), 0016's shared token,
       0019's single client, 0020's continuous-integration half, and 0008 D9's
       exit-provider metadata leak, which is an open question below.
+- [ ] **One check that only `main` can answer, inherited from the chart round when
+      it was archived on 2026-09-14:** confirm that the Renovate managers that
+      round added actually open pull requests. Renovate runs on a schedule and
+      after pushes to the default branch, so nothing on a feature branch can show
+      it. This file is not archived until that is confirmed.
 - [ ] Each ticket listed here is **archived** — moved to `docs/tickets/archive/`
       — when its work lands, and `git grep` shows nothing outside
       `docs/tickets/` referencing it. **011, 013 and 024 went on 2026-09-13**;

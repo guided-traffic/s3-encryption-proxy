@@ -64,7 +64,7 @@ each under [Closed — the record](#closed--the-record).
 
 ## Context, and what survives of it
 
-Ticket [010](010-performance-improvements.md) finished with upload ~80 MB/s,
+Ticket [010](archive/010-performance-improvements.md) finished with upload ~80 MB/s,
 download ~120 MB/s (1 GB, local MinIO loopback), proxy alloc_space 9.94 GB per
 1 GB round-trip, and `io.ReadAll` at 64.6 % of alloc_space on the upload path.
 **Those numbers were taken on the format that no longer exists** — they are
