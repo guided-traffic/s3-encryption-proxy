@@ -1,3 +1,736 @@
+## [5.0.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v4.0.3...v5.0.0) (2026-09-14)
+
+> ## ⚠️ Not compatible with 4.x or anything before it
+>
+> The stored object format was refactored. **Objects written by an earlier
+> release cannot be read by this one**, and there is no migration: an object
+> written by 3.x or 4.0.x answers `403 InvalidObjectState` on `GET`, `HEAD` and a
+> ranged `GET` alike. Copy the data out with the old version before upgrading,
+> or upload it again from its source afterwards.
+>
+> Run one version at a time. An object a 4.0.x replica writes during a mixed
+> rollout is refused afterwards like any other. A configuration written for an
+> earlier release is refused at startup by name — read **Breaking Changes**
+> below before you upgrade, not after.
+
+## 📊 Quality Metrics
+
+![Coverage](https://img.shields.io/badge/coverage-95.3%25-brightgreen)
+![Go Version](https://img.shields.io/github/go-mod/go-version/guided-traffic/s3-encryption-proxy?logo=go)
+![Security](https://img.shields.io/badge/security-✅%20passed-green)
+![Linting](https://img.shields.io/badge/linting-✅%20passed-green)
+
+**Test Coverage**: 95.3% of code is covered by tests
+
+
+### Features
+
+* answer what S3 answers on every path the sweep found ([d9c0ff0](https://github.com/guided-traffic/s3-encryption-proxy/commit/d9c0ff06a8671e5b5a2b0f3e9cec4eccc8d8460f))
+* bound every request document, and state the proxy's own request id ([60f23b1](https://github.com/guided-traffic/s3-encryption-proxy/commit/60f23b1ca0b1a56c377cd9019777c9a7ba4cb2ae))
+* **chart:** a config change rolls the pods, probes follow the listener, the values files render ([ef21fd7](https://github.com/guided-traffic/s3-encryption-proxy/commit/ef21fd733ae02dde99ff99e4b93adc663271f84a))
+* **chart:** a TLS configuration that is not TLS fails the render ([08a663f](https://github.com/guided-traffic/s3-encryption-proxy/commit/08a663f58d2a0662c31c9d68e75a2ef0621bd81b))
+* **chart:** the chart ships no NetworkPolicy; the network boundary is the administrator's ([02538e7](https://github.com/guided-traffic/s3-encryption-proxy/commit/02538e77895b4bb0c1b84c82f61bc01b71835e95))
+* **chart:** the proxy can terminate TLS at its own Service ([23a5268](https://github.com/guided-traffic/s3-encryption-proxy/commit/23a526801366f085d0771b678452cdaa1014bf92))
+* **config:** a configuration file that cannot be read and a written license_file both refuse the start ([3f9a880](https://github.com/guided-traffic/s3-encryption-proxy/commit/3f9a880a164a4187bab364fb7bc11b4aa1c13aae))
+* **config:** aws-chunked decoding is not configurable any more ([9497245](https://github.com/guided-traffic/s3-encryption-proxy/commit/9497245f982454fe20ace9c2e0ce77a5340b3a6f))
+* **config:** body decoding carries no configuration, and the memory keys are shipped ([0941780](https://github.com/guided-traffic/s3-encryption-proxy/commit/09417800083e70c95cf5ab07e64f75f2f4d9df64))
+* **config:** every key is declared, and the part size says what it is ([684f8cf](https://github.com/guided-traffic/s3-encryption-proxy/commit/684f8cf830732df1f4f84ea72c07d452e22e18bc))
+* **config:** remove the monitoring flags; the chart renders the configuration ([11f3a0a](https://github.com/guided-traffic/s3-encryption-proxy/commit/11f3a0a4b7aaae0ab905e9250c5312fbb09ba1da))
+* **config:** the backend block is a list, and the chart installs one instance ([7edd8f5](https://github.com/guided-traffic/s3-encryption-proxy/commit/7edd8f5ecb265ec9ab43b27a09c2c45abccf6aa9))
+* **config:** the configuration surface says what it does, and refuses what it cannot ([163f535](https://github.com/guided-traffic/s3-encryption-proxy/commit/163f53521d08cbdf28dffb424ea6fd31ca7ab40e))
+* **config:** the image carries its own configuration, and no variable overrides a file ([585ef39](https://github.com/guided-traffic/s3-encryption-proxy/commit/585ef390bc322fd0326e9e9b01542c0b41e211a2))
+* **encryption:** add the segmented AES-256-GCM codec ([31693b0](https://github.com/guided-traffic/s3-encryption-proxy/commit/31693b0490d4c894725f4c112bc4b6a753aef1b7))
+* **encryption:** one local key provider with an authenticated wrap ([bc114f3](https://github.com/guided-traffic/s3-encryption-proxy/commit/bc114f38d469c9a52c197af74ed59ceab860b058))
+* **encryption:** pull-based sealing and independently sealed parts ([1d8536e](https://github.com/guided-traffic/s3-encryption-proxy/commit/1d8536e8ef6c40d7ddb1eb2b5d5814670ff3f48b))
+* **encryption:** read and write the segment chain end to end ([1c78c0e](https://github.com/guided-traffic/s3-encryption-proxy/commit/1c78c0e8f2c3236ff67e34cf9510c7ecda1f7014))
+* **encryption:** the segmented object path in the orchestration layer ([ff7dc7d](https://github.com/guided-traffic/s3-encryption-proxy/commit/ff7dc7d7443cdf0447eab9dac4634c48e965af7c))
+* every write answers the CRC32C it sealed ([cc6f0bf](https://github.com/guided-traffic/s3-encryption-proxy/commit/cc6f0bf49c70434788d02112ec8709de3a2c9cb0))
+* **image:** give the image an ENTRYPOINT, and clean up the demo stack ([008f938](https://github.com/guided-traffic/s3-encryption-proxy/commit/008f9380e121896e03238dce016988386682708c))
+* **keys:** key material is generated, never committed ([adb7b3a](https://github.com/guided-traffic/s3-encryption-proxy/commit/adb7b3aa852bd354e3b47bf499e9a0322e87fda3))
+* **listing:** the bucket listing is an S3 document and states the plaintext size ([1fa8157](https://github.com/guided-traffic/s3-encryption-proxy/commit/1fa81574b8bc95fef78282fb4406badb4b7b7984))
+* **metadata:** a client key inside the proxy prefix is refused, not dropped ([1146736](https://github.com/guided-traffic/s3-encryption-proxy/commit/114673653135d8bcdbf508610a19cbebf60c4033))
+* **monitoring:** a truncated read names the object and moves a counter ([3bfc82e](https://github.com/guided-traffic/s3-encryption-proxy/commit/3bfc82ecdfe66fd50ab0a11916990026471dfa07))
+* **multipart:** ListParts answers from the part table, ListMultipartUploads is forwarded ([aabc922](https://github.com/guided-traffic/s3-encryption-proxy/commit/aabc922f0c9562f4362871b722980c2c74367bb4))
+* **multipart:** the trailer's part number is reserved, so 9999 are the client's ([2ce9ffb](https://github.com/guided-traffic/s3-encryption-proxy/commit/2ce9ffb211a57a542997e7135617800a141367a4))
+* objects are an authenticated AES-256-GCM segment chain ([755c7e2](https://github.com/guided-traffic/s3-encryption-proxy/commit/755c7e29727f7865ee3d95b961a2bc64191393a5))
+* **orchestration:** read s3ep-kek-algorithm in the failed-lookup diagnostic ([e8c38a3](https://github.com/guided-traffic/s3-encryption-proxy/commit/e8c38a3cce2b1e2d5a876123f5618c075142a0ce))
+* **provider:** leaving is a supported mode — `none` becomes the exit provider ([79efc4a](https://github.com/guided-traffic/s3-encryption-proxy/commit/79efc4aa78dde72fba7713c0264105374c7ecfd1))
+* **proxy:** restate the server-side-encryption confirmation on every object path ([43b505a](https://github.com/guided-traffic/s3-encryption-proxy/commit/43b505a40cf2c489d69a59d383c8c978ea40ecee))
+* **read:** a whole-object read takes the object's end first and serves its sealed checksum ([3a631b2](https://github.com/guided-traffic/s3-encryption-proxy/commit/3a631b28472c96221d7c81be822d18844475e94b))
+* **s3:** conditional requests are honoured on every verb that takes one ([9fa86b7](https://github.com/guided-traffic/s3-encryption-proxy/commit/9fa86b720fc8da19d931de0ee6a285851a9249b6))
+* **s3:** every bucket sub-resource answers a real S3 document ([ad1aff0](https://github.com/guided-traffic/s3-encryption-proxy/commit/ad1aff0fe13cdda8452abc1cd404ff4182cc7914))
+* **s3:** every declared upload checksum is verified against the plaintext ([e71024d](https://github.com/guided-traffic/s3-encryption-proxy/commit/e71024d374453620401da277934b1b2db719e43a))
+* **s3:** object tagging, retention and legal hold reach the backend ([36bd3fd](https://github.com/guided-traffic/s3-encryption-proxy/commit/36bd3fd6c2c321a529b41ae6f36878820f34f24b))
+* **s3:** the bucket-ownership guard reaches every verb, not one ([13ab806](https://github.com/guided-traffic/s3-encryption-proxy/commit/13ab806072cecb04cf4e4acd435f0ccf74c643e3))
+* **s3:** the storage headers reach the backend, SSE-C is refused ([c73a6af](https://github.com/guided-traffic/s3-encryption-proxy/commit/c73a6afd22e51d59bf1239ede57f3fbaccede88c))
+* **security:** the SigV4 payload hash is verified when the operator asks ([e3ab136](https://github.com/guided-traffic/s3-encryption-proxy/commit/e3ab136d4cbb69664cbd4ceb1a9dff20551c39b8))
+* **server:** a transfer is bounded by the client, not by a server wall clock ([e213eca](https://github.com/guided-traffic/s3-encryption-proxy/commit/e213eca3271e188169c74a95a23f2ef28ec3aa99))
+* **shutdown:** an upload that cannot be finished is ended, not abandoned ([31cdd3d](https://github.com/guided-traffic/s3-encryption-proxy/commit/31cdd3de2fe767cef1328c8475d56175373ba6ed))
+* the entity tag is a change token, and its shape says so ([86f4e26](https://github.com/guided-traffic/s3-encryption-proxy/commit/86f4e26676676fcc31478a48d3d5caa3bb6b75fd))
+
+### Bug Fixes
+
+* a bucket answers with a trailing slash too, and R2a states its decision ([b78ef4c](https://github.com/guided-traffic/s3-encryption-proxy/commit/b78ef4cb20208de3de5bf29c608400662158b442))
+* add new ticket ([9fd6af8](https://github.com/guided-traffic/s3-encryption-proxy/commit/9fd6af830d350e22adefa8eb0d3c9b9ec29d4036))
+* **auth:** the canonical query string is sorted by name, not by "name=value" ([4f4c29c](https://github.com/guided-traffic/s3-encryption-proxy/commit/4f4c29c77f45d97ee8dd64647880c70df83c401c))
+* **auth:** the canonical request collapses whitespace the way the signer does ([91f35f1](https://github.com/guided-traffic/s3-encryption-proxy/commit/91f35f122cd658b28601d8d5d7d9572939b38d37))
+* **build:** keep the license token out of locally built images ([aa9f64e](https://github.com/guided-traffic/s3-encryption-proxy/commit/aa9f64e2a411dfa785531f3408734a95e4a5315d))
+* **ci:** a readiness loop that never succeeds fails its step ([e375da9](https://github.com/guided-traffic/s3-encryption-proxy/commit/e375da94d8dce5c83f376a4c5f2496c23d34bbe7))
+* **ci:** a registry hiccup no longer fails the conformance gate ([7ad1293](https://github.com/guided-traffic/s3-encryption-proxy/commit/7ad1293f66413737f5970560e41cc40e7046f5bc))
+* **ci:** bound gosec's fork pressure so a busy node stops failing it ([c747d1c](https://github.com/guided-traffic/s3-encryption-proxy/commit/c747d1c7b1674a0bd31df398b6fdf6740334ef9f))
+* **ci:** the conformance script writes its own backend config, and it was missed ([e236a48](https://github.com/guided-traffic/s3-encryption-proxy/commit/e236a48b8b812f90c87098750978aa819b237a7c))
+* **ci:** the Helm Chart job installs the two tools the runner does not ship ([c52d64a](https://github.com/guided-traffic/s3-encryption-proxy/commit/c52d64a7f84b2408939d51f9e1f1dd815035585e))
+* **ci:** the release job installs make, so a release can actually be cut ([b7e2ec1](https://github.com/guided-traffic/s3-encryption-proxy/commit/b7e2ec1c348a1f3d5f3b381c000039da3d9f51aa))
+* **config:** a plain-HTTP backend is refused under the exit provider too ([d2c5466](https://github.com/guided-traffic/s3-encryption-proxy/commit/d2c54667863c11285b241f85cd54efa534885534))
+* **config:** an unaligned streaming_segment_size is refused at startup ([4748d9d](https://github.com/guided-traffic/s3-encryption-proxy/commit/4748d9d44ee92dec534206f99ab2a2c496e05da1))
+* **config:** the multi-provider example set a key nothing reads ([24f9fd1](https://github.com/guided-traffic/s3-encryption-proxy/commit/24f9fd10f2a0bbb1e8ce45c62e7b387d6baadc32))
+* **demo:** repair the cold bring-up, which no caller had ever reached ([dd9d377](https://github.com/guided-traffic/s3-encryption-proxy/commit/dd9d3773e2460732ab990d7a5b3a120faa931f69))
+* **deps:** Update aws-sdk-go-v2 monorepo ([#342](https://github.com/guided-traffic/s3-encryption-proxy/issues/342)) ([3eaea67](https://github.com/guided-traffic/s3-encryption-proxy/commit/3eaea6769495439e4e31b28cba6b989ae19d9fb2))
+* **e2e:** a bring-up that cannot apply its configuration fails instead of testing the old one ([cf7ad1c](https://github.com/guided-traffic/s3-encryption-proxy/commit/cf7ad1c0f68f463892ce68e42371d40761e7d418))
+* **license:** the unlicensed startup lines say what actually happens ([369d3e0](https://github.com/guided-traffic/s3-encryption-proxy/commit/369d3e0dfc0aae62c046696a80ed617b162e298c))
+* **lint:** clear the three findings CI reported ([9821ba4](https://github.com/guided-traffic/s3-encryption-proxy/commit/9821ba46c9b67bbe8a3fbd4815a8c03b96f08c05))
+* **lint:** drop the namespace constant the listing rewrite left unused ([216220c](https://github.com/guided-traffic/s3-encryption-proxy/commit/216220cbb08c05e175fc2abfe316d1da8a247174))
+* **lint:** the abandoner closure names two parameters it does not use ([9688066](https://github.com/guided-traffic/s3-encryption-proxy/commit/968806642dbae7c1cfd2bb06cfb9705d5f13351d))
+* **lint:** the completion document carries the G709 annotation its six siblings have ([e0dcef3](https://github.com/guided-traffic/s3-encryption-proxy/commit/e0dcef30cfcaf29896d8ef867dba29ca1719c256))
+* **metadata:** the proxy's prefix is its namespace on the read path too ([cb7c1a8](https://github.com/guided-traffic/s3-encryption-proxy/commit/cb7c1a853cb0bec93708da2a07de5cb55f62dbb6))
+* **monitoring:** /metrics exports the Go runtime and process series again ([cfb8ec7](https://github.com/guided-traffic/s3-encryption-proxy/commit/cfb8ec79f4cec092bc1b1a44ad4892dca654d350))
+* **monitoring:** the request metrics reach the scrape ([0344c2e](https://github.com/guided-traffic/s3-encryption-proxy/commit/0344c2e06a477bce009ba204649e4f9de63171e7))
+* **monitoring:** the scrape names no licensee, and the dashboard draws ([2986455](https://github.com/guided-traffic/s3-encryption-proxy/commit/29864555a78bcca7fa4c3fdaedbcf19afae3673c))
+* **multipart:** an upload ended for going idle says so, and names the knob ([fa925b8](https://github.com/guided-traffic/s3-encryption-proxy/commit/fa925b8094badb2a31e6caf2e5077dba0d0b031f))
+* **multipart:** drop a superseded held part when the replacement is streamed ([035d462](https://github.com/guided-traffic/s3-encryption-proxy/commit/035d46239c8ba5ee32ba0ad76c7a93108f93f4b7))
+* **multipart:** forward a pass-through part instead of reading it whole ([f5c7a60](https://github.com/guided-traffic/s3-encryption-proxy/commit/f5c7a60379b329e592260847af3d9add117a2e48))
+* **multipart:** the part layout must not depend on which part arrives first ([7eeefce](https://github.com/guided-traffic/s3-encryption-proxy/commit/7eeefceb51958f50f6e3c38dc268caea87d08b69))
+* **multipart:** the trailer part must reach the list that completes the object ([f4e12ab](https://github.com/guided-traffic/s3-encryption-proxy/commit/f4e12ab3bdf80814ea33c8a52e579981193697d7))
+* **object:** an object of ours that cannot be opened is refused under exit too ([6b608e8](https://github.com/guided-traffic/s3-encryption-proxy/commit/6b608e80eba8696e121927d27bab5c7732994b84))
+* **object:** the exit provider stops handing out the proxy's own metadata ([f9b429e](https://github.com/guided-traffic/s3-encryption-proxy/commit/f9b429e558e0bd2d4799c0683496f344e460e1f9))
+* **object:** the response-* overrides are honoured on a HEAD too ([b422594](https://github.com/guided-traffic/s3-encryption-proxy/commit/b4225944b7c55322c5e2580e86d04d096171652b))
+* **perf:** publish the byte-weighted comparison, not a mean of ratios ([48e60ad](https://github.com/guided-traffic/s3-encryption-proxy/commit/48e60ad2a0339519327571ab57cb28e186e609d6))
+* **proxy:** the defects the test audit turned up, not the gaps in its tests ([b21d99d](https://github.com/guided-traffic/s3-encryption-proxy/commit/b21d99d09b30067b437b011256102d851ba1538c))
+* **query:** a semicolon in the query string is refused ([de9816e](https://github.com/guided-traffic/s3-encryption-proxy/commit/de9816e5904d570866246a2823114a792c4c7090))
+* **read:** a pass-through key fingerprint is refused under an encrypting provider ([01ddcd4](https://github.com/guided-traffic/s3-encryption-proxy/commit/01ddcd4fad77529705107b5efb108a32d1568ee7))
+* **read:** a wrapped key that does not authenticate is refused, not retried ([f6ea279](https://github.com/guided-traffic/s3-encryption-proxy/commit/f6ea279a7e3e9b63144c2263e9148cfeba107bf2))
+* **release:** a breaking footer means what it says, and a major says so first ([1be359b](https://github.com/guided-traffic/s3-encryption-proxy/commit/1be359b3eb34ee5c5a0aa0fa2797be474899ec04))
+* **release:** the release machinery advertised what it never shipped ([be7c7c6](https://github.com/guided-traffic/s3-encryption-proxy/commit/be7c7c6a673058f3651fe11fbb137dab05c2786e))
+* **s3:** a PUT is routed on a length that describes the plaintext ([0fc04b8](https://github.com/guided-traffic/s3-encryption-proxy/commit/0fc04b80b9ef98b298bce334cb38e8ba804ac43b))
+* **s3:** a refusal says what it is, and a permanent state is not a 5xx ([bcd5045](https://github.com/guided-traffic/s3-encryption-proxy/commit/bcd5045c365374de6485eb7e9171e52b11999dda))
+* **s3:** five more defects the review found, two of them silent data loss ([be920b8](https://github.com/guided-traffic/s3-encryption-proxy/commit/be920b8065e4a564350762c63063db94b6c353b3))
+* **s3:** four defects an adversarial review of the verifier found ([394b5f1](https://github.com/guided-traffic/s3-encryption-proxy/commit/394b5f132aaa276119b8f8996b20c090e461894d))
+* **s3:** the verdict is asked of the verifier, not of the backend's answer ([c6f6b90](https://github.com/guided-traffic/s3-encryption-proxy/commit/c6f6b9015f1acb7867a791907457a80a5b2f0107))
+* **shutdown:** the sweep runs before the listener closes, on one budget ([085d3d3](https://github.com/guided-traffic/s3-encryption-proxy/commit/085d3d38c7c410cfa16f0ee1f56c4dfb431d4c4f))
+* **test:** MinIO comes from quay.io, pinned to its last community release ([e4a082b](https://github.com/guided-traffic/s3-encryption-proxy/commit/e4a082ba70c162395d00126a41d4d0b9719cea99))
+* update graphify ([45708fc](https://github.com/guided-traffic/s3-encryption-proxy/commit/45708fca3f8116d7ec58fac86df9e5ffefede1c7))
+
+### Performance Improvements
+
+* four costs on the read and write paths that nothing was buying ([fecbc00](https://github.com/guided-traffic/s3-encryption-proxy/commit/fecbc00fc0150e6ddaaf0c09f9c555df2f327cb1))
+* **multipart:** a client part is forwarded while it is received ([b6383b4](https://github.com/guided-traffic/s3-encryption-proxy/commit/b6383b47c7e78c031984820c453bd60ff44edf93))
+* **object:** a ranged read no longer burns the backend connection ([7827a91](https://github.com/guided-traffic/s3-encryption-proxy/commit/7827a915f133091f4e6d5da9ec378ef9718e5a59))
+
+### Code Refactoring
+
+* delete the code and the configuration keys nothing reads ([60df187](https://github.com/guided-traffic/s3-encryption-proxy/commit/60df187eb8a6c44460ea6315be68e4dc932f1cfa))
+* **proxy:** the bucket handler learns the encryption manager, and a request carries its caller ([a6c8781](https://github.com/guided-traffic/s3-encryption-proxy/commit/a6c8781c8e88da51a2e11a74919291fdb7d02e15))
+* **response:** one error document, one writer, and a Location that survives an ingress ([fb0f6c8](https://github.com/guided-traffic/s3-encryption-proxy/commit/fb0f6c80fe610c08418ba93200349737b8c8e22c))
+
+
+### BREAKING CHANGES
+
+* Objects written by 3.x and 4.0.x cannot be read. There is no
+migration and no read path for the old format: delete those objects and upload
+the data again from its source. Until you do they answer 403 InvalidObjectState
+on GET, HEAD and ranged GET alike. Run one proxy version at a time — an object a
+4.0.x replica writes during a mixed rollout is refused afterwards like any other.
+
+THE FORMAT. s3ep-aes-iv and s3ep-hmac are no longer written, s3ep-dek-algorithm
+is s3ep-gcm-seg-v2, and s3ep-kek-fingerprint values change. Integrity is not
+configurable: a truncated, extended or reordered chain fails, and so does a
+wrapped data key that does not authenticate. An object carrying no proxy metadata
+is refused rather than passed through; the one provider that serves such an
+object is exit, and it decides per object.
+
+PERFORMANCE. Measured before and after on one machine with the full instrument
+set (ADR 0020). Uploads are 30 % to 120 % faster above 1 MiB: against the same
+client writing to the backend directly the proxy moved from 46-81 % of it to
+78-125 %, and above 4 MiB it is faster than the direct leg, because the backend
+refuses an aws-chunked chunk above 16 MiB while the proxy re-frames into a
+multipart upload whose receive and send overlap (ADR 0024). A single-request PUT
+is 0 to 8 % slower — the segment chain plus the upload checksum verification this
+release adds. Peak resident memory fell from 130 MB to 109 MB against an
+unchanged 512 MB container limit. Nothing below roughly 15 % end to end is a
+claim: three runs an hour apart on this machine, two of them on identical code,
+moved by that much.
+
+PARTIAL READS — read this if your client reads in ranges. A range is served from
+whole segments, so a small range amplifies: a 512-byte read costs a 64 KiB
+segment fetch, 128 times the bytes asked for, and no segment cache softens it.
+An explicit bytes=a-b range costs one backend request; a suffix (bytes=-500) or
+open-ended (bytes=100-) range is relative to the end of the object, needs its
+length first, and costs a HEAD ahead of the GET. A ranged read carries no
+x-amz-checksum-crc32c: the sealed checksum covers the whole object, and a range
+that stops before the trailer can check neither the total length nor the
+checksum. Every returned byte is still authenticated by the proxy against its own
+segment tag — what the client does not get is a digest of its own to compare.
+A ranged read costs what it cost before: a 1 MiB range measured 207 MiB/s
+against a backend serving the same range at 225, where before this format it was
+207 against 217 — the proxy leg is unmoved, and the ratio changed only because
+the direct leg got faster. Whole-object GET and HEAD are unaffected and both answer
+x-amz-checksum-crc32c over the plaintext and the plaintext length the trailer
+authenticates; a whole-object GET above 64 KiB costs two backend requests, worth
+about 1.2 ms — roughly 40 % on a 100 KB download and nothing above 10 MiB.
+
+CONFIGURATION — REFUSES TO START. Any key the proxy does not define now stops the
+start and the error names it (ADR 0013 D11) — a key this release removes, or one
+that is simply misspelled. Removed: encryption.integrity_verification,
+optimizations.streaming_threshold, optimizations.clean_aws_signature_v4_chunked,
+optimizations.clean_http_transfer_chunked, optimizations.streaming_buffer_size,
+optimizations.enable_adaptive_buffering, optimizations.multipart_session_max_age,
+s3_backend.use_tls, the dead s3_security keys, the legacy top-level backend block,
+and the rsa, tink and none provider types. The start also refuses a segment size
+that is not a multiple of 65536; a backend endpoint without a scheme, or on
+http:// under an encrypting provider; an aes_key that is not base64 of 32 random
+bytes — a 4.x key that was a raw 32-character string cannot be expressed at all
+and has to be replaced, including one delivered through an environment reference;
+and a metadata_key_prefix shorter than four characters, not starting with a
+letter or digit, or not ending in "-". No environment variable overrides a
+configuration key any more: the one mechanism is a ${VAR} reference written into
+a value, and an unset one refuses the start. The image now ships
+config/default.yaml, so a plain docker run works without mounting anything and
+fails closed on every variable it needs.
+
+CONFIGURATION — REFUSES TO START, THE PROVIDER BLOCK. A provider's config: block
+used to swallow whatever it was given: each provider read the one key it wanted
+and dropped the rest, so a key written one level too deep — metadata_key_prefix
+inside a provider is the case that actually happened — did nothing and said
+nothing. Every type now declares what it reads: aes reads aes_key, exit reads
+nothing at all, and any other key refuses the start naming it and its provider
+(ADR 0013 D11).
+
+CONFIGURATION — THE LICENCE HAS ONE VARIABLE AND ONE FILE. The token is read from
+S3EP_LICENSE_TOKEN and from the file license_file names, and from nowhere else.
+S3EP_LICENSE and S3_ENCRYPTION_PROXY_LICENSE are gone, and so is the list of
+well-known paths searched when license_file was not written — license.jwt,
+build/license.jwt, /etc/s3ep/license.jwt, /opt/s3ep/license.jwt, /app/license.jwt
+and ./config/license.jwt. A deployment on either other variable, or on one of
+those paths, starts unlicensed and is refused unless its active provider is exit.
+A token found somewhere the operator did not name is a token they cannot rotate
+(ADR 0016 D6). The shipped image and the Helm chart are unaffected: both write
+license_file.
+
+CONFIGURATION — RENAMED. optimizations.streaming_segment_size is now
+optimizations.multipart_part_size. The old name said segment, which is the
+storage format's own 64 KiB unit and a different thing: this key is the size of
+one backend part, and the plaintext size above which a PUT becomes a multipart
+upload. The value, the 12 MiB default and the checks — at least 5 MiB, at most
+5 GiB, a whole multiple of 64 KiB — are unchanged, so a file works again as soon
+as the key is renamed, and the old name refuses the start with a message naming
+the replacement rather than as an unknown key (ADR 0011).
+
+CONFIGURATION — RENAMED, THE PROVIDER. The none provider is now exit, and it is
+a different thing rather than a new label (ADR 0025). It needs no licence, it
+stores new objects as the client sent them on every write path, and unlike none
+it keeps
+decrypting what this proxy encrypted earlier. That works only while the provider
+holding the old key stays registered beside it, so an operator renaming the type
+must also add that provider. type: "none" is refused at startup with a message
+that says so.
+
+CONFIGURATION — NEW. optimizations.multipart_short_part_buffer_size, default
+64 MiB, minimum 5 MiB: what all open client-driven uploads together may hold for
+their short last parts, one budget shared across the process rather than one per
+upload (ADR 0011 D5). Over it a part is answered 503 SlowDown; a single part
+above the whole budget is 400 EntityTooLarge, before it is read.
+optimizations.max_request_document_size, default 2 MiB: the ceiling on every
+request document the proxy buffers whole — each bucket and object sub-resource
+body and the Delete document of a batch delete — above it 400 EntityTooLarge
+before the backend is called. s3_security.max_presign_expiry_seconds, default
+3600, which lowers the pre-signed URL ceiling to one hour.
+s3_security.verify_payload_hash, default false: with it on, an
+x-amz-content-sha256 carrying a real hex digest is verified against the decoded
+body. The four listener budgets read_timeout, write_timeout, read_header_timeout
+and idle_timeout replace the whole-request and whole-response wall clocks, which
+are gone: a transfer is now bounded by the client and by shutdown_timeout
+(ADR 0015).
+
+SHUTDOWN. shutdown_timeout is one budget for the whole shutdown — the request
+drain, the multipart sweep and the listener close (ADR 0029). While the proxy
+drains, a new request is answered 503 with Retry-After rather than a connection
+refusal, and a client-driven upload that can no longer be finished is ended at
+the backend rather than abandoned. The chart derives its termination grace period
+from the same value.
+
+BEHAVIOUR — THE ENTITY TAG. Under an encrypting provider an ETag of 32
+hexadecimal digits — the backend's MD5 of the stored ciphertext, in the shape S3
+reserves for a content digest — is answered with a -0 suffix inside the quotes,
+at object level and at part level (ADR 0032). Send back what the proxy gave you
+and If-Match and If-None-Match work as before; the proxy inverts the marker on
+every tag a client returns. No object's ETag was ever a digest of its plaintext:
+a client that verified uploads against it — rclone does — failed every
+single-part transfer with "corrupted on transfer", and now falls back to size and
+modification time as it already does for multipart objects. A multipart object's
+ETag does not follow the md5(md5s)-N formula over your parts, so set
+use_multipart_etag = false on an rclone remote, or provider = Other; the proxy
+verifies every part's Content-MD5 against the plaintext and refuses a mismatch
+with BadDigest, which is the check that setting replaces. The plaintext's own
+digest is x-amz-checksum-crc32c on a whole-object GET and on HEAD. Under the exit
+provider nothing is marked.
+
+BEHAVIOUR — THE BUCKET-OWNERSHIP GUARD NOW TAKES EFFECT.
+x-amz-expected-bucket-owner is forwarded on every verb. Until now only
+DeleteBucket honoured it: every other verb read the header, dropped it and
+answered success, so a client that set it believed the ownership had been checked
+and it had not. A request against a bucket owned by a different account now
+answers 403 AccessDenied where it used to succeed. Check any client that sets
+this header as a blanket policy against a backend whose bucket owner is not the
+account the credential belongs to — the refusal is the guard working, but it is a
+request that used to pass.
+
+BEHAVIOUR — EVERYTHING ELSE A CLIENT CAN SEE. Every declared upload checksum is
+verified against the decoded plaintext and then dropped, on every write path:
+Content-MD5 and the x-amz-checksum-* family, as a header or as an aws-chunked
+trailer. A mismatch is 400 BadDigest, a malformed value 400 InvalidDigest, an
+unsupported algorithm 501 NotImplemented, and a multi-object delete carrying no
+digest 400 InvalidRequest. Both listings answer a real ListBucketResult under the
+S3 namespace with the plaintext size per entry, a max-keys outside its range
+clamped or refused, and <Owner> naming the calling client; HeadBucket answers 404
+for a bucket that does not exist; a bucket with no creation date omits the
+element instead of claiming 0001-01-01T00:00:00Z. ListParts answers from the
+proxy's own part table with plaintext sizes and ListMultipartUploads is
+forwarded, where both used to be a fabricated empty document and a 501. A
+client-driven multipart upload has 9999 part numbers, not 10000. An upload that
+is neither completed nor aborted is now ended at the backend once it has been
+idle for optimizations.multipart_session_idle_timeout, counted from the last part
+it received (ADR 0028) — 4.0.x measured the same hour from the upload's creation,
+so a transfer still running was ended for taking long, and an abandoned one was
+forgotten rather than aborted at the backend. The six response-* query parameters
+that name a downloaded file and set its type — response-content-type,
+-content-disposition, -content-encoding, -content-language, -cache-control and
+-expires — are applied to a HEAD answer as well as to a GET, under the exit
+provider too. S3 defines them on both verbs, and a HEAD used to admit them and
+answer the object's stored values, so a client that asked a HEAD what it was
+about to download was told something the GET then contradicted. Client metadata
+inside the proxy's own prefix is refused with
+400 InvalidArgument rather than silently dropped, and a query string containing
+";" is refused the same way. Storage headers on PUT are forwarded instead of
+silently dropped, so a client that sets them now has them take effect on the
+backend object; object tagging, retention and legal hold are pass-through; SSE-C
+is refused with a named 501. Every error document and every response carries the
+proxy's own request id.
+
+METRICS. Thirteen series that were registered and never observed are removed,
+along with s3ep_license_days_remaining, which was written once at startup and
+never refreshed — s3ep_license_expiry_timestamp is the honest primitive and the
+remaining days belong in the query. The scrape no longer names the licensee. What
+is restored is the Go runtime and process collectors (go_*, process_*), which
+moving /metrics onto the proxy's own registry had silently taken with it. The
+bundled Grafana dashboard is rebuilt against the series that exist.
+
+DEPLOYMENT — THE HELM CHART. A configuration change, a rotated credential or a
+renewed licence now restarts the pods: the pod template hashes the rendered
+ConfigMap and the rendered Secret, where before helm upgrade reported success and
+left the old values running. The probe scheme is derived from tls.enabled, so a
+TLS pod no longer fails to become Ready with no hint why. values-development.yaml
+and values-monitoring.yaml could not be rendered at all and are rewritten in the
+current schema; the development file loses a committed AES-256 key and a
+plain-HTTP backend. metadata_key_prefix moves from the provider config: block,
+where it was silently dropped, to encryption: at the shipped default s3ep-, and
+no stored object changes. A helm template of a values file that does not parse
+now fails the render instead of crashlooping the pod. New: serviceTLS (ADR 0026),
+off by default, which terminates TLS at the proxy's own in-cluster Service. The
+chart refuses three configurations that used to render: an enabled Ingress with
+no TLS or with an uncovered host, a cert-manager Certificate nothing consumes,
+and serviceTLS together with a hand-written tls: block. The chart ships no
+NetworkPolicy — the network boundary is the administrator's (ADR 0030).
+
+WHAT THIS WAS TESTED WITH. 1009 unit tests, 146 integration tests over plain HTTP
+and over TLS, 21 conformance tests asserted against MinIO, LocalStack and Wasabi
+rather than against one backend (ADR 0027), and three end-to-end suites driving
+real pinned client binaries: Velero with 13 backup and restore scenarios against
+a kind cluster, rclone with 28 cases and s3cmd with 19, every case over both proxy
+endpoints. 70,000 lines of test code, thirteen jobs in the pipeline, the unit
+suite also run under the race detector as its own gate, and the codec pinned by
+captured byte vectors and by a mutation round — deliberate defects introduced one
+at a time until every one of them turned a test red. Every suite asserts the
+behaviour the product is supposed to have rather than the behaviour it has, and
+stays red until the product meets it (ADR 0031); none of them may be skipped
+(ADR 0019).
+
+SUPPORT. 4.0.x and every earlier line receive no further releases of any kind.
+5.0.0 is the only supported line (ADR 0018 D11).
+* **config:** `s3_backend:` is now the list `s3_backends:`. The entry's fields
+are unchanged, so a configuration works again once the block moves under a single
+"- " entry; the old key refuses the start with a message saying exactly that.
+This release reads exactly one entry and refuses a second, naming how many were
+written. Error messages and the ${VAR} expansion now name the entry:
+`s3_backends[0].target_endpoint`.
+
+The Helm chart refuses `replicaCount` above 1 and refuses `autoscaling.enabled`.
+A values file that set either installs today and will not render after the
+upgrade. The shipped production profile changes from three replicas to one, and
+its pod disruption budget from enabled to disabled - a capacity change to plan
+for, though what it loses was never working for client-driven multipart uploads.
+
+`GET /version` answers `version`, `commit` and `build_time` beside `service`,
+where it answered a constant `"dev"` and nothing else.
+* **object:** A HEAD carrying response-content-type,
+response-content-disposition, response-content-encoding,
+response-content-language, response-cache-control or response-expires now
+answers the requested value where it used to answer the object's stored one.
+This makes HEAD agree with GET and with S3; a client that relied on the stored
+value being returned was relying on a deviation.
+* **config:** A provider's `config:` block accepts only the keys its type
+reads - `aes_key` for `aes`, nothing for `exit`. Any other key refuses the start
+and the error names it and the provider.
+
+The licence token is read from `S3EP_LICENSE_TOKEN` and from the file
+`license_file` names, and from nowhere else. A deployment that set `S3EP_LICENSE`
+or `S3_ENCRYPTION_PROXY_LICENSE`, or that relied on `license.jwt`,
+`build/license.jwt`, `/etc/s3ep/license.jwt`, `/opt/s3ep/license.jwt`,
+`/app/license.jwt` or `./config/license.jwt` being found, starts unlicensed and
+is refused unless its active provider is `exit`. The shipped image and the Helm
+chart are unaffected: both write `license_file`.
+
+`optimizations.streaming_segment_size` is now `optimizations.multipart_part_size`.
+The old name refuses the start with a message naming the replacement rather than
+as an unknown key, because the value and its checks did not change and an
+operator would otherwise have to guess that the two are the same setting.
+* **auth:** a signed request whose query carries a parameter name that is a
+prefix of another - SelectObjectContent is the S3 verb that does - was refused
+with 403 SignatureDoesNotMatch and is now verified.
+* a bucket sub-resource addressed with a trailing slash -
+"/bucket/?acl", "/bucket/?delete" and thirteen others - is now answered instead
+of refused with 405 or 501.
+* under an encrypting provider every entity tag that was thirty-two
+hex digits now carries a -0 suffix - on an upload, a completed multipart upload, a
+GET, a ranged GET, a HEAD, both listings, every UploadPart answer and ListParts. A
+client that stored a tag from an earlier release and compares it literally sees a
+difference; one that sends it back revalidates unchanged, because the marker is
+inverted on the way in.
+* a bucket or object sub-resource document, or a Delete document,
+above `optimizations.max_request_document_size` (2 MB by default) answers
+400 EntityTooLarge where it used to be forwarded whole; a configuration writing
+`optimizations.max_request_document_size: 0` refuses the start; every response
+now carries an x-amz-request-id header and every S3 error document a <RequestId>
+element.
+* `?torrent` is refused instead of forwarded; an unsupported
+method on an object answers 405 instead of 501; keys containing `//`, `/./` or
+`/../` are served instead of being redirected; a signed request to `/health` or
+`/version` is an S3 request for that bucket instead of the probe document; an
+authentication failure answers 400 where it used to answer a blanket 403, and an
+anonymous request answers AccessDenied instead of InvalidRequest; the error
+document carries no RequestId; a configuration writing
+`optimizations.multipart_session_cleanup_interval: 0` refuses the start.
+* **demo:** the required status checks `rclone E2E (demo stack)` and
+`s3cmd E2E (demo stack)` are renamed to `rclone E2E (minio)` and `s3cmd E2E
+(minio)`. Branch protection on main must be updated to match.
+* **image:** the image declares ENTRYPOINT ["./s3-encryption-proxy"] and CMD
+carries only the arguments. A `docker run` or a compose `command:` that spells
+the binary path now passes it to the binary as an argument and fails - drop the
+binary from the command and keep the flags.
+* **chart:** the chart renders no NetworkPolicy and declares no
+networkPolicy values. An operator who set networkPolicy.enabled: true loses the
+policy on upgrade with no error and no warning - move the rules into a
+NetworkPolicy of your own before upgrading. The pod is an ordinary policy target:
+it carries the chart's selector labels, serves S3 on service.targetPort and, with
+monitoring.enabled, metrics on monitoring.port, and its egress goes to the
+backend named by s3_backend.target_endpoint and to DNS.
+* **config:** --monitoring and --monitoring-port are removed. Express
+monitoring in the configuration file (monitoring.enabled, monitoring.bind_address,
+monitoring.metrics_path); a chart install renders them from
+.Values.monitoring.{enabled,port,metricsPath}. A chart values file that carries a
+monitoring: block inside config alongside monitoring.enabled now fails to render
+rather than letting one of the two win silently.
+* **config:** a --config path that cannot be read or parsed now refuses the
+start instead of continuing on defaults, and a written license_file that yields
+no token does the same. A deployment that named a license_file it does not
+actually use has to remove the key or supply the file; the token's environment
+routes are read first and are unaffected.
+* **config:** s3_backend.target_endpoint with an http:// scheme now refuses
+the start under the exit provider as well, not only under a provider that
+encrypts. Use https://. This ends the pure pass-through deployment against a
+plain-HTTP backend for a bucket that was never encrypted - ADR 0025 calls that
+a consequence of the exit provider rather than a purpose of it. Leaving is
+unaffected: an operator reaching for the exit provider was writing through this
+proxy under an encrypting provider, which already required https:// on that
+same backend.
+* **config:** S3EP_-prefixed environment variables no longer override
+configuration keys. A deployment that set one - S3EP_LOG_LEVEL is the
+plausible case - loses its effect silently, because the file value takes
+over. Values belong in the configuration file, with ${VAR} where a secret
+has to come from the environment.
+* **shutdown:** optimizations.multipart_session_max_age no longer exists. Use
+optimizations.multipart_session_idle_timeout, which counts from the last part an
+upload received rather than from when it was created. A configuration carrying
+the old key refuses the start with a message naming the replacement, because the
+same number means something else under the new rule.
+
+The session sweeper had two faults and each made the other worse.
+
+It measured the wrong clock. Expiry ran from the session's creation with a
+default of one hour, while the time of the last part was recorded and read only
+by ListParts. An upload still transferring was therefore dropped one hour after
+it began: 10 000 parts of 8 MiB is 78 GiB, which over a 20 Mbit/s link is about
+nine hours, and a backup of that shape cannot finish. It is also a server wall
+clock on a transfer, which is what ADR 0015 rejects -- its D1 governs one
+request, and nothing governed the sequence that makes one object.
+
+And it abandoned data. The sweep deleted the session and said nothing to the
+backend, so the multipart upload and every part already in it stayed there,
+invisible to ListObjects, reachable only by a client that has just been told the
+upload does not exist. Complete and Abort were both clean; the sweeper was the
+one path that was not.
+
+Both are closed, in that order -- aborting on the creation clock would have
+destroyed uploads that were still running. The sweeper now measures inactivity
+and ends the upload at the backend before it forgets the session, outside the
+session lock, retrying five times before giving the session up.
+
+Shutdown does the same, and this is where the reasoning had to be corrected
+twice. A session is process-local: it holds the object's data key and the part
+table Complete is built from, so once this process exits nobody can finish the
+upload -- not the client, not another replica. There is no work to protect, only
+storage nobody can reach. Manager.Shutdown ends every session it still holds,
+with what is left of shutdown_timeout rather than a fresh copy, because the
+chart derives the pod's termination grace period from the same number.
+
+The shutdown sequence is written down in full and two parts of it were rebuilt.
+The listener is no longer taken down at the start: a drain guard answers every
+new S3 request 503 ServiceUnavailable with Retry-After while the socket stays
+open, in front of authentication so a refusal costs no signature check, and in
+front of the request tracker so it is not counted as work the drain waits for. A
+client that arrives before a load balancer has rotated the instance out retries
+against another replica instead of meeting a refused connection. And the proxy
+exits as soon as there is nothing left to serve and nothing left to sweep: the
+drain ends at the moment the last in-flight request finishes rather than on the
+next tick of a one-second poll.
+
+Measured against the running stack with an 8-second budget. Nothing in flight
+and one upload to end: 769 us, where the old poll took 1.0027 s to do nothing. A
+1 GiB download mid-transfer when the signal arrived: it delivered all
+1073741824 bytes and shutdown took 2.78 s, which is what was left of that
+download. Readiness and every S3 route answered 503 with Retry-After for the
+whole drain, and a ListMultipartUploads asked of the backend directly afterwards
+reports the upload gone.
+* **s3:** a request carrying x-amz-expected-bucket-owner against a bucket
+owned by a different account now answers 403 AccessDenied where it used to
+succeed. Check any client that sets the header as a blanket policy. ListBuckets
+<CreationDate> gains three fractional digits and is omitted when the backend
+reports none.
+
+ADR 0007 D14, ADR 0008 D12.
+* **chart:** the chart refuses two configurations that render today. An
+enabled Ingress must carry TLS for every host it serves, and a cert-manager
+Certificate must have something that consumes it.
+
+Both are the same defect one level up from ADR 0013's rule about configuration
+keys: a control that exists only in the values file is worse than no control,
+because it gets relied upon. An Ingress with no tls entry -- or with a host no
+tls entry covers -- answers that host in plaintext, so the client's S3
+credentials and object keys cross it in front of a proxy whose whole job is to
+keep that data confidential, and nothing in the rendered manifest says so. A
+Certificate the chart issues and nothing mounts reads as "TLS is configured" and
+is not: the chart does not wire it into the pod, so an ingress.tls entry naming
+its secret is the only consumer there can be.
+
+Both failures name the values involved, and each is asserted in both directions
+by the chart test suite; removing the guard turns three of them red.
+
+values-development.yaml shipped exactly the first configuration -- an Ingress with
+ssl-redirect explicitly off -- and loses its Ingress instead of gaining a
+certificate no development cluster would issue. That also matches how the proxy
+is actually deployed: beside its client, reached as an in-cluster Service.
+* **chart:** a chart upgrade that changes the proxy configuration or the
+chart-rendered Secret now restarts the pods instead of leaving the old one
+running. A credential or license rotation is a rollout from here on.
+
+Six defects, all of them traps an operator had to rediscover:
+
+The pod template had no checksum. helm upgrade with a changed config updated the
+ConfigMap, reported success and left the old pods running the old configuration
+-- so an operator who rotated a key was told the rotation succeeded while the old
+key kept encrypting. The rendered ConfigMap is hashed, not .Values.config,
+because the template also injects license_file; the rendered Secret is hashed
+beside it. Both move out of the podAnnotations with-block, which is empty by
+default and would have swallowed them.
+
+The probes had no scheme, so tls.enabled in the config produced a pod that never
+went Ready and said nothing about why: a plaintext httpGet against a TLS listener
+gets a 400. The scheme is now derived from the config the pod will actually
+receive rather than from a second knob that can drift out of sync with it, with
+probes.scheme as an explicit override for useExistingConfigMap, where the chart
+cannot see the config at all. values.config is parsed once by one helper that
+fails the render with one message; a malformed config used to render happily and
+crashloop the pod.
+
+The Service could not pin a node port, so service.type: NodePort allocated a
+random one. service.nodePort closes it and the e2e drops its own Service.
+
+values-development.yaml and values-monitoring.yaml could not be rendered at all:
+both defined config: as a map where the template needs a literal string. Both are
+rewritten in the current schema -- neither had s3_clients, which the loader
+requires, and neither would have started even once the type was fixed. The dev
+file loses a committed AES-256 key (ADR 0021) and its plain-http backend, which
+is a startup refusal today. The monitoring file loses the legacy top-level
+backend block. All four rendered ConfigMaps were extracted and started against
+the real binary, which is the only check that proves more than valid YAML.
+
+metadata_key_prefix sat inside the provider config map, where the ,remain field
+swallows it: the shipped values claimed x-s3ep- while every default install ran
+on s3ep-. It moves under encryption: at the shipped default, so the file states
+what the deployment does. No stored object changes.
+
+The e2e stops working around the two fixes it was compensating for: no scheme
+overrides, no separate NodePort Service, no unconditional rollout restart. V9
+now rotates the way an operator does, through helm upgrade, so the annotation is
+under test rather than worked around -- and going through kubectl was itself the
+cause of the server-side-apply conflicts that broke later upgrades. The restart
+kept one real job that the annotation does not cover: the image tag is fixed and
+pullPolicy is Never, so a rebuilt binary leaves the pod template identical. The
+image id goes into the pod template instead, and the rollout follows from it.
+* **config:** optimizations.clean_http_transfer_chunked is removed. A
+configuration still carrying it refuses to start and names the key.
+
+ADR 0013 D9 decided the deletion; the premise was re-proved before taking it.
+net/http deletes the Transfer-Encoding header from a server request
+unconditionally before dispatch, answers an unsupported value itself with 501,
+and rejects the header outright on the HTTP/2 listener. The branch this key
+gated could therefore never fire on any transport the proxy serves, so the
+decoder and its base type go with the key rather than staying as dead code.
+The key was set in three shipped examples and in the Velero values, not the one
+example the ADR named; all four lose it here, because ADR 0013 D11 would
+otherwise refuse the start of the demo stack and the e2e cluster. The UploadPart
+debug log drops transferEnc with it, which is provably always empty.
+
+The same four files gain optimizations.multipart_short_part_buffer_size, which
+until now existed in no shipped configuration at all, and values-production.yaml
+gains the optimizations block it never had. config/exit-example.yaml states in a
+comment why it does not carry the key: under the exit provider a client-driven
+upload registers no session, so the cap bounds nothing there.
+
+docs/developer/performance.md becomes the one home of the memory formula, with
+all four terms and their anchors -- including the 65604-byte tail buffer that
+ADR 0003 D14 added and that no existing statement of the formula knew about.
+README keeps the operator-facing sentence and points at it. The README callout
+claiming the 64 KiB segment-size check is unimplemented is corrected: it has
+been enforced at startup since 2026-09-10.
+* **config:** a configuration carrying
+optimizations.clean_aws_signature_v4_chunked does not start; the error names the
+key (ADR 0013 D11). Remove it from configuration files and deployment values.
+* **s3:** an upload declaring `x-amz-checksum-xxhash3`, `-xxhash64` or
+`-xxhash128` is answered 501 NotImplemented where it was answered 200 with the
+checksum discarded.
+* **s3:** a wrong or malformed upload checksum is answered 400 where it
+was answered 200, on every write path. A multi-object delete without a digest
+is refused with 400 InvalidRequest.
+* **response:** an error document for a request that named a key but no bucket
+no longer carries a <Resource> element. <Location> in a completion response now
+reflects X-Forwarded-Proto and X-Forwarded-Host where a client sends them.
+* **s3:** fourteen refusals change their status or their error code. A
+client that branched on 500 for a malformed CompleteMultipartUpload, or read the
+plain-text body of a refused part upload, sees an S3 <Error> document with a 4xx
+instead. A GET whose object names a retired key answers 403 InvalidObjectState
+where it answered 500 DecryptionError.
+* **s3:** a request carrying If-Modified-Since, If-Unmodified-Since, or
+any precondition on HEAD or PUT, now gets the answer S3 gives it. A client that
+had come to rely on those being ignored sees 304 and 412 where it used to see
+200.
+* **s3:** every bucket sub-resource GET answers a different document. A
+client that had adapted to the Go-type-named one breaks; a client using an S3
+SDK stops being broken. DELETE of ?cors, ?policy, ?tagging, ?lifecycle,
+?replication and ?website answers 204 with no body instead of 200 with a body.
+PUT ?acl and PUT ?cors now apply the grants and rules the client sent, where
+they previously applied none.
+* **s3:** GET/PUT/DELETE /bucket/key?tagging, GET/PUT ?retention and
+GET/PUT ?legal-hold answered 501 NotImplemented and now execute. Object tags are
+stored in the clear next to the ciphertext.
+* **s3:** a client that set x-amz-server-side-encryption, x-amz-acl,
+x-amz-tagging, x-amz-storage-class, the object-lock headers or
+x-amz-website-redirect-location and was answered 200 now gets the backend's own
+answer, which may be a refusal. A client that sends an SSE-C header is refused
+with 501 where it used to be answered 200. Tags and user metadata are stored in
+the clear next to the ciphertext; a forwarded canned ACL acts on the ciphertext
+object.
+* **config:** a key the proxy does not define stops the start instead of
+being ignored — go through your configuration before upgrading, including keys
+this release removed and misspelled ones. The configured clock skew now applies
+to header authentication, so a client whose clock is off by more than the
+configured window is refused where it used to be accepted. Pre-signed URLs are
+bounded to one hour by default rather than to seven days. A backend endpoint
+must carry a scheme, and must be https:// under a provider that encrypts.
+metadata_key_prefix must be at least four characters, start with a lowercase
+letter or digit and end in a dash. max_clock_skew_seconds and
+max_presign_expiry_seconds no longer accept 0.
+* **server:** read_timeout, write_timeout, read_header_timeout and
+idle_timeout are new configuration keys and the two body budgets default to 0,
+so no transfer is cut for being long or slow any more. A deployment that relied
+on a transfer dying at 30 seconds no longer gets that. shutdown_timeout now
+bounds the drain it always claimed to bound, and Kubernetes pods carry a
+termination grace period derived from it.
+* **keys:** no example configuration carries a key any more. Every one
+references ${S3EP_AES_KEY} and the proxy refuses to start when it is unset —
+there is no default key and no fallback. The second environment variable
+name the examples used in comments is gone; S3EP_AES_KEY is the only name.
+* **query:** a request whose raw query string contains a semicolon is
+answered 400 InvalidArgument. S3 never uses ';' as a query separator and no
+known client sends one.
+* **config:** optimizations.streaming_segment_size must be a multiple of
+65536. A configuration carrying a value inside the old range but not on a
+segment boundary now refuses to start instead of failing at the first upload
+above one part.
+* **provider:** the provider type `none` is removed. `type: "none"` is refused
+at startup by name, with a message pointing at `exit` and saying to keep the
+provider that holds the old key configured alongside it; there is no alias and
+no deprecation period. A deployment that used `none` must also register that
+provider, or the objects written before the switch stay unreadable. The
+configuration example is now config/exit-example.yaml.
+* **listing:** the listing response document changes shape. The root element
+is ListBucketResult with xmlns http://s3.amazonaws.com/doc/2006-03-01/ instead
+of a name derived from the SDK type, an XML declaration precedes it, and the
+ChecksumType, EncodingType, RequestCharged and ResultMetadata elements the SDK
+structure emitted are gone. <Size> reports the plaintext length rather than the
+stored length. A max-keys that is negative or not an integer is refused with 400
+InvalidArgument where it used to be ignored, and one above 1000 is clamped.
+<Owner> identifies the requesting client instead of the backend account.
+HeadBucket now answers 404 for a bucket that does not exist.
+* encryption.integrity_verification and its four modes,
+optimizations.streaming_threshold, optimizations.streaming_buffer_size,
+optimizations.enable_adaptive_buffering, s3_backend.use_tls, the six dead
+s3_security keys and the whole legacy top-level backend block are removed, as
+is the tink provider type. A configuration file still carrying them is not
+rejected, because unknown keys are ignored, so a legacy top-level backend block
+leaves the proxy refusing to start with "s3_backend.target_endpoint is
+required" and naming no migration path. Thirteen Prometheus series are gone;
+each had always reported zero. The authentication security log line loses
+client_ip and failed_count.
+* **encryption:** objects written by earlier versions are not readable. The
+stored format, the metadata set and the read and write paths all change.
+* **encryption:** objects written by earlier versions cannot be read. The wrapped
+DEK format and every s3ep-kek-fingerprint value change, the rsa provider type is
+removed, and an aes_key that is not base64 of 32 random bytes now stops the proxy
+at startup.
+
+
+## 🐳 Docker Images
+
+This release is available as a Docker image:
+
+```bash
+# Latest version
+docker pull guidedtraffic/s3-encryption-proxy:latest
+
+# Specific version
+docker pull guidedtraffic/s3-encryption-proxy:5.0.0
+```
+
+**Supported platforms:** linux/amd64
+
+## 📥 Download Assets
+
+Pre-built binaries and coverage reports are attached to this release:
+- `s3-encryption-proxy-v5.0.0-linux-amd64` - Main proxy binary
+- `s3ep-keygen-v5.0.0-linux-amd64` - Key generation utility
+- `coverage-v5.0.0.out` - Coverage profile (Go format)
+- `coverage-v5.0.0.txt` - Coverage report (human readable)
+
 ## [4.0.3](https://github.com/guided-traffic/s3-encryption-proxy/compare/v4.0.2...v4.0.3) (2026-09-09)
 
 
