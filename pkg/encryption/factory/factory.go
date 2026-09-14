@@ -57,16 +57,9 @@ func (f *Factory) CreateKeyEncryptorFromConfig(keyType KeyEncryptionType, config
 // Helper methods for creating key encryptors
 
 func (f *Factory) createAESKeyEncryptor(config map[string]interface{}) (encryption.KeyEncryptor, error) {
-	// Check for direct KEK provision
-	if kekInterface, exists := config["kek"]; exists {
-		kekBytes, ok := kekInterface.([]byte)
-		if !ok {
-			return nil, fmt.Errorf("kek must be []byte for AES key encryptor")
-		}
-		return keyencryption.NewAESKeyEncryptor(kekBytes)
-	}
-
-	// Use configuration directly - no translation needed anymore
+	// aes_key is the only key this provider reads, and since 5.0.0 the loader
+	// refuses a config block that carries anything else. A caller holding raw key
+	// bytes calls keyencryption.NewAESKeyEncryptor directly.
 	return keyencryption.NewAESProvider(config)
 }
 

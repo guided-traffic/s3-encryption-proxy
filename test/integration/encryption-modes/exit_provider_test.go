@@ -105,7 +105,7 @@ func StartExitProviderProxyInstanceTuned(t *testing.T, tune func(*config.Config)
 		cancel:      cancel,
 		endpoint:    endpoint,
 		client:      client,
-		segmentSize: cfg.GetStreamingSegmentSize(),
+		segmentSize: cfg.GetMultipartPartSize(),
 	}
 }
 

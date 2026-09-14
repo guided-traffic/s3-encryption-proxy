@@ -91,7 +91,7 @@ optimizations:
   # Streaming segment size for multipart uploads (5MB - 5GB)
   # This defines how much data is collected before sending as one S3 upload part
   # Must be a multiple of 64 KiB, or the proxy refuses to start.
-  streaming_segment_size: 12582912  # default, 12MB
+  multipart_part_size: 12582912  # default, 12MB
 
   # optimizations.multipart_short_part_buffer_size is deliberately absent: under
   # the exit provider a client-driven upload registers no session, so the cap

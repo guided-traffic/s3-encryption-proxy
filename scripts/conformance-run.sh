@@ -209,7 +209,7 @@ optimizations:
   # the bytes that path costs to exercise. The suite reads the same number out of
   # S3EP_CONFORMANCE_SEGMENT_SIZE and fails if the corpus no longer crosses it,
   # so the split cannot stop happening quietly.
-  streaming_segment_size: ${SEGMENT_SIZE}
+  multipart_part_size: ${SEGMENT_SIZE}
 encryption:
   encryption_method_alias: "conformance"
   providers:

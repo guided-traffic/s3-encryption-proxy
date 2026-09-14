@@ -52,7 +52,7 @@ const (
 
 	// EncStreamingThreshold is a size the suite brackets from both sides. It is
 	// no longer a routing boundary - one PUT covers everything up to
-	// optimizations.streaming_segment_size - but a payload of several MiB spans
+	// optimizations.multipart_part_size - but a payload of several MiB spans
 	// many segments, so keeping the pair is cheap coverage of the chain.
 	EncStreamingThreshold = 5 * 1024 * 1024
 )
@@ -481,7 +481,7 @@ func EncMultipartUpload(t *testing.T, ctx context.Context, client *s3.Client, bu
 // handlePutObject and checks the backend never sees plaintext.
 //
 // The branches, from internal/proxy/handlers/object/operations.go:
-//   - a declared length up to optimizations.streaming_segment_size ->
+//   - a declared length up to optimizations.multipart_part_size ->
 //     putObjectSegmented, one PutObject
 //   - anything longer -> putObjectAutoMultipart
 //   - the degenerate sizes 0 and 1

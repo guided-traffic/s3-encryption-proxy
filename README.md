@@ -21,7 +21,7 @@ The S3 Encryption Proxy intercepts S3 API calls and automatically:
 - 🔒 **Transparent Encryption**: No client-side changes required
 - 🔑 **Envelope Encryption**: one local AES-256 key encryption key, a unique AES data encryption key per object, and an authenticated wrap
 - 🚀 **S3 API Compatible**: Works with existing S3 clients and tools
-- 📤 **Streaming Uploads**: an upload is forwarded to the backend while it is still being received; a `PUT` the proxy splits into an internal multipart upload holds `streaming_segment_size` × (1 + `multipart_upload_concurrency`) of part buffers — 60 MiB with the defaults — never the object size. What the other write paths hold is in [performance.md](docs/developer/performance.md)
+- 📤 **Streaming Uploads**: an upload is forwarded to the backend while it is still being received; a `PUT` the proxy splits into an internal multipart upload holds `multipart_part_size` × (1 + `multipart_upload_concurrency`) of part buffers — 60 MiB with the defaults — never the object size. What the other write paths hold is in [performance.md](docs/developer/performance.md)
 - 🛡️ **Authenticated Storage**: each segment and the trailer are sealed and bound to their position and object; a modified, reordered or truncated object fails the read ([details](#storage-format-s3ep-gcm-seg-v2))
 - 🔐 **Client Authentication**: AWS Signature V4 validation, both the `Authorization` header and the pre-signed query form
 - 🌍 **Environment Variable Support**: Secrets via `${VAR}` references in config files
@@ -200,6 +200,11 @@ providers:
 passphrase, a hex string that was base64-encoded, or a key with too few distinct
 byte values is refused at startup, naming the field. Generate one with
 `./build/s3ep-keygen` or `openssl rand -base64 32`.
+
+`aes_key` is also the only key this block may carry. Every provider type declares
+what it reads — `aes` reads `aes_key`, `exit` reads nothing at all — and any other
+key refuses the start naming it and its provider, the same way a key the proxy
+does not define does anywhere else in the file.
 
 The key is never used directly. Both the wrapping key and the published
 `s3ep-kek-fingerprint` are derived from it with HKDF-SHA256 under separate
@@ -430,9 +435,9 @@ encryption:
 
 # Performance Optimizations
 optimizations:
-  # The size of one backend part, and the declared plaintext size above which a
-  # PUT becomes an internal multipart upload. Must be a multiple of 64 KiB.
-  streaming_segment_size: 12582912      # default 12MB (5MB - 5GB)
+  # Also the declared plaintext size above which a PUT becomes an internal
+  # multipart upload. Must be a multiple of 64 KiB.
+  multipart_part_size: 12582912         # default 12MB (5MB - 5GB)
   # Parallel UploadPart calls.
   multipart_upload_concurrency: 4       # default, 1 - 32
   # What all open client-driven uploads together may hold for a final part that
@@ -453,11 +458,11 @@ optimizations:
 > object content — and nothing else reaches a handler still framed, because
 > `net/http` strips `Transfer-Encoding` before the request is dispatched.
 
-> **`optimizations.streaming_segment_size` must be a multiple of 64 KiB.** It is
-> the plaintext one backend part carries, and a part that does not cover whole
-> segments cannot sit in the middle of the chain. The default 12582912 (12 MiB)
-> is a multiple; a value like `6000000` is not and the proxy refuses to start
-> with `optimizations.streaming_segment_size: must be a multiple of 65536 bytes
+> **`optimizations.multipart_part_size` must be a multiple of 64 KiB.** It is
+> measured in plaintext bytes, and a part that does not cover whole segments
+> cannot sit in the middle of the chain. The default 12582912 (12 MiB) is a
+> multiple; a value like `6000000` is not and the proxy refuses to start with
+> `optimizations.multipart_part_size: must be a multiple of 65536 bytes
 > (64 KiB)`, rather than accepting it and failing every upload larger than one
 > part ([ADR 0011](./docs/adr/0011-the-proxy-owns-the-part-layout.md)).
 
@@ -620,11 +625,35 @@ The breaks, all deliberate ([ADR 0017](./docs/adr/0017-stored-data-compatibility
   than producing only `s3_backend.target_endpoint is required`.
   **Go through your configuration before upgrading:** a leftover key, or a
   misspelled one, stops the proxy at startup, and the error names it.
+- **`optimizations.streaming_segment_size` is now
+  `optimizations.multipart_part_size`.** The old name is refused at startup by a
+  message of its own that names the replacement, rather than as an unknown key:
+  the two are the same setting. The value, the 12 MiB default and the checks — a
+  5 MiB minimum, a 5 GiB maximum, a whole multiple of 64 KiB — are unchanged, so
+  a file works again as soon as the key is renamed
+  ([ADR 0011](./docs/adr/0011-the-proxy-owns-the-part-layout.md)).
+- **A provider's `config:` block is strict too.** It used to swallow whatever it
+  was given: each provider read the one key it wanted and dropped the rest, so a
+  key written one level too deep — `metadata_key_prefix` inside a provider is the
+  case that actually happened — did nothing and said nothing. Every type now
+  declares what it reads: `aes` reads `aes_key`, `exit` reads nothing at all, and
+  any other key refuses the start naming it and its provider.
+- **The license reaches the proxy through `S3EP_LICENSE_TOKEN` and `license_file`,
+  and nothing else.** `S3EP_LICENSE` and `S3_ENCRYPTION_PROXY_LICENSE` are no
+  longer read, and neither is the list of well-known paths that used to be
+  searched when `license_file` was not written — `license.jwt`,
+  `build/license.jwt`, `/etc/s3ep/license.jwt`, `/opt/s3ep/license.jwt`,
+  `/app/license.jwt` and `./config/license.jwt`. A deployment on either other
+  variable, or on a path other than the one `license_file` names, starts
+  unlicensed and is refused unless its active provider is `exit`. A token found
+  somewhere the operator did not name is a token they cannot rotate
+  ([ADR 0016](./docs/adr/0016-the-license-is-a-startup-gate.md) D6). The shipped
+  image and the Helm chart are unaffected: both write `license_file`.
 - **New refusals at startup, each naming the key.** A `target_endpoint` with no
   scheme, or `http://` under any provider — the exit provider included; an
   `encryption.metadata_key_prefix` shorter than four characters, not starting
   with a letter or digit, or not ending in `-`; an
-  `optimizations.streaming_segment_size` that is not a multiple of 64 KiB; a
+  `optimizations.multipart_part_size` that is not a multiple of 64 KiB; a
   `max_clock_skew_seconds` or a `max_presign_expiry_seconds` of `0`; a
   `read_header_timeout` or `idle_timeout` of `0`.
 - **`max_clock_skew_seconds` now governs both authentication forms.** It used to
@@ -1111,7 +1140,7 @@ says how it was uploaded:
 
 | Upload | Path |
 |---|---|
-| `PUT` with a declared length at or below `optimizations.streaming_segment_size` | One `PutObject`; the body seals as the backend reads it |
+| `PUT` with a declared length at or below `optimizations.multipart_part_size` | One `PutObject`; the body seals as the backend reads it |
 | `PUT` with no declared length, or above that size | An internal multipart upload with parts of that size, sent while the body is still arriving |
 | A client's own multipart upload | One client part becomes one backend part; the object's closing record is written at `CompleteMultipartUpload` |
 
@@ -1297,7 +1326,7 @@ give the same answer to the same precondition, and `If-None-Match: *` against an
 existing key answers `412 PreconditionFailed` instead of overwriting the object.
 
 **A `PUT` the proxy turns into its internal multipart upload carries neither** —
-one with no declared length, or larger than `optimizations.streaming_segment_size`.
+one with no declared length, or larger than `optimizations.multipart_part_size`.
 The two entity-tag preconditions are dropped there and the write proceeds, so a
 create-if-absent `PUT` of a large object still overwrites. Send such a write as a
 client-driven multipart upload, where `CompleteMultipartUpload` carries them.
@@ -1913,10 +1942,9 @@ cannot read your own data. What stops is new encryption: from that point objects
 are stored as the client sends them
 ([Exit Provider](#2-exit-provider-type-exit)).
 
-The token is read from `S3EP_LICENSE`, `S3EP_LICENSE_TOKEN` or
-`S3_ENCRYPTION_PROXY_LICENSE`, and otherwise from `license_file` — by default
-`config/license.jwt`, with `/etc/s3ep/license.jwt` and `/app/license.jwt` among
-the fallbacks searched afterwards. It is never committed to this repository, so
+The token is read from `S3EP_LICENSE_TOKEN`, and otherwise from `license_file` —
+by default `config/license.jwt`, and that one file only: there is no list of
+well-known locations searched behind it. It is never committed to this repository, so
 `./start-demo.sh` and the Velero e2e suite need it supplied out of band.
 
 Source code terms: see [LICENSE](./LICENSE).

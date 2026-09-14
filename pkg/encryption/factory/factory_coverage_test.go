@@ -81,22 +81,13 @@ func TestFacCreateKeyEncryptorFromConfigTypes(t *testing.T) {
 			wantName: "aes",
 		},
 		{
-			name:     "aes from raw kek bytes",
-			keyType:  KeyEncryptionTypeAES,
-			config:   map[string]interface{}{"kek": bytes.Repeat([]byte{0x2a}, 32)},
-			wantName: "aes",
-		},
-		{
-			name:    "aes kek of wrong go type is rejected",
+			// The raw-bytes route this factory used to offer is gone: aes_key is
+			// the only key the provider reads, and the loader refuses a config
+			// block carrying anything else (ADR 0013 D11).
+			name:    "aes from raw kek bytes is no longer a route",
 			keyType: KeyEncryptionTypeAES,
-			config:  map[string]interface{}{"kek": "not-a-byte-slice"},
-			wantErr: "kek must be []byte for AES key encryptor",
-		},
-		{
-			name:    "aes kek with wrong length is rejected",
-			keyType: KeyEncryptionTypeAES,
-			config:  map[string]interface{}{"kek": bytes.Repeat([]byte{0x2a}, 16)},
-			wantErr: "must be exactly 32 bytes",
+			config:  map[string]interface{}{"kek": bytes.Repeat([]byte{0x2a}, 32)},
+			wantErr: "missing 'aes_key' in configuration",
 		},
 		{
 			name:    "aes without any key material is rejected",
@@ -186,16 +177,18 @@ func TestFacCreateKeyEncryptorFromConfigTypes(t *testing.T) {
 	}
 }
 
-func TestFacCreateAESKeyEncryptorKEKPathMatchesBase64Path(t *testing.T) {
+// The configured route and the raw-bytes constructor behind it must yield the
+// same key identity: a stored object names its key encryption key by fingerprint,
+// so two ways of handing the same key to the proxy that disagreed on it would
+// make objects written through one unreadable through the other.
+func TestFacAESFingerprintIsDerivedFromTheKeyNotHashedFromIt(t *testing.T) {
 	f := NewFactory()
 
 	rawKEK, err := base64.StdEncoding.DecodeString(FacTestAESKeyB64)
 	require.NoError(t, err)
 	require.Len(t, rawKEK, 32)
 
-	fromBytes, err := f.CreateKeyEncryptorFromConfig(KeyEncryptionTypeAES, map[string]interface{}{
-		"kek": rawKEK,
-	})
+	fromBytes, err := keyencryption.NewAESKeyEncryptor(rawKEK)
 	require.NoError(t, err)
 
 	fromBase64, err := f.CreateKeyEncryptorFromConfig(KeyEncryptionTypeAES, map[string]interface{}{
@@ -203,23 +196,18 @@ func TestFacCreateAESKeyEncryptorKEKPathMatchesBase64Path(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Both construction paths must yield the same KEK identity, otherwise objects
-	// written through one config style could not be read back through the other.
 	assert.Equal(t, fromBase64.Fingerprint(), fromBytes.Fingerprint())
 
-	// The "kek" entry wins over "aes_key" when both are present.
+	// A different key is a different identity.
 	otherKEK := bytes.Repeat([]byte{0x7f}, 32)
-	mixed, err := f.CreateKeyEncryptorFromConfig(KeyEncryptionTypeAES, map[string]interface{}{
-		"kek":     otherKEK,
-		"aes_key": FacTestAESKeyB64,
-	})
+	other, err := keyencryption.NewAESKeyEncryptor(otherKEK)
 	require.NoError(t, err)
-	assert.NotEqual(t, fromBase64.Fingerprint(), mixed.Fingerprint())
+	assert.NotEqual(t, fromBase64.Fingerprint(), other.Fingerprint())
 
 	// The fingerprint is derived from the key, never a hash of it (ADR 0004).
 	rawHash := sha256.Sum256(otherKEK)
-	assert.NotEqual(t, hex.EncodeToString(rawHash[:]), mixed.Fingerprint())
-	assert.Len(t, mixed.Fingerprint(), 64)
+	assert.NotEqual(t, hex.EncodeToString(rawHash[:]), other.Fingerprint())
+	assert.Len(t, other.Fingerprint(), 64)
 }
 
 func TestFacRegisterKeyEncryptorKeysByFingerprint(t *testing.T) {

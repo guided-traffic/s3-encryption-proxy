@@ -194,11 +194,11 @@ var Corpus = []CorpusObject{
 	{
 		Key:  "mpu-producer",
 		Size: 5<<20 + 1,
-		Why:  "the proxy's internal producer, which needs streaming_segment_size at its 5 MiB minimum to split here",
+		Why:  "the proxy's internal producer, which needs multipart_part_size at its 5 MiB minimum to split here",
 	},
 }
 
-// SegmentSizeFromEnv is the proxy's configured streaming_segment_size for this
+// SegmentSizeFromEnv is the proxy's configured multipart_part_size for this
 // run, which the run script exports alongside the value it writes into the
 // configuration. The default is the proxy's own.
 //

@@ -10,7 +10,7 @@ added here.
 Almost nothing in this suite asserts: it records, and a human compares two records. The one
 exception is the memory instrument, which fails on a hard bound — what a load costs may not
 exceed twice the part buffers the configuration budgets for it (120 MiB at the demo stack's
-12 MiB segments and four workers), and it may never scale with the object size (ADR 0020 D14).
+12 MiB parts and four workers), and it may never scale with the object size (ADR 0020 D14).
 Every other number is a number in a report.
 
 ## Running it
@@ -61,7 +61,7 @@ shorter, not small.
 | `S3EP_PERF_REPS` | `7` | repetitions per measured point |
 | `S3EP_PERF_MAX_SIZE` | none | drops **throughput** sizes above this many bytes; no other instrument reads it |
 | `S3EP_PERF_PROFILE_SECONDS` | `30` | length of the CPU profile capture |
-| `S3EP_PERF_ALT_PROXY` | none | a second proxy whose segment size is above every size measured; without it the upload-path comparison records itself as skipped |
+| `S3EP_PERF_ALT_PROXY` | none | a second proxy whose part size is above every size measured; without it the upload-path comparison records itself as skipped |
 | `S3EP_PERF_OUTDIR` | `../../perf-baseline` | where a run writes |
 
 ## Comparing two commits
@@ -226,14 +226,14 @@ divides every leg by the `direct` one.
 ### The second proxy that `uploadpath` needs
 
 Which write path an object takes is decided by its size alone: at or below
-`optimizations.streaming_segment_size` the proxy writes it in one request, above it the
+`optimizations.multipart_part_size` the proxy writes it in one request, above it the
 multipart producer takes over. So the only way to put the same size through both paths at once
-is a second proxy with a different segment size — one high enough that everything measured here
+is a second proxy with a different part size — one high enough that everything measured here
 fits in a single request. Without `S3EP_PERF_ALT_PROXY` the instrument records itself as
 `skipped` with the reason, rather than quietly measuring nothing:
 
 ```bash
-sed 's/streaming_segment_size: 12582912/streaming_segment_size: 5368709120/' \
+sed 's/multipart_part_size: 12582912/multipart_part_size: 5368709120/' \
     config/aes-example.yaml > /tmp/aes-onepart.yaml
 docker run -d --name proxy-onepart \
     --network s3-encryption-proxy_s3-demo -p 8090:8080 \

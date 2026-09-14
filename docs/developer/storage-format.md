@@ -120,7 +120,7 @@ reaches the trailer has seen it.
 stored object. `SegmentSize`, `SegmentOverhead` and `TrailerSize` are frozen for
 the life of the format id. A different value needs a different format id. Outside
 the codec they are used by `validateOptimizations` in
-`internal/config/config.go`, which refuses a `streaming_segment_size` that is not
+`internal/config/config.go`, which refuses a `multipart_part_size` that is not
 a multiple of the segment size; by `orchestration.PartStoredLen` and the
 part-alignment checks in `internal/orchestration/segmented.go` and
 `segmented_session.go`; by `provisionalWindow` and `maxWindowOverAsk` in
@@ -151,10 +151,10 @@ once, at completion. What that costs the two multipart paths is
 [multipart.md](multipart.md).
 
 The one configured value that has to respect the grid is
-`optimizations.streaming_segment_size` (`12582912` # default), the internal
-producer's part size. A value that is not a whole multiple of 64 KiB is refused at
-startup, by name (`validateOptimizations`, ADR 0011 D7); the default and the 5 MiB
-minimum both are.
+`optimizations.multipart_part_size` (`12582912` # default). A value that is not
+a whole multiple of 64 KiB is refused at startup, by name
+(`validateOptimizations`, ADR 0011 D7); the default and the 5 MiB minimum both
+are.
 
 ## What the reader guarantees, and what it does not
 

@@ -60,7 +60,7 @@ func TestCksEveryWritePathSealsTheSameChecksum(t *testing.T) {
 	tc := integration.NewTestContextWithTimeout(t, ctx)
 	defer tc.CleanupTestBucket()
 
-	// 13 MiB is above the default streaming_segment_size of 12 MiB, so that one
+	// 13 MiB is above the default multipart_part_size of 12 MiB, so that one
 	// goes through the proxy's own multipart producer rather than a single PUT.
 	sizes := map[string]int{
 		"single request":    64 * 1024,

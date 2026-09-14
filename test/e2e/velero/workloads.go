@@ -217,7 +217,7 @@ spec:
 // PUT paths.
 //
 // sizes are given in MiB relative to the proxy defaults:
-//   - 1 MiB and 6 MiB  within streaming_segment_size (12) -> one segmented PutObject
+//   - 1 MiB and 6 MiB  within multipart_part_size (12) -> one segmented PutObject
 //   - 20 MiB           above it                           -> the multipart producer
 func writeTestFiles(t *testing.T, ctx context.Context, ns, pod string) map[string]string {
 	t.Helper()

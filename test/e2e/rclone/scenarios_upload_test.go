@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	// singlePartSize stays far below optimizations.streaming_segment_size, so
+	// singlePartSize stays far below optimizations.multipart_part_size, so
 	// the object is written by the single-request PUT path.
 	singlePartSize = 1 << 20 // 1 MiB
 	// multiPartSize with a 5 MiB chunk is three parts.

@@ -130,17 +130,17 @@ func TestCfgStreamingAccessors(t *testing.T) {
 		},
 		{
 			name:          "configured values win",
-			opts:          OptimizationsConfig{StreamingSegmentSize: 32 * 1024 * 1024},
+			opts:          OptimizationsConfig{MultipartPartSize: 32 * 1024 * 1024},
 			expectSegment: 32 * 1024 * 1024,
 		},
 		{
 			name:          "negative values fall back to the defaults as well",
-			opts:          OptimizationsConfig{StreamingSegmentSize: -1},
+			opts:          OptimizationsConfig{MultipartPartSize: -1},
 			expectSegment: 12 * 1024 * 1024,
 		},
 		{
 			name:          "a single byte still counts as configured",
-			opts:          OptimizationsConfig{StreamingSegmentSize: 1},
+			opts:          OptimizationsConfig{MultipartPartSize: 1},
 			expectSegment: 1,
 		},
 	}
@@ -148,7 +148,7 @@ func TestCfgStreamingAccessors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &Config{Optimizations: tt.opts}
-			assert.Equal(t, tt.expectSegment, cfg.GetStreamingSegmentSize())
+			assert.Equal(t, tt.expectSegment, cfg.GetMultipartPartSize())
 		})
 	}
 }

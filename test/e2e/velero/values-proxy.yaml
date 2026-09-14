@@ -158,6 +158,6 @@ config: |
           aes_key: "${S3EP_AES_KEY}"
 
   optimizations:
-    streaming_segment_size: 12582912
+    multipart_part_size: 12582912
     multipart_upload_concurrency: 4
     multipart_short_part_buffer_size: 67108864

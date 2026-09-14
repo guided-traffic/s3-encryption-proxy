@@ -102,7 +102,7 @@ parts are encrypted concurrently with the transfers of other parts.
 
 **D4** The memory this puts in flight is bounded and configured, never implied: one part buffer per
 upload worker plus the one being filled — `optimizations.multipart_upload_concurrency` + 1 buffers
-of `optimizations.streaming_segment_size` each — and that is what an operator budgets against the
+of `optimizations.multipart_part_size` each — and that is what an operator budgets against the
 container limit. Overlapping transfers may not raise the bound.
 
 **D5** A part stays retriable. The proxy retains a part until the backend has acknowledged it, and

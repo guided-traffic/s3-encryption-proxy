@@ -63,7 +63,7 @@ func OrcMetaConfig(prefix *string) *config.Config {
 			},
 		},
 		Optimizations: config.OptimizationsConfig{
-			StreamingSegmentSize: 5 * 1024 * 1024,
+			MultipartPartSize: 5 * 1024 * 1024,
 		},
 	}
 }

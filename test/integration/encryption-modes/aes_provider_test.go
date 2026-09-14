@@ -105,7 +105,7 @@ func StartAESProviderProxyInstance(t *testing.T) *AESProxyTestInstance {
 		cancel:      cancel,
 		endpoint:    endpoint,
 		client:      client,
-		segmentSize: cfg.GetStreamingSegmentSize(),
+		segmentSize: cfg.GetMultipartPartSize(),
 	}
 }
 

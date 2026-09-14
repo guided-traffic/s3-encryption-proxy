@@ -14,12 +14,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
-// altProxyEnv names a second proxy whose optimizations.streaming_segment_size
+// altProxyEnv names a second proxy whose optimizations.multipart_part_size
 // is above every size measured here. With it, the same object that the demo
 // proxy routes onto the multipart producer is written by the alternate proxy in
 // one request, which is what separates the pipeline's cost from the cipher's.
 //
-//	sed 's/streaming_segment_size: 12582912/streaming_segment_size: 5368709120/' \
+//	sed 's/multipart_part_size: 12582912/multipart_part_size: 5368709120/' \
 //	    config/aes-example.yaml > /tmp/aes-onepart.yaml
 //	docker run -d --name proxy-onepart \
 //	    --network s3-encryption-proxy_s3-demo -p 8090:8080 \
@@ -62,7 +62,7 @@ func TestUploadPathComparison(t *testing.T) {
 	alt := os.Getenv(altProxyEnv)
 	if alt == "" {
 		SetStatus("uploadpath", "skipped",
-			"set "+altProxyEnv+" to a proxy whose streaming_segment_size is above every size measured here; "+
+			"set "+altProxyEnv+" to a proxy whose multipart_part_size is above every size measured here; "+
 				"see the comment on altProxyEnv")
 		t.Skip(altProxyEnv + " is not set")
 	}

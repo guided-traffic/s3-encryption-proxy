@@ -99,7 +99,7 @@ File-level detail is [package-map.md](docs/developer/package-map.md).
 ## Core flows, one fact each
 
 - **A `PUT` routes on `PlaintextContentLength` against
-  `optimizations.streaming_segment_size` and on nothing else.** Above it, or with
+  `optimizations.multipart_part_size` and on nothing else.** Above it, or with
   a length that does not really describe the plaintext — an undeclared one, or an
   aws-chunked body without `X-Amz-Decoded-Content-Length` — it becomes the
   internal multipart producer. `DecodedContentLength` is a routing hint that sizes

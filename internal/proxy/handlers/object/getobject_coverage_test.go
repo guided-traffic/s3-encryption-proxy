@@ -92,7 +92,7 @@ func ObjGetnewProviderHandler(t *testing.T, backend *MockS3Backend, providers ..
 			Providers:             providers,
 		},
 	}
-	cfg.Optimizations.StreamingSegmentSize = 1024
+	cfg.Optimizations.MultipartPartSize = 1024
 	cfg.Optimizations.MultipartUploadConcurrency = 1
 
 	encMgr, err := orchestration.NewManager(cfg)

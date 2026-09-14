@@ -30,7 +30,7 @@ const throughputConns = 8
 // thresholds decide which code the number describes, and they are not the same
 // one:
 //
-//   - 12 MiB, the configured streaming_segment_size, is where the PROXY stops
+//   - 12 MiB, the configured multipart_part_size, is where the PROXY stops
 //     sending one request and drives its own multipart upload;
 //   - 16 MiB, singlePutLimit, is where the CLIENT stops sending one PutObject,
 //     because the backend refuses a larger aws-chunked chunk.
@@ -238,7 +238,7 @@ func uploadNote(size int64) string {
 	return "whole-object PutObject, one connection"
 }
 
-// throughputProducerFloor is the configured streaming_segment_size of the demo
+// throughputProducerFloor is the configured multipart_part_size of the demo
 // stack: above it a single PutObject becomes the proxy's internal multipart
 // producer (config/aes-example.yaml).
 const throughputProducerFloor = 12 * 1024 * 1024

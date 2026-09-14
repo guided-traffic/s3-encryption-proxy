@@ -51,7 +51,7 @@ because of it:
   proxy can reach.
 - s3cmd compares the tag against a local digest at six sites, with no length test and no hex
   test. Its only escape is a hyphen anywhere in the string. Without one it can upload nothing
-  below `optimizations.streaming_segment_size` and no explicit multipart upload at all.
+  below `optimizations.multipart_part_size` and no explicit multipart upload at all.
 
 Both are the same defect seen twice: the proxy makes a claim it cannot keep. Eight candidate
 answers were costed against two end-to-end suites; the analysis is summarised under

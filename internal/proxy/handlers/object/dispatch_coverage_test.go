@@ -57,7 +57,7 @@ func ObjMiscnewHandlerWithPrefix(t *testing.T, backend *MockS3Backend, prefix st
 			}},
 		},
 	}
-	cfg.Optimizations.StreamingSegmentSize = 1024
+	cfg.Optimizations.MultipartPartSize = 1024
 	cfg.Optimizations.MultipartUploadConcurrency = 1
 
 	encMgr, err := orchestration.NewManager(cfg)

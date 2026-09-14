@@ -13,11 +13,11 @@ import (
 
 const (
 	// singlePartSize is below both s3cmd's own multipart threshold and
-	// optimizations.streaming_segment_size, so one PUT reaches the proxy.
+	// optimizations.multipart_part_size, so one PUT reaches the proxy.
 	singlePartSize = 1 << 20 // 1 MiB
 	// multiPartSize with a 5 MiB chunk is three client parts.
 	multiPartSize = 12 << 20 // 12 MiB
-	// producerSize is above optimizations.streaming_segment_size (12 MiB), so a
+	// producerSize is above optimizations.multipart_part_size (12 MiB), so a
 	// single client PUT becomes the proxy's internal multipart producer.
 	producerSize = 20 << 20 // 20 MiB
 	// producerChunkMB keeps s3cmd from splitting producerSize itself.

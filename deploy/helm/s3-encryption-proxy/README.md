@@ -105,13 +105,13 @@ configuration. Two routes for the licensed case, both supported:
 | Route | How |
 |---|---|
 | Chart-managed | `license.jwt` (token inline) or `license.existingSecret` + `license.existingSecretKey`. The chart mounts it at `/app/license/license.jwt` and prepends `license_file:` to the rendered config |
-| Environment | an `env` entry named `S3EP_LICENSE_TOKEN` with a `secretKeyRef`. The proxy also reads `S3EP_LICENSE` and `S3_ENCRYPTION_PROXY_LICENSE` |
+| Environment | an `env` entry named `S3EP_LICENSE_TOKEN` with a `secretKeyRef`. It is the one variable the proxy reads |
 
 A written `license_file` is binding ([ADR 0013](../../../docs/adr/0013-a-configuration-key-exists-only-if-code-reads-it.md) D13),
 so on the chart-managed route a Secret that is missing or carries the wrong key
 makes the pod fail to start with an error naming the file, instead of running on
 a token from somewhere else. The environment route is read first and leaves the
-key unwritten, so it keeps the discovery of the well-known locations.
+key unwritten, so the pod starts on the variable alone.
 
 **3. The credentials the config references.** The shipped `config` refers to
 `${S3_ACCESS_KEY_ID}`, `${S3_SECRET_KEY}` and `${S3EP_AES_KEY}`. A `${VAR}`

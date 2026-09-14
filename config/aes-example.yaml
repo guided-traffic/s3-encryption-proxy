@@ -92,7 +92,7 @@ optimizations:
   # Default: 12MB (12582912 bytes)
   # This defines how much data is collected before sending as one S3 upload part
   # Must be a multiple of 64 KiB, or the proxy refuses to start.
-  streaming_segment_size: 12582912  # 12MB = 12 * 1024 * 1024 bytes
+  multipart_part_size: 12582912  # 12MB = 12 * 1024 * 1024 bytes
 
   # Multipart upload parallelism (1 - 32)
   # Number of concurrent S3 UploadPart requests dispatched from putObjectAutoMultipart.

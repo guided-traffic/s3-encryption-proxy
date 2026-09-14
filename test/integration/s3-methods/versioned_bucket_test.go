@@ -242,7 +242,7 @@ func TestVbMultipartUploadLeavesExactlyOneVersion(t *testing.T) {
 	bucket := vbNewVersionedBucket(t, ctx, tc)
 
 	key := "vb-multipart-" + integration.RandomString(8)
-	// Above the demo stack's 12 MiB streaming_segment_size, so the request takes
+	// Above the demo stack's 12 MiB multipart_part_size, so the request takes
 	// the internal multipart producer rather than the single-request path.
 	payload := vbPayload(16 << 20)
 
@@ -290,7 +290,7 @@ func TestVbMultipartUploadLeavesExactlyOneVersion(t *testing.T) {
 	assert.Equal(t, vbSHA(payload), vbSHA(body))
 
 	// Item 24: the entity headers and the ETag on the producer path, over the
-	// wire. Nothing in this suite used to upload past streaming_segment_size, so
+	// wire. Nothing in this suite used to upload past multipart_part_size, so
 	// the four headers putObjectAutoMultipart sets ran under no test but a mock.
 	head, err := tc.ProxyClient.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(bucket), Key: aws.String(key),

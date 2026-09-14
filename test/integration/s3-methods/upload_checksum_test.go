@@ -297,7 +297,7 @@ func ckChunkedHeaders(payloadLen int, trailerName string) map[string]string {
 	return h
 }
 
-// The two sizes select the two PUT routes: below optimizations.streaming_segment_size
+// The two sizes select the two PUT routes: below optimizations.multipart_part_size
 // takes the single-request write, above it takes the internal multipart producer.
 // The proxy's client-visible answer must be the same on both.
 func TestCkChunkedTrailerOnBothPutRoutes(t *testing.T) {

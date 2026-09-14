@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/license"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/monitoring"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy"
 	"github.com/sirupsen/logrus"
@@ -82,7 +83,7 @@ func runProxy(_ *cobra.Command, _ []string) {
 	// Set license information in metrics if available
 	if licenseValidator != nil {
 		// Get license validation result to access claims
-		token := os.Getenv("S3EP_LICENSE_TOKEN")
+		token := os.Getenv(license.LicenseEnvVar)
 		if token == "" {
 			// Try to load from file
 			if cfg.LicenseFile != "" {

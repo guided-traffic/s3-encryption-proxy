@@ -204,7 +204,7 @@ func seedClientMultipart(t *testing.T, proxy *s3.Client, budget *Budget, obj Cor
 // TestCorpusStillExercisesEveryWritePath couples the corpus to the proxy's own
 // part threshold. "mpu-producer" is the only object that makes a single PUT
 // become the proxy's internal multipart upload, and it does so only while it is
-// larger than the configured streaming_segment_size — which the run script sets
+// larger than the configured multipart_part_size — which the run script sets
 // and exports. Without this, raising that value or shrinking the object leaves
 // the producer path untested and every assertion green.
 func TestCorpusStillExercisesEveryWritePath(t *testing.T) {
@@ -223,7 +223,7 @@ func TestCorpusStillExercisesEveryWritePath(t *testing.T) {
 	require.NotNil(t, clientDriven, "the corpus no longer has an object for a client-driven upload")
 
 	assert.Greater(t, producer.Size, threshold,
-		"%q is %d bytes and streaming_segment_size is %d: this run sends it as one request "+
+		"%q is %d bytes and multipart_part_size is %d: this run sends it as one request "+
 			"and the internal producer is exercised by nothing",
 		producer.Key, producer.Size, threshold)
 	assert.GreaterOrEqual(t, clientDriven.Size, int64(5<<20),

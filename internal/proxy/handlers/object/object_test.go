@@ -149,9 +149,7 @@ func TestIsEncryptionMetadata(t *testing.T) {
 	}
 }
 
-// getSegmentSize is the part size of the multipart producer, not the segment of
-// the storage format: that one is a constant of the format.
-func TestGetSegmentSize(t *testing.T) {
+func TestGetMultipartPartSize(t *testing.T) {
 	logger := logrus.New()
 	logger.SetLevel(logrus.FatalLevel)
 
@@ -160,8 +158,7 @@ func TestGetSegmentSize(t *testing.T) {
 		metadataPrefix: "s3ep-",
 	}
 
-	segmentSize := handler.getSegmentSize()
-	assert.Equal(t, int64(12*1024*1024), segmentSize) // 12MB default
+	assert.Equal(t, int64(12*1024*1024), handler.getMultipartPartSize()) // 12MB default
 }
 
 // ---------------------------------------------------------------------------
@@ -209,7 +206,7 @@ func newEncryptingTestHandler(t *testing.T, backend *MockS3Backend) *Handler {
 			}},
 		},
 	}
-	cfg.Optimizations.StreamingSegmentSize = 2 * dataencryption.SegmentSize
+	cfg.Optimizations.MultipartPartSize = 2 * dataencryption.SegmentSize
 	cfg.Optimizations.MultipartUploadConcurrency = 1
 
 	encMgr, err := orchestration.NewManager(cfg)
@@ -894,7 +891,7 @@ func TestPutObjectAutoMultipart_StoredChainReadsBackAsPlaintext(t *testing.T) {
 
 	// Two full parts and a partial one, so the object ends inside a segment and
 	// the trailer rides on a part that is not full.
-	payload := testPayload(2*int(h.getSegmentSize()) + 4096)
+	payload := testPayload(2*int(h.getMultipartPartSize()) + 4096)
 	req := httptest.NewRequest(http.MethodPut, "/test-bucket/test-key", bytes.NewReader(payload))
 
 	rr := httptest.NewRecorder()
@@ -967,7 +964,7 @@ func TestPutObjectAutoMultipart_ShutdownSweepSeesTheUpload(t *testing.T) {
 	backend.On("AbortMultipartUpload", mock.Anything, mock.Anything).
 		Return(&s3.AbortMultipartUploadOutput{}, nil).Maybe()
 
-	payload := testPayload(2*int(h.getSegmentSize()) + 4096)
+	payload := testPayload(2*int(h.getMultipartPartSize()) + 4096)
 	req := httptest.NewRequest(http.MethodPut, "/test-bucket/test-key", bytes.NewReader(payload))
 	objCallAutoMultipart(t, h, httptest.NewRecorder(), req, "test-bucket", "test-key")
 
@@ -997,7 +994,7 @@ func TestPutObjectAutoMultipart_CompletedUploadIsNotSweptAgain(t *testing.T) {
 	backend.On("CompleteMultipartUpload", mock.Anything, mock.Anything).
 		Return(&s3.CompleteMultipartUploadOutput{ETag: aws.String(`"etag"`)}, nil)
 
-	payload := testPayload(2*int(h.getSegmentSize()) + 4096)
+	payload := testPayload(2*int(h.getMultipartPartSize()) + 4096)
 	rr := httptest.NewRecorder()
 	objCallAutoMultipart(t, h, rr, httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(payload)), "b", "k")
 	require.Equal(t, http.StatusOK, rr.Code)
@@ -1055,7 +1052,7 @@ func TestPutObjectAutoMultipart_ConcurrencyIsTheConfiguredNumber(t *testing.T) {
 				Return(&s3.CompleteMultipartUploadOutput{ETag: aws.String(`"etag"`)}, nil)
 
 			// Six parts: more than either pool, so the pool size is the bound.
-			payload := testPayload(6 * int(h.getSegmentSize()))
+			payload := testPayload(6 * int(h.getMultipartPartSize()))
 			rr := httptest.NewRecorder()
 			objCallAutoMultipart(t, h, rr, httptest.NewRequest(http.MethodPut, "/b/k", bytes.NewReader(payload)), "b", "k")
 			require.Equal(t, http.StatusOK, rr.Code)

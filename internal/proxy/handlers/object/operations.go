@@ -392,7 +392,7 @@ func (h *Handler) handlePutObject(w http.ResponseWriter, r *http.Request, bucket
 	// chain that length is a pure function of the plaintext length. An undeclared
 	// length, or an object larger than one part, goes to the multipart producer -
 	// there is no threshold to tune and no second cipher to choose.
-	if !known || plaintextLen > h.config.Optimizations.StreamingSegmentSize {
+	if !known || plaintextLen > h.config.Optimizations.MultipartPartSize {
 		h.putObjectAutoMultipart(w, r, bucket, key, entity, attrs, userMetadata)
 		return
 	}
@@ -914,7 +914,7 @@ func (h *Handler) putObjectAutoMultipart(
 	entity EntityHeaders, attrs StorageAttributes, userMetadata map[string]string,
 ) {
 	ctx := r.Context()
-	partSize := h.getSegmentSize()
+	partSize := h.getMultipartPartSize()
 
 	log := h.logger.WithFields(map[string]interface{}{
 		"bucket":    bucket,

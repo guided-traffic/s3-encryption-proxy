@@ -467,25 +467,25 @@ func TestCfgValidateOptimizationsBoundaries(t *testing.T) {
 		{name: "all zero values skip every range check", opts: OptimizationsConfig{}},
 		{
 			name:        "segment size one byte below 5MB",
-			opts:        OptimizationsConfig{StreamingSegmentSize: 5242879},
-			expectError: "optimizations.streaming_segment_size: minimum value is 5MB (5242880 bytes), got 5242879",
+			opts:        OptimizationsConfig{MultipartPartSize: 5242879},
+			expectError: "optimizations.multipart_part_size: minimum value is 5MB (5242880 bytes), got 5242879",
 		},
-		{name: "segment size exactly 5MB", opts: OptimizationsConfig{StreamingSegmentSize: 5242880}},
-		{name: "segment size exactly 5GB", opts: OptimizationsConfig{StreamingSegmentSize: 5368709120}},
+		{name: "segment size exactly 5MB", opts: OptimizationsConfig{MultipartPartSize: 5242880}},
+		{name: "segment size exactly 5GB", opts: OptimizationsConfig{MultipartPartSize: 5368709120}},
 		{
 			name:        "segment size one byte above 5GB",
-			opts:        OptimizationsConfig{StreamingSegmentSize: 5368709121},
-			expectError: "optimizations.streaming_segment_size: maximum value is 5GB (5368709120 bytes), got 5368709121",
+			opts:        OptimizationsConfig{MultipartPartSize: 5368709121},
+			expectError: "optimizations.multipart_part_size: maximum value is 5GB (5368709120 bytes), got 5368709121",
 		},
 		{
 			// A value inside the range but not on a segment boundary used to pass
 			// startup and then fail every upload larger than one part, at the
 			// backend, with a 500 (ADR 0003).
 			name:        "segment size in range but not a multiple of 64 KiB",
-			opts:        OptimizationsConfig{StreamingSegmentSize: 10000000},
-			expectError: "optimizations.streaming_segment_size: must be a multiple of 65536 bytes (64 KiB), got 10000000",
+			opts:        OptimizationsConfig{MultipartPartSize: 10000000},
+			expectError: "optimizations.multipart_part_size: must be a multiple of 65536 bytes (64 KiB), got 10000000",
 		},
-		{name: "segment size 12MB is a whole number of segments", opts: OptimizationsConfig{StreamingSegmentSize: 12582912}},
+		{name: "segment size 12MB is a whole number of segments", opts: OptimizationsConfig{MultipartPartSize: 12582912}},
 		{name: "concurrency at lower bound", opts: OptimizationsConfig{MultipartUploadConcurrency: 1}},
 		{name: "concurrency at upper bound", opts: OptimizationsConfig{MultipartUploadConcurrency: 32}},
 		{
@@ -615,11 +615,11 @@ func TestCfgValidatePropagatesSubValidatorErrors(t *testing.T) {
 
 	t.Run("optimizations error", func(t *testing.T) {
 		cfg := CfgExitProviderConfig()
-		cfg.Optimizations.StreamingSegmentSize = 100
+		cfg.Optimizations.MultipartPartSize = 100
 
 		err := validate(cfg)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "optimizations.streaming_segment_size: minimum value is 5MB")
+		assert.Contains(t, err.Error(), "optimizations.multipart_part_size: minimum value is 5MB")
 	})
 
 	t.Run("s3 client error", func(t *testing.T) {
@@ -791,7 +791,7 @@ func TestCfgValidateBackendTransport(t *testing.T) {
 		},
 		{
 			// The exception this used to admit let the proxy start and then fail
-			// every upload below streaming_segment_size with "failed to seek body
+			// every upload below multipart_part_size with "failed to seek body
 			// to start", while larger ones went through the multipart producer
 			// and stored fine.
 			name:        "plain http under the exit provider",

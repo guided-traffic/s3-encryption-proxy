@@ -94,7 +94,7 @@ func ObjPutnewHandler(t *testing.T, backend *MockS3Backend, o ObjPutopts) *Handl
 			Providers:             []config.EncryptionProvider{provider},
 		},
 	}
-	cfg.Optimizations.StreamingSegmentSize = o.segmentSize
+	cfg.Optimizations.MultipartPartSize = o.segmentSize
 	cfg.Optimizations.MultipartUploadConcurrency = o.concurrency
 	cfg.S3Security.VerifyPayloadHash = o.verifyPayloadHash
 
@@ -1283,26 +1283,26 @@ func TestObjPutSegmentSizeAndConcurrencyDefaults(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			h := &Handler{config: tc.cfg}
-			assert.Equal(t, tc.wantSegment, h.getSegmentSize())
+			assert.Equal(t, tc.wantSegment, h.getMultipartPartSize())
 			assert.Equal(t, tc.wantConcurrency, h.getMultipartUploadConcurrency())
 		})
 	}
 
 	t.Run("configured values win", func(t *testing.T) {
 		cfg := &config.Config{}
-		cfg.Optimizations.StreamingSegmentSize = 7 * 1024 * 1024
+		cfg.Optimizations.MultipartPartSize = 7 * 1024 * 1024
 		cfg.Optimizations.MultipartUploadConcurrency = 9
 		h := &Handler{config: cfg}
-		assert.Equal(t, int64(7*1024*1024), h.getSegmentSize())
+		assert.Equal(t, int64(7*1024*1024), h.getMultipartPartSize())
 		assert.Equal(t, 9, h.getMultipartUploadConcurrency())
 	})
 
 	t.Run("negative values fall back", func(t *testing.T) {
 		cfg := &config.Config{}
-		cfg.Optimizations.StreamingSegmentSize = -1
+		cfg.Optimizations.MultipartPartSize = -1
 		cfg.Optimizations.MultipartUploadConcurrency = -1
 		h := &Handler{config: cfg}
-		assert.Equal(t, int64(12*1024*1024), h.getSegmentSize())
+		assert.Equal(t, int64(12*1024*1024), h.getMultipartPartSize())
 		assert.Equal(t, 4, h.getMultipartUploadConcurrency())
 	})
 }

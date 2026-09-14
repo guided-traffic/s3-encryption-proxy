@@ -43,7 +43,7 @@ window, no shim — is untouched. One place still accepts a key in silence: an e
 **Amended 2026-09-10, both refusals D8 names are now built.**
 `encryption.providers[].config.aes_key` is admitted only as base64 of exactly 32 bytes that are
 neither all printable nor drawn from too few distinct values, and startup refuses anything else
-naming the field. `optimizations.streaming_segment_size` is checked for its 5 MB to 5 GB range
+naming the field. `optimizations.multipart_part_size` is checked for its 5 MB to 5 GB range
 **and for segment alignment**, so a value that is not a multiple of the segment size refuses the
 start rather than failing every upload larger than one part. That check is ADR 0011 D7.
 
@@ -160,7 +160,7 @@ to complain about a key that is no longer declared.
 the proxy refuses to start and the error names the field. Silent fixups are not offered.
 This is why the same release both drops `encryption.integrity_verification` and
 `optimizations.streaming_threshold` without comment and refuses to start on an
-`optimizations.streaming_segment_size` that is not a multiple of 65536 or an
+`optimizations.multipart_part_size` that is not a multiple of 65536 or an
 `encryption.providers[].config.aes_key` that is not base64 of exactly 32 acceptable bytes.
 
 **D9.** Backward-compatibility code is deleted, not carried. Legacy configuration blocks
@@ -207,7 +207,7 @@ minor.
   because ADR 0013 D11 rides the same release. An operator upgrading with a stale file is
   stopped, not left with a clean start and a changed behaviour. The exception is a key inside a
   provider entry, which is collected rather than checked.
-- **A carried-over `optimizations.streaming_segment_size` that is not a multiple of the segment
+- **A carried-over `optimizations.multipart_part_size` that is not a multiple of the segment
   size refuses the start**, naming the key and the required multiple, rather than starting and
   failing the first upload larger than one part. The startup check of ADR 0011 D7 is what makes
   D8's promise cover this key.
@@ -279,11 +279,12 @@ stored data unreadable is the definition of a major.
   version at a time. Nothing in the product detects a mixed window; an object the previous
   release writes during one is refused afterwards, loudly, like any foreign object. Not
   examined further.
-- **Closed 2026-09-12 for the file, open inside a provider entry.** A stale configuration does
-  not keep loading: a key this version does not define stops the start and the error names it
-  (ADR 0013 D11), which is how an operator who never read the notes finds out. A key inside an
-  `encryption.providers` entry is the exception — the entry collects its own parameters, so a
-  removed or misspelt one there is still accepted in silence.
+- **Closed 2026-09-12 for the file, and 2026-09-14 inside a provider entry.** A stale
+  configuration does not keep loading: a key this version does not define stops the start and
+  the error names it (ADR 0013 D11), which is how an operator who never read the notes finds
+  out. The `encryption.providers` entry was the one exception, collecting its own parameters so
+  that a removed or misspelt one there was accepted in silence; each provider type now declares
+  the keys it reads and the rest are refused the same way.
 - **Switching the active provider to the pass-through type is not a migration route.** It
   does not make old objects readable; it hands the stored ciphertext to the client as if it
   were content. It stays available as a testing and end-of-life aid and nothing more.

@@ -233,7 +233,7 @@ make build-keygen && ./build/s3ep-keygen
 - **rclone**: `make test-e2e-rclone`, cases R1-R7. **s3cmd**: `make test-e2e-s3cmd`, cases S1-S7. Same `//go:build e2e` tag, one package each, every case over both proxy endpoints
 - Environment is the demo stack, not a cluster: `make e2e-rclone-up` / `make e2e-s3cmd-up` install the pinned client and hand the stack to `./start-demo.sh`; either `*-down` target stops it, because there is one demo stack and not one per suite. There is deliberately no target that runs both. Seconds, not minutes: 5s and 8s on a warm stack (2026-09-13)
 - The clients are real pinned binaries, installed by the up-scripts into `test/e2e/rclone/bin/` and `test/e2e/s3cmd/venv/` (both gitignored) and overridable with `RCLONE_BIN` / `S3CMD_BIN`. Versions live in each suite's `versions.env`, tracked by Renovate as the group "client e2e" and never automerged: a client release can change the verdict, and that is the finding
-- **Every case asserts the target behaviour**, so both suites are RED today: 13 of 28 rclone cases and 10 of 19 s3cmd cases fail, and they stay red until the entity-tag question of ADR 0010 D12 and the two routing gaps are answered. That is the suites working — see *A test asserts the TARGET behaviour* below
+- **Every case asserts the target behaviour**, and a case stays red until the product meets it. Both suites are green today — rclone 28 of 28, s3cmd 19 of 19 — since ADR 0032 answered the entity-tag question ADR 0010 D12 left open and the two trailing-slash routing gaps were closed with it. A case that goes red names a defect, not a flake — see *A test asserts the TARGET behaviour* below
 - Each run writes `test-results/e2e-<client>-verdicts.md`: one row per case per endpoint with the client's own sentence. That table is the evidence behind what this project claims about these clients (ADR 0006 D5, D7)
 - The no-skip rule covers both suites, and `e2e-rclone` and `e2e-s3cmd` are release gates alongside `e2e-velero` — one CI job each
 - Shared helpers are `test/e2e/harness/` (the demo-stack coordinates, the process runner, the backend client, the at-rest assertion, the verdict recorder). `test/e2e/harness/demo-stack.env` is read by both the bash up-scripts and the Go suites, so a port or a credential cannot drift between them
@@ -270,11 +270,11 @@ the same list in the step summary — so a red check names the defects without a
 an artifact or grepping the test tree.
 
 **The tree was swept against this rule on 2026-09-13** and 27 tests were found asserting a
-known-wrong answer; they now assert the target and are red, which is why `make test-unit`
-and the integration suites do not pass on this branch. 28 further candidates were checked
-and left alone because an ADR decides them — a refusal that an ADR records as the product's
-intent is the product working, not a pinned defect, and that is the distinction to make
-before touching any of them.
+known-wrong answer; they were unpinned to assert the target, went red, and the product was
+then fixed to meet them — `make test-unit` and the integration suites are green on this
+branch. 28 further candidates were checked and left alone because an ADR decides them — a
+refusal that an ADR records as the product's intent is the product working, not a pinned
+defect, and that is the distinction to make before touching any of them.
 
 **A change to `test/e2e/harness/` is a change to all three suites.** Compiling and running
 the two client suites proves two of them. The Velero suite has to be run for real before
@@ -417,16 +417,19 @@ encryption:
     - alias: "current-provider"
       type: "aes"  # or "exit"
       description: "Provider description"   # parsed, never read
-      config: { ... }
+      config:                               # strict per type: aes reads aes_key
+        aes_key: "base64-of-32-random-bytes"  # and exit reads nothing at all. Any
+                                              # other key refuses the start, naming
+                                              # it and its provider
 
 # Performance Optimizations
 # The validate:"min=..." struct tags in config.go are never evaluated (no validator
 # library); only the ranges written out in validateOptimizations() are enforced.
 optimizations:
-  streaming_segment_size: 12582912  # default, 12MB (5MB - 5GB and a multiple of 65536,
-                                    # checked at startup). Two jobs: the size of one S3
-                                    # part in the internal multipart producer, and the
-                                    # ceiling above which a PUT stops being a single request
+  multipart_part_size: 12582912  # default, 12MB (5MB - 5GB and a multiple of 65536,
+                                 # checked at startup). Also the plaintext ceiling above
+                                 # which a PUT stops being a single request; not the
+                                 # stored format's 64 KiB segment
   multipart_session_cleanup_interval: 300  # default, seconds, minimum 1 checked at startup
                                            # (a written 0 stranded the short-part budget)
   multipart_session_idle_timeout: 3600     # default, seconds, minimum 1 checked at startup
@@ -456,8 +459,8 @@ No environment variable overrides a configuration key: the one mechanism is a
 under `s3_backend`, the two per entry under `s3_clients`, and every string under
 `encryption.providers[].config` — and an unset or empty one refuses the start.
 A `${VAR}` anywhere else is kept verbatim. The license token is the exception,
-read from `S3EP_LICENSE`, `S3EP_LICENSE_TOKEN` or `S3_ENCRYPTION_PROXY_LICENSE`
-before `license_file` is opened. The image starts from `config/default.yaml`,
+read from `S3EP_LICENSE_TOKEN` before `license_file` is opened; that key names
+the one file read, with no well-known locations behind it. The image starts from `config/default.yaml`,
 which takes every value it needs that way
 ([docs/developer/configuration.md](docs/developer/configuration.md)).
 
@@ -514,14 +517,17 @@ HEAD — landed with ADR 0003 D14.
 `validateAESKey` refuses anything that is not base64 of exactly 32 bytes, and
 additionally refuses a decoded value that is all printable ASCII or carries fewer
 than 16 distinct byte values — that is a passphrase, not a key. Generate one with
-`s3ep-keygen` or `openssl rand -base64 32`.
+`s3ep-keygen` or `openssl rand -base64 32`. `aes_key` is the only key the block
+may carry: `providerConfigKeys` in `internal/config/config.go` declares what each
+type reads, and `validateProviderConfig` refuses the rest (ADR 0013 D11).
 
 #### Exit Provider (type: "exit")
 ```yaml
 - alias: "exit"
   type: "exit"
-  # No config: it holds no key material. Keep the aes provider that wrote the
-  # existing objects listed alongside it, or they become unreadable.
+  # No config at all: it holds no key material, and a config block carrying
+  # anything refuses the start. Keep the aes provider that wrote the existing
+  # objects listed alongside it, or they become unreadable.
 ```
 
 ### Metadata Conventions
@@ -569,7 +575,7 @@ and changing it is a storage format change (ADR 0003, ADR 0017).
 - Enable debug logging: `log_level: "debug"` in config
 - Check provider fingerprints in logs and metadata; a `403 InvalidObjectState` on a GET is one of three — an object this proxy did not write, a wrapped data key that does not authenticate under the fingerprint it names, or stored bytes that do not authenticate under a key that did unwrap. The message says which
 - Use `TestContext` in tests for MinIO/proxy client comparison
-- `optimizations.streaming_segment_size` (min 5MB, a multiple of 64 KiB, default 12MB) decides both the single-request PUT ceiling and the internal part size
+- `optimizations.multipart_part_size` (min 5MB, a multiple of 64 KiB, default 12MB) is also the single-request PUT ceiling; it is not the stored format's 64 KiB segment
 - Sizes: stored and plaintext lengths convert both ways without a key (`CiphertextSize` / `PlaintextSize`). A stored length no chain of this format could have produced is an error, never a fabricated size
 - Chunked encoding: the handlers route on `request.Parser.PlaintextContentLength`, which returns the declared plaintext length *and* whether that number really describes the plaintext — an aws-chunked body without `X-Amz-Decoded-Content-Length` answers false. A PUT that answers false becomes the internal multipart producer; an `UploadPart` is streamed only when the answer is true *and* the length covers whole segments and clears the backend's 5 MiB minimum, and is otherwise held in memory and sealed at Complete (ADR 0011 D5). `DecodedContentLength` (`X-Amz-Decoded-Content-Length` when present, else `Content-Length`) is the sizing hint the buffered body reader uses; nothing routes on it
 - Encryption happens exactly once, in the handler's call into `orchestration.Manager`; there is no second encryption layer
@@ -606,7 +612,7 @@ and [docs/developer/multipart.md](docs/developer/multipart.md). The four things
 that decide the branching, and nothing else, are:
 
 - **A PUT routes on `request.Parser.PlaintextContentLength`** against
-  `optimizations.streaming_segment_size`. Above it, or with a length that does not
+  `optimizations.multipart_part_size`. Above it, or with a length that does not
   describe the plaintext — an aws-chunked body without
   `X-Amz-Decoded-Content-Length`, or no declared length at all — it becomes the
   internal multipart producer. `DecodedContentLength` is a sizing hint the

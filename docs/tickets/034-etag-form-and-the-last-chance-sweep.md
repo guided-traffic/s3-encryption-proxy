@@ -1256,6 +1256,15 @@ the cost of both answers.
 
 ### 3. A provider's `config:` block accepts any key in silence
 
+**BUILT 2026-09-14.** Owner decision: refuse now. Each provider type declares the
+keys it reads — `aes` reads `aes_key`, `exit` reads nothing — and any other key
+refuses the start naming it and its provider, several in a stable order. The
+factory's raw-`kek` route, which no configuration file could reach, is deleted
+rather than moved; the test that used it now exercises the key identity directly.
+The test that asserted the old silence is a four-case table asserting the refusal,
+`metadata_key_prefix` one level too deep among them. Recorded as an amendment to
+ADR 0013 D11, and ADR 0017's residual risk is closed with it.
+
 `validateAESKey` reads `aes_key` and nothing else
 ([config.go:817](../../internal/config/config.go#L817)); `NewAESProvider` the
 same ([aes.go:72-89](../../pkg/encryption/keyencryption/aes.go#L72)); the exit
@@ -1276,6 +1285,14 @@ from a file and answers a YAML `kek:` with *"kek must be []byte"*; it moves to t
 tests that use it or goes.
 
 ### 4. Three environment variables and a fallback path list carry the licence
+
+**BUILT 2026-09-14.** Owner decision: one name and no list. `S3EP_LICENSE_TOKEN`
+is the only variable, and `license_file` names the only file, its own default
+included. The `binding` distinction stays and had to: without it a deployment
+whose active provider is `exit` — which needs no licence — would stop starting the
+moment the default path is absent. Recorded as an amendment to ADR 0013 D13, which
+also marks its own rejected alternative as taken; ADR 0016's residual risk is
+closed.
 
 `LoadLicenseFromEnv` accepts `S3EP_LICENSE`, `S3EP_LICENSE_TOKEN` and
 `S3_ENCRYPTION_PROXY_LICENSE`
@@ -1317,6 +1334,16 @@ sentence that a `description` is for the operator and is never a control. No
 code.
 
 ### 7. `optimizations.streaming_segment_size` is not the segment size
+
+**BUILT 2026-09-14.** Owner overruled the recommendation below: the key is
+renamed to `optimizations.multipart_part_size`. Value, default and checks are
+unchanged; the old name is refused at startup by a message of its own naming the
+replacement, because a rename that reported a generic unknown key would leave an
+operator guessing that the two are the same setting. The rename is recorded as an
+amendment to ADR 0011, which owns the key's decision, and the naming caution it
+made unnecessary is gone from the pages that carried it. The residual is named
+there: the new name carries one of the key's two jobs, and the second — the
+single-request `PUT` ceiling — is documented rather than named.
 
 The format's segment is a 64 KiB constant (ADR 0003 D2); this key is the part
 size of the internal producer and the ceiling of a single-request `PUT` (ADR

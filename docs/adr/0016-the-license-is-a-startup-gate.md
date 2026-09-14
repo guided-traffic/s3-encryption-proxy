@@ -223,15 +223,16 @@ shipped binary accepts.
   automatically; the check only ever sees the one its own job holds.
 - **The expiry check trusts an unsigned payload** by design (D9), so a well-formed but
   unsigned or forged token passes it and fails at startup instead.
-- **The token's routes are wider than D6 states (verified 2026-09-12).** Three environment
-  variable names are accepted — `S3EP_LICENSE`, `S3EP_LICENSE_TOKEN` and
-  `S3_ENCRYPTION_PROXY_LICENSE` — and beyond `license_file` a fixed list of fallback paths is
-  searched, `/etc/s3ep/license.jwt` and `/app/license.jwt` among them. An operator reading D6
-  cannot tell which of them a running proxy took its token from. **Narrowed 2026-09-13**
-  (ADR 0013 D13): a `license_file` the operator *wrote* is now the only file read, and a path
-  that yields no token refuses the start naming it. The fallback list applies only where the key
-  is not written, and the three environment names still come first — so the question stays open
-  for a deployment that says nothing, which is the case the list exists for.
+- **Closed 2026-09-14: the token's routes are exactly what D6 states.** They had been wider —
+  three environment variable names were accepted, and beyond `license_file` a fixed list of
+  fallback paths was searched, `/etc/s3ep/license.jwt` and `/app/license.jwt` among them, so an
+  operator reading D6 could not tell which of them a running proxy took its token from. The
+  narrowing of 2026-09-13 (ADR 0013 D13) made a `license_file` the operator *wrote* the only
+  file read; what stayed open was the deployment that writes nothing. `S3EP_LICENSE_TOKEN` is
+  now the one variable and `license_file` the one file, its default included: a deployment that
+  set either other name, or relied on a well-known location, is refused at startup rather than
+  read. The refusal is the point — a token found somewhere the operator did not name is a token
+  they cannot rotate.
 - **Custody of the signing key is named but not verified here.** That it exists outside a
   directory a build clean removes is a rule, not an observed state; the exact custody
   location is the owner's to name and is not recorded in this repository — see ADR 0021.

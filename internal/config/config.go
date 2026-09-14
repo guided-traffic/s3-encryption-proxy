@@ -8,6 +8,9 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
+	"sort"
+	"strings"
 
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/license"
@@ -88,7 +91,7 @@ type S3SecurityConfig struct {
 // OptimizationsConfig holds performance optimization settings
 type OptimizationsConfig struct {
 	// Streaming Segment Configuration
-	StreamingSegmentSize int64 `mapstructure:"streaming_segment_size" validate:"min=5242880,max=5368709120"` // 5MB - 5GB, default: 12MB
+	MultipartPartSize int64 `mapstructure:"multipart_part_size" validate:"min=5242880,max=5368709120"` // 5MB - 5GB, default: 12MB
 
 	// MaxRequestDocumentSize bounds the request documents the proxy has to buffer
 	// whole - every bucket and object sub-resource body, and the Delete document
@@ -233,9 +236,9 @@ func Load() (*Config, error) {
 	// key is dropped in silence and the setting the operator believes is in
 	// force is not. A misspelling gets the same treatment, which is the point.
 	//
-	// A provider block keeps swallowing its own parameters: EncryptionProvider
-	// carries a `,remain` field, and mapstructure clears the unused-key set
-	// before it applies this check.
+	// A provider block collects its own parameters into a `,remain` field, so
+	// mapstructure clears the unused-key set before this check sees them.
+	// validateProviderConfig is what refuses them, per provider type.
 	// multipart_session_max_age measured a session from its creation;
 	// multipart_session_idle_timeout measures it from the last part. The same
 	// number means something else under the new key, so the old one is refused by
@@ -247,6 +250,18 @@ func Load() (*Config, error) {
 				"optimizations.multipart_session_idle_timeout, which counts from the last part " +
 				"an upload received rather than from when it was created, so a transfer still " +
 				"running is no longer abandoned for taking long")
+	}
+
+	// A rename, and refused by name for the opposite reason to the one above: the
+	// value means exactly what it meant, so an operator whose file keeps working
+	// under a generic unknown-key error would have no idea the two are the same
+	// setting.
+	if viper.IsSet("optimizations.streaming_segment_size") {
+		return nil, fmt.Errorf(
+			"optimizations.streaming_segment_size is now optimizations.multipart_part_size; " +
+				"the value and its checks are unchanged. The old name said segment, which is " +
+				"the format's own 64 KiB unit and not this: the key is the size of one backend " +
+				"part, and the plaintext size above which a PUT becomes a multipart upload")
 	}
 
 	// 0 does not mean "no timeout" here, it means "every session is already
@@ -387,7 +402,7 @@ func setDefaults() {
 	viper.SetDefault("license_file", "config/license.jwt")
 
 	// Optimizations defaults
-	viper.SetDefault("optimizations.streaming_segment_size", 12*1024*1024)    // 12MB default
+	viper.SetDefault("optimizations.multipart_part_size", 12*1024*1024)       // 12MB default
 	viper.SetDefault("optimizations.multipart_session_cleanup_interval", 300) // 5 minutes default
 	viper.SetDefault("optimizations.multipart_session_idle_timeout", 3600)    // 1 hour without a part
 	viper.SetDefault("optimizations.multipart_upload_concurrency", 4)         // 4 parallel S3 UploadPart calls
@@ -833,6 +848,13 @@ func validateEncryption(cfg *Config) error {
 	return nil
 }
 
+// providerConfigKeys is every key a provider type reads inside its `config:`
+// block. Anything else refuses the start (ADR 0013 D11).
+var providerConfigKeys = map[string][]string{
+	"aes":  {"aes_key"},
+	"exit": {},
+}
+
 // validateProvider validates a single encryption provider
 func validateProvider(provider *EncryptionProvider, index int) error {
 	switch provider.Type {
@@ -840,7 +862,9 @@ func validateProvider(provider *EncryptionProvider, index int) error {
 		return fmt.Errorf(
 			"encryption.providers[%d].type: 'tink' is not a provider of this proxy (supported: aes, exit)", index)
 	case "aes":
-		return validateAESKey(provider.Config, index)
+		if err := validateAESKey(provider.Config, index); err != nil {
+			return err
+		}
 	case "exit":
 		// The exit provider takes no configuration: it writes plaintext and reads
 		// what is already encrypted through the provider that wrapped it.
@@ -853,7 +877,42 @@ func validateProvider(provider *EncryptionProvider, index int) error {
 		return fmt.Errorf("encryption.providers[%d].type: unsupported encryption type: %s (supported: aes, exit)", index, provider.Type)
 	}
 
-	return nil
+	return validateProviderConfig(provider, index)
+}
+
+// validateProviderConfig refuses a key the provider's type does not read.
+//
+// D11 makes an unknown key anywhere in the file a startup refusal, and left the
+// provider block out of it on the grounds that the provider validates its own
+// parameters. It did not: each provider read the one key it wanted and discarded
+// the rest, so this block was the last place in the file where a removed or
+// misspelt key was accepted in silence - which is how metadata_key_prefix came
+// to sit one level too deep, do nothing, and say nothing.
+func validateProviderConfig(provider *EncryptionProvider, index int) error {
+	accepted, known := providerConfigKeys[provider.Type]
+	if !known {
+		return nil
+	}
+
+	unknown := make([]string, 0, len(provider.Config))
+	for key := range provider.Config {
+		if !slices.Contains(accepted, key) {
+			unknown = append(unknown, key)
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+
+	if len(accepted) == 0 {
+		return fmt.Errorf(
+			"encryption.providers[%d].config: the %s provider reads no configuration at all, but this block sets %s",
+			index, provider.Type, strings.Join(unknown, ", "))
+	}
+	return fmt.Errorf(
+		"encryption.providers[%d].config: the %s provider does not read %s (it reads: %s)",
+		index, provider.Type, strings.Join(unknown, ", "), strings.Join(accepted, ", "))
 }
 
 // validateAESKey admits only what a master key may be: base64 of exactly 32
@@ -904,23 +963,23 @@ func aesKeyError(index int, reason string) error {
 
 // validateOptimizations validates the optimizations configuration
 func validateOptimizations(cfg *Config) error {
-	// Validate streaming segment size (5MB to 5GB range)
-	if cfg.Optimizations.StreamingSegmentSize > 0 {
-		if cfg.Optimizations.StreamingSegmentSize < 5*1024*1024 {
-			return fmt.Errorf("optimizations.streaming_segment_size: minimum value is 5MB (5242880 bytes), got %d", cfg.Optimizations.StreamingSegmentSize)
+	// Validate the multipart part size (5MB to 5GB range)
+	if cfg.Optimizations.MultipartPartSize > 0 {
+		if cfg.Optimizations.MultipartPartSize < 5*1024*1024 {
+			return fmt.Errorf("optimizations.multipart_part_size: minimum value is 5MB (5242880 bytes), got %d", cfg.Optimizations.MultipartPartSize)
 		}
-		if cfg.Optimizations.StreamingSegmentSize > 5*1024*1024*1024 {
-			return fmt.Errorf("optimizations.streaming_segment_size: maximum value is 5GB (5368709120 bytes), got %d", cfg.Optimizations.StreamingSegmentSize)
+		if cfg.Optimizations.MultipartPartSize > 5*1024*1024*1024 {
+			return fmt.Errorf("optimizations.multipart_part_size: maximum value is 5GB (5368709120 bytes), got %d", cfg.Optimizations.MultipartPartSize)
 		}
 		// The producer uses this as the part size, and every part but the last
 		// has to cover whole segments of the stored format (ADR 0003). An
 		// unaligned value passes the range check and then fails every upload
 		// larger than one part, at the backend, with a 500 — so it is refused
 		// here instead.
-		if cfg.Optimizations.StreamingSegmentSize%dataencryption.SegmentSize != 0 {
+		if cfg.Optimizations.MultipartPartSize%dataencryption.SegmentSize != 0 {
 			return fmt.Errorf(
-				"optimizations.streaming_segment_size: must be a multiple of %d bytes (64 KiB), got %d",
-				dataencryption.SegmentSize, cfg.Optimizations.StreamingSegmentSize)
+				"optimizations.multipart_part_size: must be a multiple of %d bytes (64 KiB), got %d",
+				dataencryption.SegmentSize, cfg.Optimizations.MultipartPartSize)
 		}
 	}
 
@@ -1096,11 +1155,10 @@ func (cfg *Config) GetAllProviders() []EncryptionProvider {
 	return cfg.Encryption.Providers
 }
 
-// GetStreamingSegmentSize returns the streaming segment size from optimizations config
-func (cfg *Config) GetStreamingSegmentSize() int64 {
-	// Use optimizations.streaming_segment_size
-	if cfg.Optimizations.StreamingSegmentSize > 0 {
-		return cfg.Optimizations.StreamingSegmentSize
+// GetMultipartPartSize returns optimizations.multipart_part_size, or the default.
+func (cfg *Config) GetMultipartPartSize() int64 {
+	if cfg.Optimizations.MultipartPartSize > 0 {
+		return cfg.Optimizations.MultipartPartSize
 	}
 
 	// Default to 12MB if nothing is configured

@@ -47,7 +47,7 @@ func OrcMgrAESConfig() *config.Config {
 			},
 		},
 		Optimizations: config.OptimizationsConfig{
-			StreamingSegmentSize: OrcMgrSegmentSize,
+			MultipartPartSize: OrcMgrSegmentSize,
 		},
 	}
 }

@@ -21,7 +21,7 @@ import (
 const segmentSize = dataencryption.SegmentSize
 
 // cryptoFloorSizes span the routing decisions of the write path: one segment,
-// well inside a single request, the default streaming_segment_size (the
+// well inside a single request, the default multipart_part_size (the
 // single-request / multipart boundary), and an object of many parts.
 var cryptoFloorSizes = []int64{
 	64 * 1024,

@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	// 128 MiB is far above streaming_segment_size, so every large PUT below
+	// 128 MiB is far above multipart_part_size, so every large PUT below
 	// goes through the multipart producer.
 	memoryLargeSize = 128 * 1024 * 1024
 	memorySmallSize = 1 * 1024 * 1024
@@ -39,12 +39,12 @@ const (
 	// The two optimisation keys the demo stack runs with
 	// (config/aes-example.yaml): 12 MiB parts, four upload workers. A run
 	// against a proxy configured differently has to move these with it.
-	memoryStreamingSegmentSize = 12 * 1024 * 1024
-	memoryUploadConcurrency    = 4
+	memoryMultipartPartSize = 12 * 1024 * 1024
+	memoryUploadConcurrency = 4
 
 	// What the producer holds while a large PUT runs: one buffer per worker plus
 	// the one being filled (ADR 0024 D4).
-	memoryFreeList = int64(memoryStreamingSegmentSize) * (memoryUploadConcurrency + 1)
+	memoryFreeList = int64(memoryMultipartPartSize) * (memoryUploadConcurrency + 1)
 
 	// The bound the load has to stay inside. Twice the free list is the
 	// collector's headroom: Go returns pages to the operating system lazily, so
@@ -152,7 +152,7 @@ func TestProxyMemory(t *testing.T) {
 	delta := median(deltaSamples)
 	assert.Less(t, delta, float64(memoryLoadBound),
 		"peak-minus-idle is %s, above the %s this configuration budgets: "+
-			"%s of part buffers (streaming_segment_size × (1 + multipart_upload_concurrency)) "+
+			"%s of part buffers (multipart_part_size × (1 + multipart_upload_concurrency)) "+
 			"and the same again for the collector's headroom (ADR 0020 D14)",
 		humanBytes(int64(delta)), humanBytes(memoryLoadBound), humanBytes(memoryFreeList))
 	assert.Less(t, delta, float64(memoryLargeSize),
@@ -378,7 +378,7 @@ func driveMemoryLoad(ctx context.Context, l leg, large, small []byte) error {
 			return err
 		}
 	}
-	// One object below streaming_segment_size, so the single-request write path
+	// One object below multipart_part_size, so the single-request write path
 	// is in the sample too.
 	return putGet(ctx, l, "mem-small", small)
 }

@@ -915,7 +915,7 @@ than it does under an encrypting provider. The exception that used to admit it
 was justified with an unseekable ciphertext stream that does not exist — the
 exit write path hands the SDK an unseekable *plaintext* stream, which fails the
 same way — and it let the proxy start and then refuse every upload below
-`optimizations.streaming_segment_size` at runtime.
+`optimizations.multipart_part_size` at runtime.
 
 ---
 

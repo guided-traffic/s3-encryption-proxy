@@ -19,36 +19,36 @@ func TestOptimizationsConfig(t *testing.T) {
 			name: "valid default config",
 			config: &Config{
 				Optimizations: OptimizationsConfig{
-					StreamingSegmentSize: 12 * 1024 * 1024, // 12MB
+					MultipartPartSize: 12 * 1024 * 1024, // 12MB
 				},
 			},
 			expectError: false,
 		},
 		{
-			name: "streaming segment size too small",
+			name: "multipart part size too small",
 			config: &Config{
 				Optimizations: OptimizationsConfig{
-					StreamingSegmentSize: 2 * 1024 * 1024, // 2MB - too small
+					MultipartPartSize: 2 * 1024 * 1024, // 2MB - too small
 				},
 			},
 			expectError: true,
 			errorMsg:    "minimum value is 5MB",
 		},
 		{
-			name: "streaming segment size too large",
+			name: "multipart part size too large",
 			config: &Config{
 				Optimizations: OptimizationsConfig{
-					StreamingSegmentSize: 6 * 1024 * 1024 * 1024, // 6GB - too large
+					MultipartPartSize: 6 * 1024 * 1024 * 1024, // 6GB - too large
 				},
 			},
 			expectError: true,
 			errorMsg:    "maximum value is 5GB",
 		},
 		{
-			name: "valid streaming segment size",
+			name: "valid multipart part size",
 			config: &Config{
 				Optimizations: OptimizationsConfig{
-					StreamingSegmentSize: 50 * 1024 * 1024, // 50MB - valid
+					MultipartPartSize: 50 * 1024 * 1024, // 50MB - valid
 				},
 			},
 			expectError: false,
@@ -57,10 +57,10 @@ func TestOptimizationsConfig(t *testing.T) {
 			// A value in range but not a multiple of the segment size produces
 			// parts the read path cannot verify, so it is refused at startup
 			// rather than at the backend on every large upload (ADR 0003).
-			name: "streaming segment size not segment-aligned",
+			name: "multipart part size not segment-aligned",
 			config: &Config{
 				Optimizations: OptimizationsConfig{
-					StreamingSegmentSize: 5*1024*1024 + 1,
+					MultipartPartSize: 5*1024*1024 + 1,
 				},
 			},
 			expectError: true,
@@ -133,17 +133,17 @@ func TestOptimizationsConfig(t *testing.T) {
 	}
 }
 
-func TestGetStreamingSegmentSize(t *testing.T) {
+func TestGetMultipartPartSize(t *testing.T) {
 	tests := []struct {
 		name         string
 		config       *Config
 		expectedSize int64
 	}{
 		{
-			name: "uses optimizations.streaming_segment_size when set",
+			name: "uses optimizations.multipart_part_size when set",
 			config: &Config{
 				Optimizations: OptimizationsConfig{
-					StreamingSegmentSize: 20 * 1024 * 1024, // 20MB
+					MultipartPartSize: 20 * 1024 * 1024, // 20MB
 				},
 			},
 			expectedSize: 20 * 1024 * 1024,
@@ -152,7 +152,7 @@ func TestGetStreamingSegmentSize(t *testing.T) {
 			name: "uses default when optimizations not set",
 			config: &Config{
 				Optimizations: OptimizationsConfig{
-					StreamingSegmentSize: 0, // Not set
+					MultipartPartSize: 0, // Not set
 				},
 			},
 			expectedSize: 12 * 1024 * 1024, // Default 12MB
@@ -161,7 +161,7 @@ func TestGetStreamingSegmentSize(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			actualSize := tt.config.GetStreamingSegmentSize()
+			actualSize := tt.config.GetMultipartPartSize()
 			if actualSize != tt.expectedSize {
 				t.Errorf("expected segment size %d, got %d", tt.expectedSize, actualSize)
 			}

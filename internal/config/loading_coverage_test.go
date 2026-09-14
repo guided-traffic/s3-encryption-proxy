@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/go-viper/mapstructure/v2"
@@ -201,7 +202,7 @@ func TestCfgSetDefaults(t *testing.T) {
 	assert.Equal(t, "/metrics", viper.GetString("monitoring.metrics_path"))
 	assert.Equal(t, "config/license.jwt", viper.GetString("license_file"))
 
-	assert.Equal(t, 12*1024*1024, viper.GetInt("optimizations.streaming_segment_size"))
+	assert.Equal(t, 12*1024*1024, viper.GetInt("optimizations.multipart_part_size"))
 	assert.Equal(t, 300, viper.GetInt("optimizations.multipart_session_cleanup_interval"))
 	assert.Equal(t, 3600, viper.GetInt("optimizations.multipart_session_idle_timeout"))
 	assert.Equal(t, 4, viper.GetInt("optimizations.multipart_upload_concurrency"))
@@ -238,7 +239,7 @@ func TestCfgLoadFromYAMLFile(t *testing.T) {
 	assert.Equal(t, "clientkey01", cfg.S3Clients[0].AccessKeyID)
 
 	// Defaults survive the round trip.
-	assert.Equal(t, int64(12*1024*1024), cfg.Optimizations.StreamingSegmentSize)
+	assert.Equal(t, int64(12*1024*1024), cfg.Optimizations.MultipartPartSize)
 	assert.Equal(t, 4, cfg.Optimizations.MultipartUploadConcurrency)
 }
 
@@ -258,7 +259,6 @@ encryption:
       type: "aes"
       config:
         aes_key: "` + CfgTestAESKey + `"
-        rotation_days: 90
 s3_clients:
   - type: "static"
     access_key_id: "clientkey01"
@@ -273,7 +273,6 @@ s3_clients:
 
 	assert.Empty(t, cfg.Encryption.Providers[0].Config)
 	assert.Equal(t, CfgTestAESKey, cfg.Encryption.Providers[1].Config["aes_key"])
-	assert.Equal(t, 90, cfg.Encryption.Providers[1].Config["rotation_days"])
 }
 
 func TestCfgMetadataKeyPrefix(t *testing.T) {
@@ -426,13 +425,13 @@ func TestCfgLoadFailsOnUnmarshalError(t *testing.T) {
 	CfgResetViper(t)
 	setDefaults()
 	viper.Set("s3_backend.target_endpoint", "https://minio:9000")
-	viper.Set("optimizations.streaming_segment_size", "twelve-megabytes")
+	viper.Set("optimizations.multipart_part_size", "twelve-megabytes")
 
 	cfg, err := Load()
 	require.Error(t, err)
 	assert.Nil(t, cfg)
 	assert.Contains(t, err.Error(), "failed to unmarshal config")
-	assert.Contains(t, err.Error(), "optimizations.streaming_segment_size")
+	assert.Contains(t, err.Error(), "optimizations.multipart_part_size")
 }
 
 func TestCfgLoadFailsOnValidationError(t *testing.T) {
@@ -695,7 +694,91 @@ s3_clients:
 //
 // The exit provider is the subject on purpose: it needs no licence, so this tests
 // the decoding boundary and nothing else.
-func TestCfgProviderParametersAreNotUnknownKeys(t *testing.T) {
+// A provider's `config:` block is not a place unknown keys survive. D11 makes
+// every key the proxy does not read a startup refusal, and until 5.0.0 this
+// block was the one exception: the provider read the key it wanted and dropped
+// the rest in silence, which is how `metadata_key_prefix` came to sit one level
+// too deep and do nothing.
+func TestCfgProviderConfigRefusesAKeyTheProviderDoesNotRead(t *testing.T) {
+	tests := []struct {
+		name         string
+		providerYAML string
+		wantErr      string
+	}{
+		{
+			name: "the exit provider reads no configuration at all",
+			providerYAML: `    - alias: "way-out"
+      type: "exit"
+      description: "a description nothing reads"
+      config:
+        a_parameter_no_struct_field_declares: "value"
+`,
+			wantErr: "the exit provider reads no configuration at all, but this block sets a_parameter_no_struct_field_declares",
+		},
+		{
+			name: "the aes provider reads aes_key and nothing else",
+			providerYAML: `    - alias: "way-out"
+      type: "aes"
+      config:
+        aes_key: "` + CfgTestAESKey + `"
+        rotation_days: 90
+`,
+			wantErr: "the aes provider does not read rotation_days (it reads: aes_key)",
+		},
+		{
+			name: "the failure class: a key one level too deep",
+			providerYAML: `    - alias: "way-out"
+      type: "aes"
+      config:
+        aes_key: "` + CfgTestAESKey + `"
+        metadata_key_prefix: "acme-"
+`,
+			wantErr: "the aes provider does not read metadata_key_prefix (it reads: aes_key)",
+		},
+		{
+			name: "every offending key is named, in a stable order",
+			providerYAML: `    - alias: "way-out"
+      type: "exit"
+      config:
+        zulu: 1
+        alpha: 2
+`,
+			wantErr: "but this block sets alpha, zulu",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			CfgNoLicense(t)
+			CfgResetViper(t)
+
+			body := `
+s3_backend:
+  target_endpoint: "https://minio:9000"
+encryption:
+  encryption_method_alias: "way-out"
+  providers:
+` + tt.providerYAML + `s3_clients:
+  - type: "static"
+    access_key_id: "clientkey01"
+    secret_key: "0123456789abcdef"
+`
+			path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", body)
+			require.NoError(t, InitConfig(path))
+
+			_, err := Load()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+			assert.Contains(t, err.Error(), "encryption.providers[0].config",
+				"the refusal names where the key sits")
+		})
+	}
+}
+
+// `description:` is an annotation, not a parameter: it is declared on the struct
+// so that it is consumed there rather than falling into the config block, where
+// it would now be refused.
+func TestCfgProviderDescriptionIsNotAConfigKey(t *testing.T) {
 	CfgNoLicense(t)
 	CfgResetViper(t)
 
@@ -708,8 +791,6 @@ encryption:
     - alias: "way-out"
       type: "exit"
       description: "a description nothing reads"
-      config:
-        a_parameter_no_struct_field_declares: "value"
 s3_clients:
   - type: "static"
     access_key_id: "clientkey01"
@@ -719,9 +800,10 @@ s3_clients:
 	require.NoError(t, InitConfig(path))
 
 	cfg, err := Load()
-	require.NoError(t, err, "a provider's own parameters must not read as unknown keys")
+	require.NoError(t, err)
 	require.Len(t, cfg.Encryption.Providers, 1)
-	assert.Equal(t, "value", cfg.Encryption.Providers[0].Config["a_parameter_no_struct_field_declares"])
+	assert.Equal(t, "a description nothing reads", cfg.Encryption.Providers[0].Description)
+	assert.Empty(t, cfg.Encryption.Providers[0].Config)
 }
 
 // Every configuration this repository ships has to survive the unknown-key
@@ -923,4 +1005,78 @@ optimizations:
 	assert.Contains(t, err.Error(), "multipart_session_max_age")
 	assert.Contains(t, err.Error(), "multipart_session_idle_timeout",
 		"the refusal names the replacement")
+}
+
+// The key was renamed, not removed: the value and every check on it are
+// unchanged. A generic unknown-key error would leave an operator guessing that
+// the two names are the same setting, so the refusal says so.
+func TestCfgRenamedSegmentSizeIsRefusedByName(t *testing.T) {
+	CfgNoLicense(t)
+	CfgResetViper(t)
+
+	body := `
+bind_address: "0.0.0.0:8080"
+s3_backend:
+  target_endpoint: "https://minio:9000"
+s3_clients:
+  - type: "static"
+    access_key_id: "username0"
+    secret_key: "this-is-not-very-secure"
+optimizations:
+  streaming_segment_size: 12582912
+`
+	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", body)
+	require.NoError(t, InitConfig(path))
+
+	_, err := Load()
+	require.Error(t, err, "the old name must not start the proxy")
+	assert.Contains(t, err.Error(), "streaming_segment_size")
+	assert.Contains(t, err.Error(), "multipart_part_size", "the refusal names the replacement")
+}
+
+// The new name carries the old name's checks unchanged: 5 MiB minimum, 5 GiB
+// maximum, and a whole number of the format's 64 KiB segments.
+func TestCfgMultipartPartSizeKeepsItsChecks(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   int64
+		wantErr string
+	}{
+		{name: "the default is accepted", value: 12 * 1024 * 1024},
+		{name: "below 5MB", value: 4 * 1024 * 1024, wantErr: "minimum value is 5MB"},
+		{name: "above 5GB", value: 6 * 1024 * 1024 * 1024, wantErr: "maximum value is 5GB"},
+		{name: "not a multiple of 64 KiB", value: 6000000, wantErr: "must be a multiple of"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			CfgNoLicense(t)
+			CfgResetViper(t)
+
+			body := `
+bind_address: "0.0.0.0:8080"
+s3_backend:
+  target_endpoint: "https://minio:9000"
+s3_clients:
+  - type: "static"
+    access_key_id: "username0"
+    secret_key: "this-is-not-very-secure"
+optimizations:
+  multipart_part_size: ` + strconv.FormatInt(tt.value, 10) + `
+`
+			path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", body)
+			require.NoError(t, InitConfig(path))
+
+			cfg, err := Load()
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				assert.Equal(t, tt.value, cfg.Optimizations.MultipartPartSize)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+			assert.Contains(t, err.Error(), "optimizations.multipart_part_size",
+				"the refusal names the key under its current name")
+		})
+	}
 }

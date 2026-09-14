@@ -34,7 +34,7 @@ Under the exit provider the proxy keeps no table, so there the verb is forwarded
 `ListMultipartUploads` is forwarded as *Consequences* says: it names uploads rather than bytes, so
 nothing in it has to be converted, and the document is the proxy's own.
 
-**Implemented 2026-09-10:** the startup check that `optimizations.streaming_segment_size` is a
+**Implemented 2026-09-10:** the startup check that `optimizations.multipart_part_size` is a
 multiple of the segment size (D7). A configured value that is not one is refused by name at
 startup instead of producing parts the read path cannot verify.
 
@@ -84,6 +84,14 @@ closes the reservation leak on the same path.
 **Amended 2026-09-09:** the global short-part buffer of D5 is a configuration key with a low
 default, not a constant, because it is memory an operator budgets against the container limit;
 and the copy refusal of D9 stays unconditional under the pass-through provider too.
+
+**Amended 2026-09-14: the key of D7 is `optimizations.multipart_part_size`.** It was
+`optimizations.streaming_segment_size`, and that name said segment — the format's own 64 KiB unit,
+which this key is a multiple of and never equal to. The value, the default and the checks are
+unchanged, and a configuration still carrying the old name is refused at startup by a message that
+names the replacement and says so. The new name carries one of the key's two jobs: it is the size
+of one backend part, and it is also the plaintext size above which a single PUT stops being one
+request and becomes a multipart upload. The second job is documented rather than named.
 
 ## Context
 
@@ -177,8 +185,8 @@ The client's document is still parsed and its part set is checked against the ta
 `InvalidPart`. `ListParts` is answered from the same table.
 
 **D7.** When the proxy drives the upload it picks its own parts: an upload whose plaintext length the
-client does not declare, or whose plaintext exceeds `optimizations.streaming_segment_size`, is sent
-to the backend as a multipart upload with parts of that size. `optimizations.streaming_segment_size`
+client does not declare, or whose plaintext exceeds `optimizations.multipart_part_size`, is sent
+to the backend as a multipart upload with parts of that size. `optimizations.multipart_part_size`
 must be a multiple of the segment size or the proxy refuses to start. The trailer rides the last
 part the proxy builds, so this path spends no extra part number.
 
@@ -217,7 +225,7 @@ and is not owed by this decision.
   with (ADR 0020).
 * Session state — the part table — must live for the whole upload and is client-controlled in
   number; only an idle expiry and the global cap bound it.
-* An existing deployment whose `optimizations.streaming_segment_size` is not a multiple of the
+* An existing deployment whose `optimizations.multipart_part_size` is not a multiple of the
   segment size stops starting after the upgrade. That is deliberate — a silent fixup would produce
   parts the read path cannot verify — and it is an upgrade step the release notes have to name.
 * Removing the post-completion rewrite removes the 5 GiB ceiling, halves write amplification, leaves

@@ -63,10 +63,10 @@ the measurement [ADR 0024](../adr/0024-an-upload-forwards-while-it-receives.md)
 was written from.
 
 Which write path an object takes is decided by its plaintext length against
-`optimizations.streaming_segment_size` (`12582912` # default), and otherwise only
+`optimizations.multipart_part_size` (`12582912` # default), and otherwise only
 by whether the request declares a plaintext length at all — an undeclared one goes
 to the producer whatever its size. Every object measured here declares one, so the
-second leg needs a second proxy whose segment size is above every size measured —
+second leg needs a second proxy whose part size is above every size measured —
 `S3EP_PERF_ALT_PROXY`, with the recipe in
 [`test/perf/README.md`](../../test/perf/README.md). Without it the instrument
 records itself as skipped rather than putting the same object through the same
@@ -75,7 +75,7 @@ path twice.
 Use that recipe, not one you remember. A key this release deleted refuses the
 start and the error names it
 ([ADR 0013 D11](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md)),
-so a stale recipe fails loudly; a segment size that is merely too low does not. A
+so a stale recipe fails loudly; a part size that is merely too low does not. A
 second proxy that routes like the first one records three legs of which two are
 the same path, and the instrument cannot tell.
 
@@ -98,7 +98,7 @@ instrument of ADR 0020 D17 at `ok`, on the machine that took the pre-v2 column.
 Its `FINDINGS.md` is the written record — read that before quoting a number from
 anywhere else. The pairs are `20260909T175340Z-9f3fbd1` for everything and
 `20260910T090543Z-530472c` for the upload-path instrument — with one hole in the
-first: the throughput matrix gained a 14 MiB size on 2026-09-12, above the segment
+first: the throughput matrix gained a 14 MiB size on 2026-09-12, above the part
 size and below the 16 MiB a client can still send in one request, so those rows
 reach the proxy's own producer and pair with nothing in either column.
 
@@ -120,7 +120,7 @@ Two things to know before you take another one:
   12 MiB rows on the multipart leg because routing then sent every object of 5 MiB
   or more onto the multipart producer whenever integrity verification was on, and
   the demo config had it on. Today, for a request that declares its length, the
-  only thing that decides is the size against the segment size, so at 8 and
+  only thing that decides is the size against the part size, so at 8 and
   12 MiB both proxies take the single-request path and the instrument no longer
   measures them. 16, 24, 64 and 256 MiB pair.
 - **One run is not a column.** Three full runs were taken within an hour on
@@ -137,7 +137,7 @@ the sum; `GOMEMLIMIT`, when it is set at all, belongs above that number.
 
 | Term | Size | Held for | Where |
 |---|---|---|---|
-| auto-multipart `PUT` free list | `streaming_segment_size` × (1 + `multipart_upload_concurrency`) | one `PUT` above the segment size | [`operations.go`](../../internal/proxy/handlers/object/operations.go), `putObjectAutoMultipart` |
+| auto-multipart `PUT` free list | `multipart_part_size` × (1 + `multipart_upload_concurrency`) | one `PUT` above the part size | [`operations.go`](../../internal/proxy/handlers/object/operations.go), `putObjectAutoMultipart` |
 | client-driven uploads, short last parts | `multipart_short_part_buffer_size` for **all open uploads together** | each part until its upload completes, aborts or is swept | [`segmented_session.go`](../../internal/orchestration/segmented_session.go), [ADR 0011](../adr/0011-the-proxy-owns-the-part-layout.md) |
 | client-driven `UploadPart`, a part the proxy holds | the whole part, bounded by `multipart_short_part_buffer_size` | one in-flight `UploadPart` that is short or unaligned | [`upload.go`](../../internal/proxy/handlers/multipart/upload.go), `readHeldPart` |
 | client-driven `UploadPart` under the exit provider | the whole part, **unbounded** | one in-flight `UploadPart` | [`upload.go`](../../internal/proxy/handlers/multipart/upload.go), `readWholePart` |
@@ -160,7 +160,7 @@ not fit beside what the others hold is answered `503 SlowDown` and retries; one
 larger than the whole budget is `400 EntityTooLarge`, which no retry can change
 (ADR 0011 D5).
 
-A single-request `PUT` at or below `streaming_segment_size` holds none of the
+A single-request `PUT` at or below `multipart_part_size` holds none of the
 first term: it seals as the backend pulls, so it costs the codec's buffers.
 
 ## Reporting
@@ -172,7 +172,7 @@ the next person.
 Resident memory is recorded like everything else here, and since 2026-09-12 it is
 also the one figure this suite asserts on: the memory instrument fails when what
 the load costs — peak minus idle — leaves the budget the producer's two keys set
-(`streaming_segment_size` × (1 + `multipart_upload_concurrency`), doubled for the
+(`multipart_part_size` × (1 + `multipart_upload_concurrency`), doubled for the
 collector's headroom), or when it reaches the size of the object under load at
 all, which is what a proxy holding objects instead of streaming them looks like
 ([ADR 0020](../adr/0020-performance-is-measured-before-and-after.md) D14). The

@@ -14,7 +14,7 @@ Every key both paths depend on lives under `optimizations`:
 
 | Key | Value | What it decides |
 |---|---|---|
-| `streaming_segment_size` | `12582912` # default | one part on the producer path |
+| `multipart_part_size` | `12582912` # default | one part on the producer path |
 | `multipart_upload_concurrency` | `4` # default | parallel `UploadPart` workers, and with it the memory bound |
 | `multipart_short_part_buffer_size` | `67108864` # default | what all client-driven sessions together may hold |
 | `multipart_session_cleanup_interval` | `300` # default | seconds between session sweeps, minimum 1 checked at startup |
@@ -28,7 +28,7 @@ routing is in [request-paths.md](request-paths.md).
 
 It reads plaintext into a bounded pool of buffers, and upload workers seal each
 part while they send it, so receiving, sealing and sending overlap. Parts are
-`streaming_segment_size` bytes, and the trailer usually rides the last one, so
+`multipart_part_size` bytes, and the trailer usually rides the last one, so
 the path usually spends no extra part number. The exception is a plaintext that
 is an exact multiple of the part size: the last part is full, nothing is left to
 carry the trailer, and it goes as a part of its own — the branch that catches
@@ -40,7 +40,7 @@ one being filled, so `multipart_upload_concurrency + 1` parts are resident —
 60 MiB at the defaults. Changing the worker count changes the memory budget.
 
 Ten thousand parts is the ceiling S3 sets and the producer enforces, so the
-largest object this path writes is just under `streaming_segment_size` × 10000 —
+largest object this path writes is just under `multipart_part_size` × 10000 —
 117 GiB at the default. At exactly that length the trailer needs a part number of
 its own, and 10001 is a number S3 does not have.
 

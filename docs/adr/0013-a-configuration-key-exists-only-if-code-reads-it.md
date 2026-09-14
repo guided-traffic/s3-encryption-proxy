@@ -17,7 +17,7 @@ them unable to express its own default as an override (D14). The binary now decl
 `--config`. D1 through D11 are unaffected and stay as described below.
 
 **Not built as of 2026-09-13: four of D7's zero cases.**
-`optimizations.streaming_segment_size` at zero or below falls back to 12 MB for the part size
+`optimizations.multipart_part_size` at zero or below falls back to 12 MB for the part size
 only, while the single-request ceiling reads the written value, so every PUT of a non-empty body
 goes through the multipart producer; `optimizations.multipart_upload_concurrency` at zero falls
 back to 4 and `optimizations.multipart_short_part_buffer_size` to 64 MB; and
@@ -55,9 +55,16 @@ startup range check (ADR 0011) — D1 applied rather than repaired afterwards.
 
 - **D11.** The loader decodes in its exact mode: a key the proxy does not define refuses the
   start and the error names it, with a line telling the operator that a key removed by a release
-  is listed in its notes. A provider block keeps swallowing its own parameters, which is
-  asserted rather than assumed, and every shipped example configuration is decoded in a test so
-  that a file this repository hands out cannot be one that refuses to start.
+  is listed in its notes. Every shipped example configuration is decoded in a test so that a
+  file this repository hands out cannot be one that refuses to start.
+
+  **Amended 2026-09-14: the provider block is no longer an exception.** It was, on the grounds
+  that a provider's parameters belong to the provider and the provider validates them. The
+  provider did not: each read the one key it wanted and dropped the rest, so this block was the
+  last place in the file where a removed or misspelt key was accepted in silence. Every
+  provider type now declares what it reads — `aes` reads `aes_key`, `exit` reads nothing at all
+  — and a key that is not declared refuses the start naming it and its provider, in the words
+  D11 already uses.
 - **D3.** `s3_security.max_clock_skew_seconds` governs both authentication forms. The
   header-signed path used to compare against a package constant, so a deployment that tightened
   the window — every shipped example sets 300 — kept a window three times wider on the path most
@@ -205,7 +212,7 @@ unseekable *plaintext* stream, and the SDK does not ask what the bytes mean: it 
 it can seek them to compute a payload hash without TLS. Measured on the exemption before it
 was removed, the proxy started and then answered `500` to every single-request upload with
 *failed to seek body to start, request stream is not seekable*, while an upload above
-`optimizations.streaming_segment_size` went through the multipart producer and stored fine —
+`optimizations.multipart_part_size` went through the multipart producer and stored fine —
 a configuration that breaks as a function of object size, discovered in production rather
 than at startup.
 
@@ -236,7 +243,7 @@ Refused at startup: a backend endpoint with no scheme, with a scheme the client 
 with plain HTTP under any provider (D5); an `encryption.metadata_key_prefix` that does
 not satisfy **the shape rule of ADR 0009 D2**, which owns it — this rule used to restate the
 pattern here and the two records drifted apart, so it names the owner instead; a positive
-`optimizations.streaming_segment_size` outside its documented range or not a whole number of
+`optimizations.multipart_part_size` outside its documented range or not a whole number of
 segments; a `monitoring.pprof_bind_address` that is not a loopback address while profiling is
 enabled; a client secret shorter than 16 characters; a clock-skew window or a pre-signed
 ceiling of zero, and a pre-signed ceiling above the S3 maximum; a header or idle listener
@@ -290,16 +297,22 @@ only channel: a channel that reaches only the operator who reads them is not a c
 this release deletes twenty-two keys at once. Without D11 every one of them becomes a setting the
 operator believes is in force — the same silence this ADR was written against, arriving from
 the other direction. A misspelled key is refused for the same reason and by the same rule.
+**Added 2026-09-14:** `optimizations.streaming_segment_size` is refused by a message of its own
+rather than by that generic one, for the opposite reason to
+`optimizations.multipart_session_max_age` above — nothing about the value or its checks changed
+when it became `optimizations.multipart_part_size`, so the refusal exists to tell the operator
+that the two names are one setting.
 
-Two boundaries. A provider's own configuration block keeps its catch-all, because those
-parameters belong to the provider and the provider validates them; D11 governs the keys the
-proxy itself defines. And environment variables are not keys: they are not enumerable, so
-nothing can decide whether one was meant for this process.
+One boundary, and it is not the provider block: environment variables are not keys. They are
+not enumerable, so nothing can decide whether one was meant for this process. The provider
+block was the second boundary until 2026-09-14 — see the amendment to D11 — and the argument
+for it, that the provider validates its own parameters, was simply untrue of the providers this
+proxy ships.
 
 Measured before the decision was taken: of the four shipped example configurations three pass
 unchanged, and the fourth was refused — it carried a top-level `streaming.segment_size` block
 that no code has ever read, while the key the proxy reads is
-`optimizations.streaming_segment_size`. An operator who copied that example and raised the
+`optimizations.multipart_part_size`. An operator who copied that example and raised the
 value got no effect and no warning. The check found it on its first run, which is the argument
 for D11 in one line.
 
@@ -330,6 +343,15 @@ build step starts happily when the mounted secret is missing or misnamed, and a 
 no evidence that the intended token was found. The bite lands exactly where it should — the
 operator made a statement and it was overruled. The token's environment routes are untouched by
 this rule (ADR 0016 D6).
+
+**Amended 2026-09-14: the discovery half of D13 is gone.** `license_file` names the one file
+read, its own default included; there are no well-known locations behind it, and a deployment
+that says nothing gets the default path and nothing else. The reasoning that kept discovery for
+the *said nothing* case was that the key's default is not a statement by the operator — true, and
+beside the point: the paths it fell through to were not a statement by anyone. Where the key is
+not written the default path is an offer rather than a promise, so a proxy whose active provider
+needs no license still starts without one; what changed is that the offer is one path. The
+environment route narrowed with it, to the single name ADR 0016 D6 always stated.
 
 **D14, decided 2026-09-12.** A command-line flag does not override a configuration key.
 `--monitoring` and `--monitoring-port` are removed: what monitoring does is expressed in the
@@ -457,10 +479,11 @@ carries it (ADR 0018), never softened by a shim or a deprecation period.
 - **Keep the license fallback list and log at warn level which path was used** (D13). Rejected:
   it relies on somebody reading a start-up warning, and for a gate whose effect only shows at
   expiry that is far too late.
-- **Drop the license fallback list entirely** (D13). Rejected: stricter than the problem and it
-  breaks a legitimate case — `license_file` has a default that the image lives on, and the
-  well-known container paths are a real convenience for anyone running the image without a
-  configuration of their own. Discovery for *said nothing*, binding for the explicit statement.
+- **Drop the license fallback list entirely** (D13). Rejected here, **taken 2026-09-14** — see
+  the amendment to D13. The rejection rested on the image living on discovery, which it does not:
+  the image ships a configuration carrying `license_file`'s default, so dropping the list costs
+  the image nothing, and the convenience it bought elsewhere was a token the operator could not
+  name and therefore could not rotate.
 - **Make the monitoring flags honest — branch on whether the flag was given rather than on its
   value** (D14). Rejected: it fixes `--monitoring-port` and keeps a second way to say the same
   thing, which is the part that was wrong.
@@ -497,7 +520,7 @@ carries it (ADR 0018), never softened by a shim or a deprecation period.
 - **Closed 2026-09-12: there is no pass-through exception left to measure.** D5's split — refuse
   under an encrypting provider, warn under the `exit` one — was measured before it was removed:
   under `exit` against a plain-HTTP backend the proxy started and answered `500` to every
-  single-request upload, while an upload above `optimizations.streaming_segment_size` went through
+  single-request upload, while an upload above `optimizations.multipart_part_size` went through
   the multipart producer and stored fine. A configuration that breaks as a function of object size
   is not one to warn about, so plain HTTP is refused under every provider and the warning is
   gone.
@@ -526,10 +549,12 @@ carries it (ADR 0018), never softened by a shim or a deprecation period.
 - **Built 2026-09-13: D12, D13 and D14.** A configuration file that cannot be read now refuses
   the start and the error names it, a written `license_file` that does not resolve refuses the
   start instead of falling through to discovery, and the monitoring flags are gone.
-- **D13 binds one route to the token and leaves the others as they are.** Three environment
-  variable names are accepted, and the discovery list still applies wherever the key is not
-  written, so *which token is this proxy running on* remains unanswerable from the configuration
-  alone. ADR 0016 carries that risk; D13 narrows it to the case where the operator said nothing.
+- **Closed 2026-09-14: *which token is this proxy running on* is answerable from the
+  configuration alone.** D13 as first written left three environment variable names and the
+  discovery list wherever the key was not written, so it was not. There is now one variable and
+  one file, and every route to the token is named in the configuration or in the one variable
+  beside it. The cost is a breaking one and is carried in the release notes: a deployment on
+  either other variable name, or on a well-known path, is refused at startup rather than read.
 - **Unverified: whether anything outside this repository passes the monitoring flags.** Inside
   it the chart and the project's own local run targets passed them, and all of those moved to
   configuration under D14; no survey was made of deployments or scripts elsewhere, and for them

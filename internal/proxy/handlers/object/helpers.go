@@ -260,15 +260,14 @@ func (h *Handler) isEncryptionMetadata(key string) bool {
 	return strings.HasPrefix(strings.ToLower(key), h.metadataPrefix)
 }
 
-// getSegmentSize returns the configured streaming segment size
-func (h *Handler) getSegmentSize() int64 {
-	// Default segment size for streaming uploads (12MB)
-	const defaultSegmentSize = 12 * 1024 * 1024
+// getMultipartPartSize returns the configured optimizations.multipart_part_size.
+func (h *Handler) getMultipartPartSize() int64 {
+	const defaultMultipartPartSize = 12 * 1024 * 1024
 
-	if h.config != nil && h.config.Optimizations.StreamingSegmentSize > 0 {
-		return h.config.Optimizations.StreamingSegmentSize
+	if h.config != nil && h.config.Optimizations.MultipartPartSize > 0 {
+		return h.config.Optimizations.MultipartPartSize
 	}
-	return defaultSegmentSize
+	return defaultMultipartPartSize
 }
 
 // getMultipartUploadConcurrency returns the configured number of parallel

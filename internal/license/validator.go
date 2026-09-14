@@ -300,74 +300,44 @@ func calculateTimeRemaining(now, expires time.Time) TimeRemaining {
 	}
 }
 
-// LoadLicenseFromEnv loads license token from environment variable
-func LoadLicenseFromEnv() string {
-	// Try multiple environment variable names
-	envVars := []string{
-		"S3EP_LICENSE",
-		"S3EP_LICENSE_TOKEN",
-		"S3_ENCRYPTION_PROXY_LICENSE",
-	}
+// LicenseEnvVar is the one environment variable that carries the license token.
+//
+// One name and no alias: ADR 0016 D6 names a single variable, and three of them
+// meant an operator could not tell which one a running proxy had taken its token
+// from, so they could not tell which one to rotate.
+const LicenseEnvVar = "S3EP_LICENSE_TOKEN"
 
-	for _, envVar := range envVars {
-		if token := os.Getenv(envVar); token != "" {
-			logrus.Debugf("License loaded from environment variable: %s", envVar)
-			return strings.TrimSpace(token)
-		}
+// LoadLicenseFromEnv loads the license token from LicenseEnvVar.
+func LoadLicenseFromEnv() string {
+	if token := os.Getenv(LicenseEnvVar); token != "" {
+		logrus.Debugf("License loaded from environment variable: %s", LicenseEnvVar)
+		return strings.TrimSpace(token)
 	}
 
 	return ""
 }
 
-// LoadLicenseFromFile loads the license token from a file.
+// LoadLicenseFromFile loads the license token from license_file.
 //
-// A path the operator wrote is binding: it is read, and a path that yields no
-// token refuses the start naming it. The license is a startup gate (ADR 0016),
-// and a gate that silently reads a different file than the one it was given is
-// not one - an image carrying a token of its own would start happily while the
-// mounted secret was missing, with nothing saying so. The well-known locations
-// below apply only when the configuration says nothing.
+// license_file is the one file: there is no search list behind it. The license
+// is a startup gate (ADR 0016), and a gate that silently reads a different file
+// than the one it was given is not one - an image carrying a token of its own
+// would start happily while the mounted secret was missing, with nothing saying
+// so.
+//
+// binding says whether the operator wrote the key. A path they wrote must yield
+// a token or the start is refused naming it; the default path is an offer rather
+// than a promise, because a proxy whose active provider needs no license starts
+// without one.
 func LoadLicenseFromFile(configuredPath string, binding bool) (string, error) {
-	if binding {
-		token, err := readLicenseFile(configuredPath)
-		if err != nil {
+	token, err := readLicenseFile(configuredPath)
+	if err != nil {
+		if binding {
 			return "", fmt.Errorf("license_file %q: %w", configuredPath, err)
 		}
-		return token, nil
+		return "", nil
 	}
-
-	// Try multiple file locations in order of preference
-	possiblePaths := []string{}
-
-	// If a specific path is configured, try it first
-	if configuredPath != "" {
-		possiblePaths = append(possiblePaths, configuredPath)
-	}
-
-	// Fallback paths
-	fallbackPaths := []string{
-		"license.jwt",           // Current directory
-		"build/license.jwt",     // Build directory
-		"/etc/s3ep/license.jwt", // System directory
-		"/opt/s3ep/license.jwt", // Alternative system directory
-		"/app/license.jwt",      // Docker container path
-		"./config/license.jwt",  // Config directory
-	}
-
-	// Add fallback paths only if they're not already in the list
-	for _, fallbackPath := range fallbackPaths {
-		if fallbackPath != configuredPath {
-			possiblePaths = append(possiblePaths, fallbackPath)
-		}
-	}
-
-	for _, path := range possiblePaths {
-		if token, err := readLicenseFile(path); err == nil {
-			return token, nil
-		}
-	}
-
-	return "", nil
+	return token, nil
 }
 
 // readLicenseFile reads one token file. An empty file is an error rather than an
@@ -396,16 +366,16 @@ func readLicenseFile(path string) (string, error) {
 	return token, nil
 }
 
-// LoadLicense attempts to load the license from the environment first and from a
-// file second. binding says whether the configuration wrote license_file: see
-// LoadLicenseFromFile.
+// LoadLicense attempts to load the license from LicenseEnvVar first and from
+// license_file second. binding says whether the configuration wrote that key:
+// see LoadLicenseFromFile.
 func LoadLicense(configuredPath string, binding bool) (string, error) {
-	// 1. First try environment variables
+	// 1. First the environment
 	if token := LoadLicenseFromEnv(); token != "" {
 		return token, nil
 	}
 
-	// 2. Then try file locations (including configured path)
+	// 2. Then license_file
 	token, err := LoadLicenseFromFile(configuredPath, binding)
 	if err != nil {
 		return "", err
@@ -414,6 +384,6 @@ func LoadLicense(configuredPath string, binding bool) (string, error) {
 		return token, nil
 	}
 
-	logrus.Debug("No license found in environment variables or files")
+	logrus.Debug("No license found in the environment or in license_file")
 	return "", nil
 }

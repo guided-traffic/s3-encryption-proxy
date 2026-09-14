@@ -227,7 +227,7 @@ is fuller on every repetition is not a baseline.
 **D14** (bound extended 2026-09-09; carved out of D11 the same day). Memory is held by a test that fails on a
 hard bound, not by a manual measurement. The
 test samples `process_resident_memory_bytes` from the proxy's own metrics endpoint and asserts
-peak-minus-idle against a bound expressed in the configured `optimizations.streaming_segment_size`,
+peak-minus-idle against a bound expressed in the configured `optimizations.multipart_part_size`,
 `optimizations.multipart_upload_concurrency` and, since 2026-09-09,
 `optimizations.multipart_short_part_buffer_size` (ADR 0011). Logging the number instead of failing
 on it is not sufficient.
