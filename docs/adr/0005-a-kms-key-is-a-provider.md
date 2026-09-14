@@ -4,13 +4,33 @@
 
 **Accepted.** Date: 2026-09-07.
 
-Nothing of this is built. Today the proxy has no KMS integration of any kind: the provider type
-that claims one is refused by configuration validation and, if it were reachable, would mint a
-fresh random key in process memory instead of contacting a KMS. The only key custody the product
-ships is a locally configured key encryption key (ADR 0004). The demo stack already runs a
-HashiCorp Vault in development mode that no proxy code talks to — the proxy only waits for it to
-be healthy — and the Helm chart already renders credential values for AWS and GCP that no proxy
-code reads.
+Nothing of this is built. The proxy has no KMS integration of any kind: no KMS provider type, no
+remote wrap, no remote unwrap, no Vault client, and no KMS library among its dependencies. The only
+key custody the product ships is a locally configured key encryption key (ADR 0004). The demo stack
+still runs a HashiCorp Vault in development mode that no proxy code talks to — the proxy only waits
+for it to be healthy. The deployment chart carries nothing for a KMS any more: the AWS and GCP
+credential values it used to offer, and the GCP credentials volume mounted with it, were removed on
+2026-09-12, two days after the stub itself.
+
+**The first step landed, 2026-09-10.** This ADR attached a condition to its own decision: the
+misleading provider type goes first, before any KMS code exists. That is done. The stub is out of
+the tree and its library is out of the dependency graph, so there is no longer a provider type that
+claims a KMS and mints a random key in process memory instead. What survives the removal is the
+refusal: a configuration naming `type: "tink"` still fails at startup, now by a name that names
+nothing, with an error still saying the type is "not yet implemented with the new architecture" — a
+promise under a name D4 has already replaced with Vault Transit. Deleting the stub does not reverse
+the decision to build the provider; it is the order the decision prescribed.
+
+**Re-checked 2026-09-10** against the tree after the 5.0.0 work. Two things this ADR assumes have
+moved. D10 calls the data key cache "load-bearing" and says it carries a size bound and an expiry —
+it has the bound, 1024 entries evicted least-recently-used first, and **no expiry**, which is a
+prerequisite to build before a provider with a network round trip behind it. And D13's stated reason
+for shipping after the format rewrite, that the read path unwraps the data key twice per object, no
+longer holds: it unwraps once, and a cache hit does not unwrap at all. The conclusion stands; the
+argument for it has been overtaken. Otherwise D13's precondition is met — the segment chain is in
+the tree and is the only encrypted format the proxy reads or writes — so what stands between this
+ADR and a provider is the work itself, plus two prerequisites nothing implements today: the cache
+expiry above and the per-call timeout D7 requires.
 
 **Amended 2026-09-07.** The owner's stated direction is now HashiCorp Vault's Transit engine
 addressed directly with a widely used client, wired to the Vault the demo stack already runs,
@@ -19,8 +39,8 @@ existing abstraction-library stub. **The direction is stated, the concrete choic
 decided**: the library, the fingerprint salt, how the development environment reaches Vault
 without transport security, whether the re-wrapping tool ships with the provider, and which
 authentication methods the first release carries were all put to the owner and deliberately
-deferred. They are listed with their trade-offs in the work list, together with the findings
-that would otherwise have to be rediscovered. **This provider is not part of the next major
+deferred. They are listed with their trade-offs under Residual risks below, together with the
+findings that would otherwise have to be rediscovered. **This provider is not part of the next major
 release.**
 
 One consequence of the direction is a rule, not an option, and it belongs here because it
@@ -32,11 +52,11 @@ the same logical key and could no longer select the provider for objects it wrot
 settles the second open question below.
 
 Decided and specified; not implemented. It lands in its own additive release **after** the
-storage format rewrite of 5.0.0, and it is deliberately not part of that major release. Five
-design points are deliberately left open — library, fingerprint behaviour across a rotation,
-envelope layering, authentication methods, and whether AWS and GCP ship at all — and are listed
-under Residual risks as open. The Decision section states the rules that hold for the provider
-whenever it is built.
+storage format rewrite of 5.0.0 — which is in the tree and not released — and it is deliberately
+not part of that major release. Seven design points are deliberately left open and are listed under
+Residual risks; the eighth, whether the key version participates in the fingerprint, is settled by
+the amendment above. The Decision section states the rules that hold for the provider whenever it is
+built.
 
 ## Context
 
@@ -162,7 +182,13 @@ front of it.
   proxy inherits someone else's failure modes.
 * **Documentation debt has to be paid before any of this exists.** Until the provider is built,
   every document that presents a KMS option describes something that is not there, and the honest
-  state — no KMS integration — is what they say.
+  state — no KMS integration — is what they say. Since 2026-09-10 that is sharper: a document that
+  still describes the stub describes code that exists in no form at all.
+* **The KMS provider inherits no configuration surface.** The deployment chart used to offer GCP
+  and AWS credential values that no proxy code read — a GCP one that mounted a credentials file into
+  the pod, AWS ones that reached the generated Secret and nowhere else — which is configuration
+  nobody consumes and the product does not allow (ADR 0013). With them gone the first KMS-backed
+  provider brings its own configuration surface and inherits none.
 * **Nobody is forced to move.** The local provider stays the default, stays supported and stays
   fast; the KMS provider is an option for deployments that want the key out of the process.
 
@@ -203,17 +229,18 @@ at 5.0.0 for a KMS to fill.
 **Open, not decided — these are not rules yet.**
 
 1. **What the provider is built on.** Either a KMS abstraction library or the Vault HTTP API
-   directly. The library currently pinned sits on a module path its own upstream has moved away
-   from, and since the object data layer does not use it, it would exist solely to wrap a single
-   remote encrypt/decrypt call. This also decides the configuration type name, which is why the
-   name is not stated in the Decision section.
+   directly. Nothing is pinned any more — the stub's library left the dependency graph with it — so
+   there is no incumbent and no sunk cost, and an abstraction library would exist solely to wrap a
+   single remote encrypt/decrypt call, since nothing on the object data path uses one. This also
+   decides the configuration type name, which is why the name is not stated in the Decision section.
 2. ~~**Whether the KMS key version participates in the fingerprint.**~~ **Settled 2026-09-07 by
    the amendment in Status: it does not.** The original text is kept because the reasoning is
    what makes the answer obvious. Including it makes two proxies
    started before and after a rotation publish different fingerprints for the same logical key, and
    provider selection by fingerprint then fails; excluding it makes the fingerprint stable but
    silent about which version is configured. D8 fixes only that the fingerprint is derived from
-   identity; the exact input is open, and it must be settled before anything writes a fingerprint.
+   identity; the exact input is open — that part is now item 6 — and it must be settled before
+   anything writes a fingerprint.
 3. **One layer or two.** Whether the remote key wraps the proxy's data key directly, or whether the
    KMS integration's own envelope inserts a second, locally generated key between them. Direct is
    what the wrap contract means and is one layer for the same single KMS call; **not verified**
@@ -224,6 +251,23 @@ at 5.0.0 for a KMS to fill.
    an automated test without cloud credentials, and the product does not accept manually verified
    paths as tested (ADR 0019). Deferring both to their own work, when someone needs them and can
    test them, is on the table and is not decided.
+6. **What goes into the fingerprint besides the key's address.** D8 fixes that it is derived from
+   identity, not from material; whether the derivation takes a fixed product-wide salt, a
+   deployment-specific one or none is open. A fixed input makes the same remote key produce the same
+   `s3ep-kek-fingerprint` in every deployment, which is what lets a second proxy read the first
+   one's objects; a deployment-specific one keeps the metadata from naming a key across
+   deployments and gives that portability up. The local provider derives its fingerprint with
+   HKDF-SHA256 and no configured salt, so there is a precedent but no decision.
+7. **How the development environment reaches Vault.** The demo Vault listens on plain HTTP with a
+   fixed root token. A provider that refuses an unencrypted KMS address cannot be exercised against
+   it without a TLS setup; a provider that allows one carries a switch that must be impossible to
+   turn on by accident in production, because a wrap and an unwrap over plain HTTP expose the data
+   key on the wire. Which of the two the first release carries is open.
+8. **Whether the re-wrapping tool ships with the provider.** Rotation inside the KMS needs no
+   re-upload (D9), but moving objects from a local key to a KMS key — or between two KMS keys the
+   KMS does not treat as versions of one key — means re-wrapping every object's stored data key.
+   Without that tool the only migration is re-uploading every object, and whether it is part of this
+   release or a later one is undecided.
 
 **Accepted risks and unverified claims.**
 
@@ -232,18 +276,18 @@ at 5.0.0 for a KMS to fill.
 * **The cache has a bound and no expiry.** It is a bounded least-recently-used cache of 1024
   entries; the expiry D10 requires does not exist yet, so adding it is part of this work and D10
   does not hold until it is.
-* **The dependency situation is unverified.** Module paths, maintenance status and the current API
-  of the library the stub uses were not checked in this tree, and open question 1 must not be
-  answered from memory.
-* **Credential plumbing exists for backends that do not.** The Helm chart renders AWS and GCP
-  credentials into the pod, and no code reads them. Until one of those backends ships, that is
-  configuration nobody consumes, which the product does not allow (ADR 0013); removing it or
-  wiring it is open.
-* **The demo Vault is demo scaffolding.** It runs in development mode with a fixed root token and
-  creates its Transit engine and two example keys in its own start-up command; the initialisation
-  directory it also mounts is never executed. Whatever is set up there is labelled as unfit for
-  anything but the demo stack, and the example key named for the removed asymmetric provider goes
-  away with this work.
+* **The dependency situation is unverified.** With the stub gone there is no library to inherit;
+  the module path, maintenance status and current API of any candidate are unchecked in this tree,
+  and open question 1 must not be answered from memory.
+* **The demo Vault is demo scaffolding, and it is still running.** It runs in development mode with
+  a fixed root token and creates its Transit engine and two example keys, one AES and one RSA, in
+  its own start-up command; the initialisation directory it also mounts is empty and never executed.
+  Whatever is set up there is unfit for anything but the demo stack, and the RSA example key — named
+  for the asymmetric provider this product removed — is still created.
+* **A refusal that names nothing.** Configuration still rejects `type: "tink"` by name, with an
+  error announcing an implementation that is neither in the tree nor planned under that name. It is
+  a leftover of the removal: harmless to a client, misleading to an operator. The name the provider
+  will actually carry is open question 1, not this one.
 * **Key custody is the only thing this changes.** A compromised proxy process can still ask the
   KMS to unwrap any data key it can present, for as long as its credential is valid. The KMS
   removes the key from the blast radius of a leaked configuration or a stolen Secret; it does not

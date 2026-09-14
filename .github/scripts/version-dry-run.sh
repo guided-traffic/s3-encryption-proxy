@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# The dry run of ADR 0018 D6: compute the next release version for a pull request
-# with the release tool itself, print it, and check it against the release:major
-# label. Pull requests only; it writes no tag, no changelog and no release.
+# The dry run of ADR 0018 D6, one step of the "Semantic-Release (dry run)" workflow:
+# compute the next release version for a pull request with the release tool itself,
+# print it, and check it against the release:major label. Pull requests only; it
+# writes no tag, no changelog and no release. The marker inspection that covers the
+# squash-merge path (title and body) is a separate step of the same job.
 #
 # Environment:
 #   PR_BRANCH              head branch of the pull request; checked out, full history and tags
@@ -11,7 +13,8 @@
 #   SEMANTIC_RELEASE_ARGS  extra arguments, used by the local test only
 #   GITHUB_STEP_SUMMARY    optional; the job summary the verdict is appended to
 #
-# Exit codes: 0 verdict ok; 1 verdict failed, or no version could be computed.
+# Exit codes: 0 verdict ok or warning; 1 a computed major without the label, or no
+# version could be computed at all.
 set -euo pipefail
 
 : "${PR_BRANCH:?PR_BRANCH is required}"
@@ -47,11 +50,27 @@ if [ "$next" != "none" ] && { [ -z "$last_version" ] || [ "${next%%.*}" -gt "${l
   is_major=true
 fi
 
+# Only one of the two disagreements is dangerous, and only one of them is this
+# step's to judge.
+#
+# A computed major WITHOUT the label is the 2026-09-07 accident: the commits alone
+# are enough to cut it, so the commits alone are enough to refuse. That fails.
+#
+# The label WITHOUT a computed major is not an accident waiting to happen -- the
+# worst it produces is a needless label -- and this step cannot judge it, because
+# it reads only the commits. Under a squash merge the breaking marker may live in
+# the pull-request title or body, which become the message on main and which the
+# marker inspection of the same job does read. Failing here would turn a correctly
+# declared squash-merge major red. It warns, exactly as the marker inspection does
+# for its own version of this case.
 verdict="ok"
+severity="ok"
 if [ "$HAS_MAJOR_LABEL" = "true" ] && [ "$is_major" != "true" ]; then
-  verdict="release:major is set, but the computed version is ${next}: no commit carries a breaking marker"
+  verdict="release:major is set and the computed version is ${next}: no COMMIT carries a breaking marker. If the marker is in the pull-request title or body, that is the squash-merge case and the breaking-change inspection of this job is what judges it."
+  severity="warning"
 elif [ "$HAS_MAJOR_LABEL" != "true" ] && [ "$is_major" = "true" ]; then
   verdict="the computed version ${next} is a major bump without the release:major label"
+  severity="error"
 fi
 
 echo "last release: ${last_tag:-none}; computed next version: ${next}; release:major label: ${HAS_MAJOR_LABEL}; verdict: ${verdict}"
@@ -65,7 +84,10 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   } >> "$GITHUB_STEP_SUMMARY"
 fi
 
-if [ "$verdict" != "ok" ]; then
+if [ "$severity" = "error" ]; then
   echo "::error::${verdict}"
   exit 1
+fi
+if [ "$severity" = "warning" ]; then
+  echo "::warning::${verdict}"
 fi

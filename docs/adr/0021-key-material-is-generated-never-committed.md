@@ -13,20 +13,83 @@ untracked and generated on demand, and only its generator is tracked. Verified o
 ever was, continuous integration passes the token only through the `S3EP_LICENSE_TOKEN`
 secret, and the published container images are built from a checkout that holds neither.
 
-Decided and specified, **not implemented**: the on-demand key generator that the demo
-bring-up, the end-to-end bring-up and continuous integration call; the example
-configurations carrying `aes_key: "${S3EP_AES_KEY}"` instead of a literal; the end-to-end
-deployment values losing their literal key; excluding the development license token from the
-container build context and exporting `S3EP_LICENSE_TOKEN` in the demo bring-up so that no
-locally built image can carry one; and moving the license signing key into custody outside
-any directory a routine build clean removes. Until that lands, the tree still carries one
-working 256-bit key in three example configurations, the same key in the end-to-end
-deployment values, and two complete RSA private keys. All of that material is public and is
-to be treated as such.
+**Implemented 2026-09-11: no usable key reaches a running stack from an example, a values file
+or the demo bring-up.** The conformance runner is the exception and is named below. The
+statement here used to be the wider "no usable key is tracked any more", **corrected
+2026-09-12** — see the block below. The on-demand generator writes
+`S3EP_AES_KEY` and `S3EP_AES_KEY_RETIRED` into the repository's ignored environment file,
+keeping a value that is already there so a restarted stack still reads what it wrote, and it
+is called by the demo bring-up, by the end-to-end bring-up and by continuous integration.
+Every example configuration, the user-facing reference and the end-to-end deployment values
+reference the variable; the demo stack takes it from the same file its compose environment
+reads, and the chart gained the wiring that hands it to the pod — which it had never had, so a
+default install referenced a variable nothing supplied. The demo bring-up now exports
+`S3EP_LICENSE_TOKEN` from the local token file the way the end-to-end bring-up does.
 
-Two items of this family are **open** and are listed under Residual risks: where the license
-signing key is kept, and what the monitoring targets that load an example configuration do
-on a fresh checkout.
+**Corrected 2026-09-12: D1 is met for everything an operator copies into a deployment, and is not
+met for the test fixtures and the conformance runner.** No example configuration, chart values
+file, deployment values file or compose file carries a key, and no private key, certificate or
+license token is tracked at all. The unit and integration tests are the exception, and D1 names a
+test fixture in the same breath as an example: twenty-four test files carry base64 literals of
+exactly 32 bytes, eight distinct keys between them, and each one would be accepted as a key
+encryption key by a configuration that used it. The most-used of the eight appears in eighteen
+files; the one that this repository also published outside the tests, and which D7 covers, in
+three — it has been in one of them since 2025-08-31, was the literal in two example
+configurations and in the chart's development values until they were cleared, and on 2026-09-12
+it was written into a third test as the fixture for the test that loads the configuration the
+image ships with. Four of the eight are the captured format and wrap vectors added on 2026-09-12,
+so the number moves whenever a vector suite is added — which is the argument for not restating it
+in a document that is not regenerated. The 2026-09-11 removal cleared the examples and the values
+files and replaced one test fixture with a non-key string; the rest of the tests it left alone.
+None of these keys encrypts anything that outlives a test process; that is an argument about
+impact, not about D1.
+
+The conformance runner also carries a working key as a shell default, because a stored object
+names the fingerprint of the key that wrapped it and an already seeded corpus would otherwise be
+unreadable. It is a repository-public key that a `make test-conformance` run hands to a real
+proxy; the local backends are thrown away with their container, which is again an argument about
+impact, not about D1.
+
+**The keys that were published stay published (D7).** Five working 256-bit keys were in this
+repository's tree — one across the example configurations, the user-facing reference, the
+monitoring values and the end-to-end values, its retired companion in one example configuration
+and the user-facing reference, and a third in two example configurations and in the chart's
+development values, where it still serves as a test fixture — and the chart's own default until
+3.8.56 was a fourth: a thirty-two character string that is not base64 of thirty-two bytes, which
+the loader of the day therefore took as raw bytes — a working key then, and a string today's
+validator refuses. A fifth stood for five days in September 2025 in the example configuration of
+the counter-mode provider that has since been removed: base64 of thirty-two printable
+characters, which the loader of the day took as a key encryption key and today's validator
+refuses on the same printable-only rule as the fourth. All five are to be treated as
+compromised: any deployment that ever ran under
+one re-writes its data under a new key before the old provider is removed. Deleting them from the
+tree does not un-publish them.
+
+Still **not implemented**: moving the license signing key into custody outside any directory a
+routine build clean removes.
+
+**Corrected 2026-09-10: there are no RSA private keys in the tree.** This block used to name
+two. The `rsa` key provider was deleted with ADR 0004, and every key file it needed went with
+it; what remains are two obviously truncated placeholder strings in configuration tests. A
+reader auditing this repository should not go looking for keys that are not there.
+
+**Closed 2026-09-10: the token no longer reaches a locally built image.** The build context
+excludes the token by name, and the generated environment file was already excluded by an older
+rule. The wildcard rules beside them reach only the root of the tree, so it is the rule naming
+the token's path that keeps it out of the one directory the image copies whole; a key placed in
+that directory would need its own rule. Before that a developer with a token on disk baked it
+into every image they built, which was reproduced and then fixed.
+
+**Closed 2026-09-11: D3's one name.** `S3EP_AES_KEY` is the only name for the active key: every
+example configuration, values file and chart reference uses it, and the second name that lived in
+the example comments is gone with the literals. The generator writes one further name,
+`S3EP_AES_KEY_RETIRED`, for the second provider of the rotation example, and the conformance
+runner carries its own, `S3EP_CONFORMANCE_AES_KEY`.
+
+One item of this family is **open** and is listed under Residual risks: where the license signing
+key is kept. The second one used to sit here — what the monitoring targets that load an example
+configuration do on a fresh checkout — and is **closed 2026-09-12**: they invoke the generator,
+which makes them the fourth and fifth call sites the Consequences below warn about.
 
 ## Context
 
@@ -120,7 +183,7 @@ produces a key. No document, example or default in this product ever prints a us
   makes the bring-up scripts the only supported entry point.
 - **A generator, and every call site of it, becomes maintained code.** Three call sites are
   named (demo, end-to-end, continuous integration), and any new environment has to remember
-  the fourth.
+  to add its own.
 - **Operators who installed the chart with its defaults are broken by the upgrade**: it
   refuses to start until they supply a key, and the objects they already wrote are encrypted
   under a public key and must be re-written. That is the correct outcome, but it shipped as
@@ -135,9 +198,11 @@ produces a key. No document, example or default in this product ever prints a us
 - **Signing-key custody becomes a manual step with no automation and no second copy.** That
   is deliberate (D6) and it means the recovery path for a lost key is a new keypair, a new
   embedded verification key and a rebuild of every image.
-- **A target that used to work on a bare checkout now needs one step first.** The monitoring
-  targets that load an example configuration either call the generator or document the export;
-  either way the "just run it" property is gone.
+- **A generated key is now a precondition of every target that starts a proxy from an example
+  configuration.** The monitoring targets that load one call the generator themselves, so the
+  "just run it" property survives — at the cost of two more call sites that have to keep calling
+  it. A target that forgets is not broken loudly; it starts under whatever the environment
+  happens to hold, or refuses on a missing variable.
 - **Test fixtures lose material they got for free.** The integration tests that started a
   proxy from an example configuration with a real asymmetric key now need generated material —
   which costs nothing here only because that provider type is removed anyway (ADR 0004).
@@ -176,19 +241,27 @@ shipped binary accepts, which makes it a stronger credential than any token it w
   Until it is, the only copy sits in a build output directory that a routine clean deletes,
   and D6 is a rule rather than an observed state. Its presence was confirmed on 2026-09-07;
   nothing confirms it since, and nothing will.
-- **Open: what the monitoring targets do on a fresh checkout** — invoke the generator
-  themselves, or document the export and fail without it.
-- **Everything still in the tree today is public.** One working key in three example
-  configurations, the same key in the end-to-end deployment values, and two complete RSA
-  private keys. They are compromised as of the day they were committed, not as of the day the
-  removal ships.
-- **The commented environment forms in the example configurations name a different variable
-  than `S3EP_AES_KEY`.** Converging on one name is part of the change; until then a reader
-  following the comment wires up a variable nothing sets and gets a startup failure whose
-  cause is a typo in a file, not their own configuration.
-- **Nothing enforces D1 mechanically.** Whether this repository runs any secret scanning on a
-  push or a pull request is **not verified**. Today the rule holds by review, which is the
-  same class of control the decision itself calls insufficient.
+- **Closed 2026-09-12: what the monitoring targets do on a fresh checkout.** They invoke the
+  generator, keeping a key that is already there, and they read the license token from the local
+  file when one exists. The "just run it" property is back for them, at the cost of two more call
+  sites of the generator to maintain.
+- **Corrected 2026-09-12: what is still in the tree is the test fixtures.** This entry named one
+  working key in three example configurations, the same key in the end-to-end deployment values,
+  and two complete RSA private keys. None of that is there any more. What is there is eight
+  working 256-bit keys across twenty-four test files, plus one in the conformance runner; one of
+  the eight this repository also published outside the tests long ago; they are public as of the
+  day they were committed, not as of the day anything is removed, and D7 governs any deployment
+  that ever ran under one.
+- **Closed 2026-09-11: the second variable name.** `S3EP_AES_KEY` is the only name an example
+  configuration references for the active key, so a reader following a comment in one wires up
+  the variable the bring-up actually sets. The generator's `S3EP_AES_KEY_RETIRED`, which the
+  rotation example names for its retired provider, and the conformance runner's
+  `S3EP_CONFORMANCE_AES_KEY` are the two other names.
+- **Nothing enforces D1 mechanically, and as of 2026-09-12 this is verified rather than
+  suspected.** No step of this project's own pipeline scans for secrets on a push or a pull
+  request; whether the hosting platform applies its own push protection is outside the tree and
+  is still unverified. The rule holds by review, which is the same class of control the decision
+  itself calls insufficient — and the fixture keys above are what a review missed.
 - **Not verified: whether any deployment ever ran under the published chart default or under
   an example key.** The assumption must be that at least one did; D7 is written for that case.
 - **Not verified: whether a locally built image carrying the development token was ever pushed

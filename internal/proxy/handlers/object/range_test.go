@@ -86,33 +86,6 @@ func TestParseByteRange_EmptyObject(t *testing.T) {
 	assert.True(t, errors.Is(err, errUnsatisfiableRange))
 }
 
-func TestContentRangeStart(t *testing.T) {
-	cases := map[string]int64{
-		"bytes 0-99/1000":                0,
-		"bytes 100-199/1000":             100,
-		"bytes 900-999/1000":             900,
-		" bytes 42-42/43 ":               42,
-		"bytes 0-0/1":                    0,
-		"bytes 1048576-2097151/10485760": 1048576,
-	}
-	for header, want := range cases {
-		t.Run(header, func(t *testing.T) {
-			got, err := contentRangeStart(header)
-			require.NoError(t, err)
-			assert.Equal(t, want, got)
-		})
-	}
-}
-
-func TestContentRangeStart_Errors(t *testing.T) {
-	for _, header := range []string{"", "0-99/1000", "bytes 0-99", "bytes abc-99/1000", "items 0-99/1000"} {
-		t.Run(header, func(t *testing.T) {
-			_, err := contentRangeStart(header)
-			require.Error(t, err)
-		})
-	}
-}
-
 // A 206 has to carry the same identity and entity headers as the 200 for the same
 // object: the version it came from, and the encoding the body is in.
 func TestWriteRangeResponse_EmitsVersionAndEntityHeaders(t *testing.T) {
@@ -132,7 +105,7 @@ func TestWriteRangeResponse_EmitsVersionAndEntityHeaders(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	h.writeRangeResponse(rr, bytes.NewReader(window), "bytes 0-9/100", int64(len(window)), out)
+	h.writeRangeResponse(rr, httptest.NewRequest(http.MethodGet, "/b/k", nil), bytes.NewReader(window), "bytes 0-9/100", int64(len(window)), out)
 
 	require.Equal(t, http.StatusPartialContent, rr.Code)
 	assert.Equal(t, "version-42", rr.Header().Get("x-amz-version-id"))
@@ -146,33 +119,20 @@ func TestWriteRangeResponse_EmitsVersionAndEntityHeaders(t *testing.T) {
 	assert.Equal(t, window, rr.Body.Bytes())
 }
 
-// Both backend GETs on the ranged path must be pinned to the requested version.
-// If only the first one were, a GCM ranged read would inspect one version and
-// decrypt another.
-func TestHandleGetObjectRange_BothBackendGetsCarryTheVersion(t *testing.T) {
+// A ranged read must carry the version through to the backend: without it the
+// proxy would plan a window against one version and read another.
+func TestHandleGetObjectRange_TheBackendGetCarriesTheVersion(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := newEncryptingTestHandler(t, backend)
 
-	metadata := map[string]string{
-		"s3ep-encrypted-dek": "ZW5jcnlwdGVkLWRlaw==",
-		"s3ep-dek-algorithm": "aes-gcm",
-	}
-
 	var captured []*s3.GetObjectInput
-	capture := func(args mock.Arguments) {
+	backend.On("GetObject", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		captured = append(captured, args.Get(1).(*s3.GetObjectInput))
-	}
-
-	backend.On("GetObject", mock.Anything, mock.Anything).Run(capture).Return(&s3.GetObjectOutput{
+	}).Return(&s3.GetObjectOutput{
 		Body:          io.NopCloser(bytes.NewReader(make([]byte, 10))),
 		ContentLength: aws.Int64(10),
 		ContentRange:  aws.String("bytes 0-9/100"),
-		Metadata:      metadata,
-	}, nil).Once()
-	backend.On("GetObject", mock.Anything, mock.Anything).Run(capture).Return(&s3.GetObjectOutput{
-		Body:          io.NopCloser(bytes.NewReader(make([]byte, 100))),
-		ContentLength: aws.Int64(100),
-		Metadata:      metadata,
+		Metadata:      map[string]string{"s3ep-encrypted-dek": "ZW5jcnlwdGVkLWRlaw==", "s3ep-dek-algorithm": "aes-gcm"},
 	}, nil).Once()
 
 	req := httptest.NewRequest(http.MethodGet, "/test-bucket/test-key?versionId=version-42", nil)
@@ -180,8 +140,6 @@ func TestHandleGetObjectRange_BothBackendGetsCarryTheVersion(t *testing.T) {
 
 	h.handleGetObjectRange(httptest.NewRecorder(), req, "test-bucket", "test-key", "bytes=0-9")
 
-	require.Len(t, captured, 2, "AES-GCM takes the full-decryption path, which issues a second GET")
-	for i, in := range captured {
-		assert.Equalf(t, "version-42", aws.ToString(in.VersionId), "backend GET %d dropped the version", i+1)
-	}
+	require.Len(t, captured, 1, "an explicit range costs exactly one backend request")
+	assert.Equal(t, "version-42", aws.ToString(captured[0].VersionId), "the backend GET dropped the version")
 }

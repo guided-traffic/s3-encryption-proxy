@@ -1,4 +1,4 @@
-.PHONY: build build-keygen build-all license-tool setup-dev-license generate-license test test-unit test-integration test-integration-tls test-integration-all test-integration-performance e2e-up e2e-down test-e2e-velero e2e-velero coverage test-unit-coverage coverage-integration-collect coverage-report clean run dev deps lint fmt security gosec vuln static quality all-checks helm-lint helm-test helm-install helm-dev helm-prod helm-monitoring run-monitoring test-monitoring
+.PHONY: helm-unittest-plugin build build-keygen build-all license-tool generate-license test test-unit test-unit-race test-integration test-integration-race test-integration-tls test-integration-all test-integration-performance test-conformance test-conformance-minio test-conformance-localstack test-conformance-parallel test-conformance-wasabi test-conformance-wasabi-seed perf-baseline perf-baseline-quick perf-baseline-offline perf-compare e2e-up e2e-down test-e2e-velero e2e-velero e2e-rclone-up e2e-rclone-down test-e2e-rclone e2e-rclone e2e-s3cmd-up e2e-s3cmd-down test-e2e-s3cmd e2e-s3cmd coverage test-unit-coverage coverage-integration-collect coverage-report clean run dev deps lint fmt security gosec vuln static quality all-checks helm-lint helm-test helm-install helm-dev helm-prod helm-monitoring run-monitoring test-monitoring
 
 # Go toolchain. The Containerfile FROM line is the single source of truth for
 # the Go version in this repo (see CLAUDE.md, "Go toolchain version"); nothing
@@ -24,17 +24,26 @@ GOGET=$(GOCMD) get
 GOMOD=$(GOCMD) mod
 GOFMT=gofmt
 
+# Version stamp. The Containerfile passes the same three -X flags for the image;
+# without them a binary built here reports main.version = "dev", which is what
+# every released binary has reported so far. VERSION falls back to the nearest
+# tag so a local build says something true rather than nothing.
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+GIT_COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
+BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+LDFLAGS := -w -s -X main.version=$(VERSION) -X main.commit=$(GIT_COMMIT) -X main.buildTime=$(BUILD_TIME)
+
 # Build the application
 build:
 	@echo "Building $(BINARY_NAME)..."
 	@mkdir -p $(BUILD_DIR)
-	$(GOBUILD) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/s3-encryption-proxy
+	$(GOBUILD) -ldflags="$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/s3-encryption-proxy
 
 # Build the key generation tool
 build-keygen:
 	@echo "Building $(KEYGEN_BINARY)..."
 	@mkdir -p $(BUILD_DIR)
-	$(GOBUILD) -o $(BUILD_DIR)/$(KEYGEN_BINARY) ./cmd/keygen
+	$(GOBUILD) -ldflags="$(LDFLAGS)" -o $(BUILD_DIR)/$(KEYGEN_BINARY) ./cmd/keygen
 
 # Build the license tool
 license-tool:
@@ -44,11 +53,6 @@ license-tool:
 
 # Build all binaries
 build-all: build build-keygen license-tool
-
-# Setup development license (not committed to git)
-setup-dev-license:
-	@echo "Setting up development license..."
-	./setup-dev-license.sh
 
 # Generate a new license using the license tool
 generate-license: license-tool
@@ -81,6 +85,22 @@ test-unit:
 	@echo "Running unit tests..."
 	$(GOTEST) -v -short ./...
 
+# Unit tests under the Go race detector. Its own target, not a flag on the one
+# above: the detector costs roughly 2-20x runtime and 5-10x memory, and it only
+# reports races on paths a run actually takes. The concurrency it is here for is
+# the multipart producer's worker pool and free list, the session map, the DEK
+# cache and the shutdown drain counters.
+test-unit-race:
+	@echo "Running unit tests under the race detector..."
+	$(GOTEST) -race -short -count=1 ./...
+
+# The integration suites under the detector. Needs the demo stack (./start-demo.sh);
+# -p 1 because the suites share one backend and the detector makes them slow
+# enough for that to matter.
+test-integration-race:
+	@echo "Running integration tests under the race detector..."
+	$(GOTEST) -race -tags=integration -count=1 -p 1 -timeout=120m $(INTEGRATION_PKGS)
+
 # Run integration tests only.
 # performance-test is deliberately excluded: it compares proxy throughput against
 # direct MinIO, so running it alongside the rest of the suite makes it contend
@@ -109,6 +129,47 @@ test-integration-tls:
 # Both transports, plus the order-sensitive performance package on its own.
 test-integration-all: test-integration test-integration-tls test-integration-performance
 
+# The conformance suite asserts what S3 specifies, against a proxy pointed at any
+# backend, and the same binary runs against each. MinIO is not S3 and neither is
+# any other implementation — a header one acts on and another ignores is the
+# class of defect a single-backend suite cannot see — so the difference between
+# these runs is the finding, not a flake (ADR 0027).
+#
+# Each target starts its own backend and its own proxy on its own port, so they
+# can run at once. That is also how CI runs them: one runner per backend.
+#
+#   scripts/conformance-run.sh <backend> [--seed|--clean]
+#
+# minio and localstack are free and throwaway. wasabi is BILLED: it charges every
+# written byte for a minimum of ninety days and refunds nothing on delete, which
+# is why only --seed writes and why the seed is idempotent.
+test-conformance: test-conformance-minio test-conformance-localstack
+
+test-conformance-minio:
+	./scripts/conformance-run.sh minio --seed
+
+test-conformance-localstack:
+	./scripts/conformance-run.sh localstack --seed
+
+# Both free backends at once, which is what CI does and what makes the wall clock
+# the slowest one rather than the sum.
+test-conformance-parallel:
+	@./scripts/conformance-run.sh minio --seed      > build/conformance-minio.out 2>&1 & \
+	 minio_pid=$$!; \
+	 ./scripts/conformance-run.sh localstack --seed > build/conformance-localstack.out 2>&1 & \
+	 ls_pid=$$!; \
+	 wait $$minio_pid; minio_rc=$$?; \
+	 wait $$ls_pid;    ls_rc=$$?; \
+	 tail -n 40 build/conformance-minio.out build/conformance-localstack.out; \
+	 exit $$((minio_rc + ls_rc))
+
+# THIS COSTS MONEY. See the header above.
+test-conformance-wasabi:
+	./scripts/conformance-run.sh wasabi
+
+test-conformance-wasabi-seed:
+	./scripts/conformance-run.sh wasabi --seed
+
 # The performance package compares proxy throughput against direct MinIO and is
 # order sensitive: run in parallel with the rest of the suite it competes for
 # the same MinIO and reports a lower efficiency than it would alone. -p 1 and a
@@ -116,6 +177,51 @@ test-integration-all: test-integration test-integration-tls test-integration-per
 test-integration-performance:
 	@echo "Running performance integration tests in isolation..."
 	$(GOTEST) -v -tags=integration -count=1 -p 1 -timeout=60m ./test/integration/performance-test/...
+
+# --- Local performance baseline (ADR 0020 D17) ----------------------------
+# Deliberately local and referenced by no CI workflow: a baseline compares two
+# commits on the same machine, and a shared runner cannot do that. The suite
+# carries its own build tag so nothing else can pick it up by accident.
+#
+#   make perf-baseline                       full run, needs ./start-demo.sh
+#   make perf-baseline-quick                 fewer repetitions, throughput sizes <= 8 MiB
+#   PERF_LABEL="post-v2" make perf-baseline  label the run
+#   PERF_REPS=15 make perf-baseline          more repetitions
+#
+# Output: perf-baseline/<UTC timestamp>-<commit>/{run.json,REPORT.md}, plus a
+# LATEST file naming the newest run.
+# Both spellings work: PERF_LABEL=x make perf-baseline, or an exported S3EP_PERF_LABEL.
+# The recipes below set the S3EP_* variables as shell assignment prefixes, which would
+# otherwise override an exported value.
+PERF_REPS ?= $(or $(S3EP_PERF_REPS),7)
+PERF_LABEL ?= $(or $(S3EP_PERF_LABEL),unlabelled)
+
+perf-baseline:
+	@echo "Running the local performance baseline (label: $(PERF_LABEL))..."
+	cd test/perf && S3EP_PERF_REPS=$(PERF_REPS) S3EP_PERF_LABEL="$(PERF_LABEL)" \
+		$(GOTEST) -v -tags=perf -count=1 -p 1 -timeout=180m ./...
+
+# Same instruments, small enough to finish while someone watches.
+perf-baseline-quick:
+	@echo "Running the local performance baseline (quick)..."
+	cd test/perf && S3EP_PERF_REPS=3 S3EP_PERF_MAX_SIZE=8388608 \
+		S3EP_PERF_LABEL="$(PERF_LABEL)-quick" \
+		$(GOTEST) -v -tags=perf -count=1 -p 1 -timeout=60m ./...
+
+# Compare two recorded runs. This is what a baseline is for.
+#   make perf-compare BEFORE=perf-baseline/<id> AFTER=perf-baseline/<id>
+perf-compare:
+	@test -n "$(BEFORE)" -a -n "$(AFTER)" || { echo "usage: make perf-compare BEFORE=<dir> AFTER=<dir>"; exit 2; }
+	./test/perf/compare.py "$(BEFORE)" "$(AFTER)"
+
+# The instruments that need no proxy: key unwrap and the in-process crypto floor.
+# These are the only "before" numbers that survive the storage format rewrite
+# untouched, because they depend on no stack and no stored object.
+perf-baseline-offline:
+	@echo "Running the stack-free performance instruments..."
+	cd test/perf && S3EP_PERF_REPS=$(PERF_REPS) S3EP_PERF_LABEL="$(PERF_LABEL)-offline" \
+		$(GOTEST) -v -tags=perf -count=1 -p 1 -timeout=60m \
+		-run 'TestUnwrapMicrobenchmark|TestCryptoFloor' ./...
 
 # --- Velero end-to-end suite (local kind cluster) -------------------------
 # e2e-up creates the cluster and installs MinIO, the CSI hostpath driver, the
@@ -133,6 +239,40 @@ test-e2e-velero:
 
 # Full cycle for a cold machine.
 e2e-velero: e2e-up test-e2e-velero
+
+# --- Client end-to-end suites (demo compose stack) --------------------------
+# rclone and s3cmd, driven as real binaries against the running demo stack. They
+# are the proof behind the README's claim to serve these clients (ADR 0006 D7);
+# each up-script installs its pinned client and hands the stack to
+# ./start-demo.sh, so a workstation and a runner cannot drift apart.
+#
+# One tool, one set of targets, and one CI job each. They are never bundled: a
+# failure has to name the client, and one client's trouble must not withhold the
+# other's verdict. Both bring up the same demo stack, so either down target stops
+# it.
+e2e-rclone-up:
+	./test/e2e/rclone/e2e-up.sh
+
+e2e-rclone-down:
+	./test/e2e/rclone/e2e-down.sh
+
+test-e2e-rclone:
+	@echo "Running rclone e2e suite..."
+	$(GOTEST) -v -tags=e2e -count=1 -timeout=30m ./test/e2e/rclone/...
+
+e2e-rclone: e2e-rclone-up test-e2e-rclone
+
+e2e-s3cmd-up:
+	./test/e2e/s3cmd/e2e-up.sh
+
+e2e-s3cmd-down:
+	./test/e2e/s3cmd/e2e-down.sh
+
+test-e2e-s3cmd:
+	@echo "Running s3cmd e2e suite..."
+	$(GOTEST) -v -tags=e2e -count=1 -timeout=30m ./test/e2e/s3cmd/...
+
+e2e-s3cmd: e2e-s3cmd-up test-e2e-s3cmd
 
 # --- Coverage ---------------------------------------------------------------
 # Coverage comes from two sources that live in different processes: the unit
@@ -196,9 +336,16 @@ coverage-report:
 	if [ -n "$$idirs" ]; then $(GO_PIN) $(GOCMD) tool covdata textfmt -i=$$idirs -o $(COVERAGE_DIR)/integration.out; fi
 
 # Lint the code
+#
+# LINT_TAGS is every build tag the test tree carries. Without them golangci-lint
+# and go vet see neither test/ nor the internal tests behind a tag -- most of the
+# Go files in this repository -- and report a green that means "not looked at".
+LINT_TAGS := integration,conformance,e2e,perf
+
 lint: ## Run linting
 	@echo "Running static analysis..."
 	go vet ./...
+	go vet -tags=$(LINT_TAGS) ./...
 	@# gofmt -l only prints; without this guard an unformatted file passed lint
 	@# and the list scrolled by unnoticed. Same flags as the fmt target.
 	@unformatted="$$($(GOFMT) -s -l . || true)"; \
@@ -207,7 +354,7 @@ lint: ## Run linting
 		echo "$$unformatted"; \
 		exit 1; \
 	fi
-	golangci-lint run --timeout=5m
+	golangci-lint run --timeout=5m --build-tags $(LINT_TAGS)
 
 # Format the code
 fmt:
@@ -222,10 +369,22 @@ clean:
 	rm -rf $(COVERAGE_DIR)
 
 # Install development tools
+# GOLANGCI_LINT_VERSION is the coordinate CI installs. It must stay identical to
+# the one in .github/workflows/release.yml: .golangci.yml is a v2 configuration
+# and the v1 binary refuses it, so a drift means CI and the workstation lint
+# different trees. The path carries /v2 on purpose -- cmd/golangci-lint@latest
+# still resolves to the last v1 release.
+GOLANGCI_LINT_VERSION := v2.13.1
+
 tools:
 	@echo "Installing development tools..."
+	@# The last unpinned coordinate in this repository. air is a live-reload
+	@# convenience for `make dev` and builds nothing that ships, so a moving
+	@# version cannot change an artifact; gosec, govulncheck and golangci-lint
+	@# are all pinned because they gate.
 	go install github.com/cosmtrek/air@latest
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	@echo "Installed to $$(go env GOPATH)/bin -- make sure it is on your PATH."
 
 # Gosec security scan only
 # gosec loads packages through the go/packages of the x/tools it was built with, so a
@@ -251,14 +410,16 @@ vuln:
 	@echo "Checking for vulnerabilities with govulncheck $(GOVULNCHECK_VERSION)..."
 	$(GO_PIN) GOFLAGS="-buildvcs=false" go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
-# Static analysis
+# Static analysis. The formatting check lives in `lint`, which fails on it; a
+# second, non-failing copy of it here is how the first one got trusted.
 static:
 	@echo "Running static analysis..."
 	GOFLAGS="-buildvcs=false" go vet ./...
-	$(GOFMT) -l .
 
-# Code quality checks (linting and formatting)
-quality: static lint fmt
+# Code quality checks. fmt runs FIRST: make stops at the first failing
+# prerequisite, so with lint ahead of it an unformatted tree never reached the
+# target that would have fixed it.
+quality: fmt static lint
 
 # Security checks only
 security: gosec vuln
@@ -275,9 +436,9 @@ help:
 	@echo "  deps            - Download dependencies"
 	@echo "  test            - Run all tests"
 	@echo "  test-unit       - Run unit tests only"
+	@echo "  test-unit-race  - Unit tests under the race detector"
 	@echo "  test-integration - Run integration tests only"
 	@echo "  coverage        - Generate test coverage report"
-	@echo "  coverage-ci     - Generate coverage report for CI"
 	@echo "  lint            - Lint the code"
 	@echo "  fmt             - Format the code"
 	@echo "  static          - Run static analysis"
@@ -301,9 +462,28 @@ helm-lint:
 	@which helm > /dev/null || (echo "Helm not found. Please install Helm." && exit 1)
 	helm lint $(HELM_CHART_DIR)
 
-helm-test: helm-lint
+# The helm-unittest plugin version CI installs. Renovate bumps it through the
+# custom manager in renovate.json, which keeps it off automerge: this job gates
+# semantic-release.
+HELM_UNITTEST_VERSION := v1.1.2
+
+helm-unittest-plugin:
+	@helm plugin list | grep -q '^unittest' || \
+		helm plugin install https://github.com/helm-unittest/helm-unittest \
+			--version $(HELM_UNITTEST_VERSION) --verify=false
+
+# Renders EVERY values file, not just the default. Two override files shipped
+# unrenderable for months because this target proved only that values.yaml works.
+# The Velero values are a real consumer of the chart and a drift there costs a
+# 45-minute e2e run to discover, so they render here too.
+helm-test: helm-lint helm-unittest-plugin
 	@echo "Testing Helm chart..."
 	helm template test-release $(HELM_CHART_DIR) > /dev/null
+	@for f in $(HELM_CHART_DIR)/values-*.yaml test/e2e/velero/values-proxy.yaml; do \
+		echo "  rendering $$f"; \
+		helm template test-release $(HELM_CHART_DIR) -f $$f > /dev/null || exit 1; \
+	done
+	helm unittest $(HELM_CHART_DIR)
 	@echo "Helm chart template test passed"
 
 helm-install: helm-test
@@ -319,19 +499,26 @@ helm-prod: helm-test
 	./deploy/helm/install.sh prod
 
 # Monitoring targets
+# Both targets load config/aes-example.yaml, which references ${S3EP_AES_KEY}
+# and carries no key of its own (ADR 0021), so they generate one the way the
+# demo bring-up does. --if-needed keeps a key that is already there.
 run-monitoring: build
 	@echo "Starting S3 Encryption Proxy with monitoring enabled..."
-	@if [ -f config/license.jwt ]; then \
+	@./scripts/gen-keys.sh --if-needed >/dev/null
+	@set -a; . ./.env; set +a; \
+	if [ -f config/license.jwt ]; then \
 		export S3EP_LICENSE_TOKEN=$$(cat config/license.jwt); \
 	fi; \
-	./$(BUILD_DIR)/$(BINARY_NAME) --config config/aes-example.yaml --monitoring
+	./$(BUILD_DIR)/$(BINARY_NAME) --config config/aes-example.yaml
 
 test-monitoring: build
 	@echo "Testing monitoring endpoints..."
-	@if [ -f config/license.jwt ]; then \
+	@./scripts/gen-keys.sh --if-needed >/dev/null
+	@set -a; . ./.env; set +a; \
+	if [ -f config/license.jwt ]; then \
 		export S3EP_LICENSE_TOKEN=$$(cat config/license.jwt); \
 	fi; \
-	./$(BUILD_DIR)/$(BINARY_NAME) --config config/aes-example.yaml --monitoring & \
+	./$(BUILD_DIR)/$(BINARY_NAME) --config config/aes-example.yaml & \
 	SERVER_PID=$$!; \
 	sleep 3; \
 	echo "Testing health endpoint..."; \

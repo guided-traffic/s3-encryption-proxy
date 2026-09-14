@@ -15,5 +15,8 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
+      {{- if and .Values.service.nodePort (eq .Values.service.type "NodePort") }}
+      nodePort: {{ .Values.service.nodePort }}
+      {{- end }}
   selector:
     {{- include "s3-encryption-proxy.selectorLabels" . | nindent 4 }}

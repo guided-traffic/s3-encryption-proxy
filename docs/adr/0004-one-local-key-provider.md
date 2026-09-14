@@ -4,15 +4,45 @@
 
 **Accepted.** Date: 2026-09-07.
 
-Decided and specified; **not implemented**. It lands with the next major release, 5.0.0.
-What ships today (3.x and 4.0.x): the data key is wrapped with unauthenticated AES-CTR
-under the master key, so a flipped bit in `s3ep-encrypted-dek` yields a different data key
-with no error; `s3ep-kek-fingerprint` is the plain unsalted SHA-256 of the master key; any
-32-character string is accepted as `aes_key`, because a value that does not base64-decode
-to 32 bytes is used verbatim as key material; and a second local provider type, `rsa`,
-exists. Every rule below replaces one of those and none of it is in the tree. The change
-breaks the stored format (`s3ep-encrypted-dek` and `s3ep-kek-fingerprint` both change), so
-it can only ship in a release that already forces a re-upload — see ADR 0003 and ADR 0017.
+**Implemented on the 5.0.0 branch, 2026-09-10.** `aes` is the one local provider: `rsa` is
+deleted from the tree, and the only other type an active provider may have is `none`. The
+data key is wrapped with AES-256-GCM under a key derived per wrap with HKDF-SHA256, so a
+flipped bit anywhere in the 76-byte wrap fails closed with its own error instead of yielding
+a different data key in silence; `s3ep-kek-fingerprint` is an HKDF expansion under a
+labelled context rather than a plain hash of the master key; and `aes_key` is base64 of
+exactly 32 bytes, with the raw-string fallback gone and the admission rules checked at
+startup — for every configured `aes` provider, not only the active one. The change breaks
+the stored format (`s3ep-encrypted-dek` and `s3ep-kek-fingerprint` both changed), which is
+why it shipped in the release that already forces a re-upload — see ADR 0003 and ADR 0017.
+
+**The tree now carries only what this decision leaves standing, 2026-09-10.** The unwired
+stub behind the `tink` provider type is deleted along with the rest of the superseded code,
+so the product holds exactly two key providers: `aes` and `none`. A configuration naming
+`type: "tink"` is still refused at startup by that name, any other type is refused as
+unsupported, and no KMS-backed provider exists — that stays decided and unbuilt (ADR 0005).
+The never-read `encryption.key_rotation_days` setting is gone as well, so no configuration
+file hints at the rotation operation D12 says the product does not have (ADR 0013). The
+third-party key-management library that came with that stub left the build with it, which
+settles the open question under the AES-KWP alternative below: a deterministic wrap would
+now cost the self-written primitive that alternative priced.
+
+**Re-checked against the tree, 2026-09-10.** A wrapped key that fails its tag is answered as
+`InvalidObjectState` with HTTP 403 and the message "Object key material failed
+authentication", before a single stored byte is decrypted or delivered; an object the proxy
+did not write is refused with the same code under its own message (ADR 0002, ADR 0003). One
+premise of the Context below has disappeared in the meantime: the configurations "where no
+integrity check runs" no longer exist, because the integrity modes are gone and every stored
+object is an authenticated segment chain (ADR 0003). That removes the fallback the Context
+weighed against; it does not change the decision, whose reason was that the key layer must
+not depend on the data layer noticing.
+
+**Re-checked against the tree, 2026-09-12.** Everything above still holds — the wrap is 76
+bytes under a fresh per-wrap salt, `s3ep-kek-fingerprint` is an HKDF expansion under its own
+label, and the admission rules run at startup over every configured `aes` provider — with one
+name out of date. The two paragraphs above still call the pass-through provider `none`. It is
+`exit` since ADR 0025, and a configuration naming `type: "none"` is refused at startup by that
+name, with an error that names `exit` in its place. The count is unchanged: two provider types,
+`aes` and the pass-through one.
 
 ## Context
 
@@ -94,13 +124,19 @@ with random nonces would carry a message bound of 2^32 wraps, and a rotation tri
 nothing in the product counts is a control that exists only in documentation. See ADR
 0013.
 
-**D9.** A tampered wrapped key fails with its own distinct error — "wrapped data key
-authentication failed" — attributed to the object's metadata, **before any object byte is
-read or decrypted**. It is never reported as a decryption failure of the body.
+**D9.** A tampered wrapped key fails with its own distinct error, attributed to the
+object's metadata and not to its body: the client is answered `InvalidObjectState` with
+HTTP 403 and *Object key material failed authentication*, **before a single stored byte is
+decrypted or delivered**. It is never reported as a decryption failure of the body.
 
 **D10.** The pass-through provider `none` stays, for testing and end-of-life only. It is
 not a production mode: objects written under it are plaintext at rest and carry no proxy
 metadata at all.
+
+> **Superseded 2026-09-10 by [ADR 0025](0025-leaving-is-a-supported-mode.md).** The end-of-life
+> half became the whole purpose and the provider is now called `exit`: it writes plaintext on
+> every path and keeps decrypting what this proxy encrypted earlier, which `none` did not. `none`
+> is refused by name.
 
 **D11.** Custody of the master key is a separate axis from this decision. A key held in a
 key management service is its own provider type (ADR 0005). Delivering the local key from
@@ -126,21 +162,35 @@ long as objects written under it must stay readable.
   wrong.
 - An operator who typed a passphrase into a configuration that starts today gets a startup
   failure after upgrading. That is the intended outcome and it is a hard stop, not a
-  warning. Because the value can arrive through an environment reference, no inspection of
-  the repository or of a chart can predict which deployments are affected.
+  warning. The rules apply to every configured `aes` provider, so a retired key kept only so
+  its objects stay readable has to satisfy them too. Because the value can arrive through an
+  environment reference, no inspection of the repository or of a chart can predict which
+  deployments are affected.
 - Configurations, charts and examples that name the asymmetric provider stop loading. No
   shipped artefact does, so the cost falls on unknown external users only.
 - One key shape, one generator, one rotation procedure, one fingerprint algorithm, one
   wrap. Roughly 1,800 lines of provider, tests, integration suite and example go with the
-  asymmetric provider, and PEM handling leaves the product entirely.
+  asymmetric provider, and PEM handling leaves the encryption path entirely — the only PEM
+  the product still parses belongs to the license gate and to the tool that issues its keys
+  (ADR 0016).
 - Sub-microsecond unwrap stays the reference point for the read path, which keeps the
   latency budget of a future KMS-backed provider meaningful: the difference between local
   and remote custody is then a clean measurement rather than a comparison of two unrelated
   primitives (ADR 0020).
-- The wrap grows from a raw counter-mode blob to 76 bytes of metadata per object. Nobody
-  will notice; it is stated so nobody has to rediscover the layout.
-- Two HKDF expansions per wrap and one per unwrap are added to a path that had none. Both
-  are cheap next to the data layer, and neither has been measured yet.
+- The wrap grows from a raw counter-mode blob to 76 bytes per object, carried as 104 base64
+  characters in `s3ep-encrypted-dek`. Nobody will notice; it is stated so nobody has to
+  rediscover the layout.
+- One HKDF extraction and one expansion run once per configured key at startup; one further
+  expansion runs per wrap and per unwrap, on a path that had none. The change they came with
+  is measured on the reference machine — a wrap moved from roughly 340 to roughly 935
+  nanoseconds, an unwrap from roughly 145 to roughly 550 — which is cheap next to the data
+  layer. What that measures is the expansion together with the authenticated mode and the
+  fresh salt and nonce each wrap draws, never the expansion on its own.
+- The HKDF labels and the wrap associated data are fixed constants of the stored format:
+  they do not follow `encryption.metadata_key_prefix`, so a deployment that changes that
+  prefix still derives under `s3ep-kek-fingerprint` and `s3ep-kek-wrap-v1`. The prefix moves
+  the metadata key names only, and an object is found again solely under the prefix that
+  wrote it (ADR 0009).
 
 ## Alternatives Considered
 
@@ -211,8 +261,8 @@ family as the data layer and as what key management services use internally.
   process lifetime.** Nothing in this decision changes that; only a KMS-backed provider
   does (ADR 0005).
 - **Metadata corruption remains a denial of service.** An authenticated wrap improves the
-  *attribution* of a tampered wrapped key — it is now a named metadata error before any
-  body byte is read — not the availability of the object.
+  *attribution* of a tampered wrapped key — it is now a named metadata error, answered
+  before a single stored byte is decrypted or delivered — not the availability of the object.
 - **Same-key object substitution across buckets or deployments is out of scope here.** It
   is a property of what the data layer binds into its associated data, not of the key
   layer, and the answer to it is one master key per deployment.
@@ -220,17 +270,16 @@ family as the data layer and as what key management services use internally.
   that no shipped chart, compose file, example or end-to-end configuration does, which was
   checked; external installations cannot be enumerated. The removal is therefore a
   breaking change for an unknown, believed-empty set of users.
-- **Not verified:** the roughly 2,400× unwrap ratio between the two providers comes from a
-  benchmark that was run and never committed. The order of magnitude decided nothing on
-  its own, but the number should not be quoted as a measured product figure.
-- **Not measured:** the cost of the two added HKDF expansions per wrap and the one per
-  unwrap. It is expected to be lost in the noise of the data layer; ADR 0020 governs, and
-  the read path is being measured after the format change for other reasons anyway.
-- **Left unspecified:** whether the HKDF labels and the wrap associated data follow a
-  configured metadata prefix. They are written here as fixed constants — they are part of
-  the stored format, not of the metadata namespace of ADR 0009 — and nothing in the
-  sources says otherwise; an implementer who reads them as configurable would produce a
-  format that changes with a configuration key, which is not intended.
+- **Superseded by a measurement:** the roughly 2,400× unwrap ratio in the Context came from
+  a benchmark that was run and never committed, and the baseline suite has since measured
+  the same comparison while both providers still existed — roughly 145 nanoseconds against
+  roughly 0.63 milliseconds on the reference machine, a ratio above 4,000×. The order of
+  magnitude decided nothing on its own; the Context's figure is the one that must not be
+  quoted, and any ratio taken after the removal compares the symmetric provider with an
+  asymmetric primitive that is no longer a provider (ADR 0020).
+- **Not measured in isolation:** the HKDF expansion's own share of the wrap and the unwrap;
+  the change as a whole is measured, and ADR 0020 governs any claim that attributes it to
+  the expansion alone.
 
 ## References
 
@@ -240,6 +289,7 @@ family as the data layer and as what key management services use internally.
 - ADR 0005 — A KMS-backed key encryption key is a provider, not a mode
 - ADR 0009 — The metadata prefix is the proxy's namespace
 - ADR 0013 — A configuration key exists only if code reads it, and an unworkable configuration refuses to start
+- ADR 0016 — The license is a startup gate with an explicit expiry
 - ADR 0017 — Stored data compatibility is not owed; a major release may break the format
 - ADR 0020 — Performance is measured before and after, never asserted
 - ADR 0021 — Key material and licenses are generated, never committed

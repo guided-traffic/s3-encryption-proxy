@@ -2,8 +2,12 @@
 package object
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"io"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/stretchr/testify/mock"
 )
@@ -193,14 +197,6 @@ func (m *MockS3Backend) GetBucketReplication(ctx context.Context, params *s3.Get
 	return args.Get(0).(*s3.GetBucketReplicationOutput), args.Error(1)
 }
 
-func (m *MockS3Backend) PutBucketReplication(ctx context.Context, params *s3.PutBucketReplicationInput, optFns ...func(*s3.Options)) (*s3.PutBucketReplicationOutput, error) {
-	args := m.Called(ctx, params)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*s3.PutBucketReplicationOutput), args.Error(1)
-}
-
 func (m *MockS3Backend) DeleteBucketReplication(ctx context.Context, params *s3.DeleteBucketReplicationInput, optFns ...func(*s3.Options)) (*s3.DeleteBucketReplicationOutput, error) {
 	args := m.Called(ctx, params)
 	if args.Get(0) == nil {
@@ -215,14 +211,6 @@ func (m *MockS3Backend) GetBucketWebsite(ctx context.Context, params *s3.GetBuck
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*s3.GetBucketWebsiteOutput), args.Error(1)
-}
-
-func (m *MockS3Backend) PutBucketWebsite(ctx context.Context, params *s3.PutBucketWebsiteInput, optFns ...func(*s3.Options)) (*s3.PutBucketWebsiteOutput, error) {
-	args := m.Called(ctx, params)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*s3.PutBucketWebsiteOutput), args.Error(1)
 }
 
 func (m *MockS3Backend) DeleteBucketWebsite(ctx context.Context, params *s3.DeleteBucketWebsiteInput, optFns ...func(*s3.Options)) (*s3.DeleteBucketWebsiteOutput, error) {
@@ -241,28 +229,12 @@ func (m *MockS3Backend) GetBucketAccelerateConfiguration(ctx context.Context, pa
 	return args.Get(0).(*s3.GetBucketAccelerateConfigurationOutput), args.Error(1)
 }
 
-func (m *MockS3Backend) PutBucketAccelerateConfiguration(ctx context.Context, params *s3.PutBucketAccelerateConfigurationInput, optFns ...func(*s3.Options)) (*s3.PutBucketAccelerateConfigurationOutput, error) {
-	args := m.Called(ctx, params)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*s3.PutBucketAccelerateConfigurationOutput), args.Error(1)
-}
-
 func (m *MockS3Backend) GetBucketRequestPayment(ctx context.Context, params *s3.GetBucketRequestPaymentInput, optFns ...func(*s3.Options)) (*s3.GetBucketRequestPaymentOutput, error) {
 	args := m.Called(ctx, params)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*s3.GetBucketRequestPaymentOutput), args.Error(1)
-}
-
-func (m *MockS3Backend) PutBucketRequestPayment(ctx context.Context, params *s3.PutBucketRequestPaymentInput, optFns ...func(*s3.Options)) (*s3.PutBucketRequestPaymentOutput, error) {
-	args := m.Called(ctx, params)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*s3.PutBucketRequestPaymentOutput), args.Error(1)
 }
 
 // Basic bucket operations
@@ -355,14 +327,6 @@ func (m *MockS3Backend) HeadObject(ctx context.Context, params *s3.HeadObjectInp
 	return args.Get(0).(*s3.HeadObjectOutput), args.Error(1)
 }
 
-func (m *MockS3Backend) CopyObject(ctx context.Context, params *s3.CopyObjectInput, optFns ...func(*s3.Options)) (*s3.CopyObjectOutput, error) {
-	args := m.Called(ctx, params)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*s3.CopyObjectOutput), args.Error(1)
-}
-
 func (m *MockS3Backend) GetObjectAttributes(ctx context.Context, params *s3.GetObjectAttributesInput, optFns ...func(*s3.Options)) (*s3.GetObjectAttributesOutput, error) {
 	args := m.Called(ctx, params)
 	if args.Get(0) == nil {
@@ -412,14 +376,6 @@ func (m *MockS3Backend) AbortMultipartUpload(ctx context.Context, params *s3.Abo
 	return args.Get(0).(*s3.AbortMultipartUploadOutput), args.Error(1)
 }
 
-func (m *MockS3Backend) ListParts(ctx context.Context, params *s3.ListPartsInput, optFns ...func(*s3.Options)) (*s3.ListPartsOutput, error) {
-	args := m.Called(ctx, params)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*s3.ListPartsOutput), args.Error(1)
-}
-
 func (m *MockS3Backend) ListMultipartUploads(ctx context.Context, params *s3.ListMultipartUploadsInput, optFns ...func(*s3.Options)) (*s3.ListMultipartUploadsOutput, error) {
 	args := m.Called(ctx, params)
 	if args.Get(0) == nil {
@@ -428,26 +384,26 @@ func (m *MockS3Backend) ListMultipartUploads(ctx context.Context, params *s3.Lis
 	return args.Get(0).(*s3.ListMultipartUploadsOutput), args.Error(1)
 }
 
-// Object ACL and tagging operations
-//
-//nolint:revive // AWS SDK method name
-func (m *MockS3Backend) GetObjectAcl(ctx context.Context, params *s3.GetObjectAclInput, optFns ...func(*s3.Options)) (*s3.GetObjectAclOutput, error) {
+func (m *MockS3Backend) ListParts(ctx context.Context, params *s3.ListPartsInput, optFns ...func(*s3.Options)) (*s3.ListPartsOutput, error) {
 	args := m.Called(ctx, params)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*s3.GetObjectAclOutput), args.Error(1)
+	return args.Get(0).(*s3.ListPartsOutput), args.Error(1)
 }
 
-//nolint:revive // AWS SDK method name
-func (m *MockS3Backend) PutObjectAcl(ctx context.Context, params *s3.PutObjectAclInput, optFns ...func(*s3.Options)) (*s3.PutObjectAclOutput, error) {
+// Passthrough operations
+func (m *MockS3Backend) GetObjectTorrent(ctx context.Context, params *s3.GetObjectTorrentInput, optFns ...func(*s3.Options)) (*s3.GetObjectTorrentOutput, error) {
 	args := m.Called(ctx, params)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*s3.PutObjectAclOutput), args.Error(1)
+	return args.Get(0).(*s3.GetObjectTorrentOutput), args.Error(1)
 }
 
+// Test helper functions
+
+// Object tagging, retention and legal hold reach the backend (ADR 0007 D4).
 func (m *MockS3Backend) GetObjectTagging(ctx context.Context, params *s3.GetObjectTaggingInput, optFns ...func(*s3.Options)) (*s3.GetObjectTaggingOutput, error) {
 	args := m.Called(ctx, params)
 	if args.Get(0) == nil {
@@ -472,23 +428,6 @@ func (m *MockS3Backend) DeleteObjectTagging(ctx context.Context, params *s3.Dele
 	return args.Get(0).(*s3.DeleteObjectTaggingOutput), args.Error(1)
 }
 
-// Passthrough operations
-func (m *MockS3Backend) GetObjectLegalHold(ctx context.Context, params *s3.GetObjectLegalHoldInput, optFns ...func(*s3.Options)) (*s3.GetObjectLegalHoldOutput, error) {
-	args := m.Called(ctx, params)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*s3.GetObjectLegalHoldOutput), args.Error(1)
-}
-
-func (m *MockS3Backend) PutObjectLegalHold(ctx context.Context, params *s3.PutObjectLegalHoldInput, optFns ...func(*s3.Options)) (*s3.PutObjectLegalHoldOutput, error) {
-	args := m.Called(ctx, params)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*s3.PutObjectLegalHoldOutput), args.Error(1)
-}
-
 func (m *MockS3Backend) GetObjectRetention(ctx context.Context, params *s3.GetObjectRetentionInput, optFns ...func(*s3.Options)) (*s3.GetObjectRetentionOutput, error) {
 	args := m.Called(ctx, params)
 	if args.Get(0) == nil {
@@ -505,20 +444,61 @@ func (m *MockS3Backend) PutObjectRetention(ctx context.Context, params *s3.PutOb
 	return args.Get(0).(*s3.PutObjectRetentionOutput), args.Error(1)
 }
 
-func (m *MockS3Backend) GetObjectTorrent(ctx context.Context, params *s3.GetObjectTorrentInput, optFns ...func(*s3.Options)) (*s3.GetObjectTorrentOutput, error) {
+func (m *MockS3Backend) GetObjectLegalHold(ctx context.Context, params *s3.GetObjectLegalHoldInput, optFns ...func(*s3.Options)) (*s3.GetObjectLegalHoldOutput, error) {
 	args := m.Called(ctx, params)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*s3.GetObjectTorrentOutput), args.Error(1)
+	return args.Get(0).(*s3.GetObjectLegalHoldOutput), args.Error(1)
 }
 
-func (m *MockS3Backend) SelectObjectContent(ctx context.Context, params *s3.SelectObjectContentInput, optFns ...func(*s3.Options)) (*s3.SelectObjectContentOutput, error) {
+func (m *MockS3Backend) PutObjectLegalHold(ctx context.Context, params *s3.PutObjectLegalHoldInput, optFns ...func(*s3.Options)) (*s3.PutObjectLegalHoldOutput, error) {
 	args := m.Called(ctx, params)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*s3.SelectObjectContentOutput), args.Error(1)
+	return args.Get(0).(*s3.PutObjectLegalHoldOutput), args.Error(1)
 }
 
-// Test helper functions
+// ObjServeStored registers the backend reads a whole-object GET and a HEAD make
+// for one stored object, honouring the Range each of them sends: the suffix read
+// that carries the object's end, and the prefix read of the remainder
+// (ADR 0003 D14). A mock that answered the whole object to a "bytes=-40" request
+// would hand the reader the wrong forty bytes, which is precisely the mistake
+// this helper exists to keep out of the tests.
+//
+// template supplies whatever the test wants the answer to carry — metadata, the
+// entity tag, the entity headers — and is copied per call.
+func ObjServeStored(backend *MockS3Backend, stored []byte, template s3.GetObjectOutput) {
+	total := int64(len(stored))
+
+	answer := func(from, to int64, ranged bool) *s3.GetObjectOutput {
+		out := template
+		slice := stored[from:to]
+		out.Body = io.NopCloser(bytes.NewReader(slice))
+		out.ContentLength = aws.Int64(int64(len(slice)))
+		if ranged {
+			out.ContentRange = aws.String(fmt.Sprintf("bytes %d-%d/%d", from, to-1, total))
+		}
+		return &out
+	}
+	onRange := func(spec string, out *s3.GetObjectOutput) {
+		backend.On("GetObject", mock.Anything, mock.MatchedBy(func(in *s3.GetObjectInput) bool {
+			return aws.ToString(in.Range) == spec
+		})).Return(out, nil).Maybe()
+	}
+
+	// The two suffix reads: a whole-object GET asks for one segment plus the
+	// trailer, a HEAD for the trailer alone.
+	for _, want := range []int64{tailFetchLen, trailerFetchLen} {
+		onRange(fmt.Sprintf("bytes=-%d", want), answer(max(total-want, 0), total, true))
+	}
+	// The prefix read, for an object that does not fit the first one.
+	if total > tailFetchLen {
+		last := total - tailFetchLen - 1
+		onRange(fmt.Sprintf("bytes=0-%d", last), answer(0, last+1, true))
+	}
+	backend.On("GetObject", mock.Anything, mock.MatchedBy(func(in *s3.GetObjectInput) bool {
+		return in.Range == nil
+	})).Return(answer(0, total, false), nil).Maybe()
+}

@@ -80,7 +80,7 @@ func TestReplicationHandler_Handle(t *testing.T) {
 			name:           "DELETE bucket replication - success",
 			method:         "DELETE",
 			bucket:         "test-bucket",
-			expectedStatus: http.StatusOK, // Implementation returns 200, not 204
+			expectedStatus: http.StatusNoContent, // as AWS: 204 with an empty body
 			setupMock: func(m *MockS3Backend) {
 				m.On("DeleteBucketReplication", mock.Anything, mock.Anything).Return(&s3.DeleteBucketReplicationOutput{}, nil)
 			},

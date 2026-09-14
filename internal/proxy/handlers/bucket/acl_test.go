@@ -3,36 +3,12 @@ package bucket
 import (
 	"encoding/xml"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/gorilla/mux"
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
-
-	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
 )
-
-func TestHandleBucketACL_GET_NoClient(t *testing.T) {
-	// Test GET ACL without S3 client - should return mock data
-	cfg := &config.Config{} // Empty config for testing
-	handler := NewHandler(nil, logrus.NewEntry(logrus.New()), "s3ep-", cfg)
-
-	req := httptest.NewRequest(http.MethodGet, "/test-bucket?acl", nil)
-	req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
-
-	rr := httptest.NewRecorder()
-	handler.GetACLHandler().Handle(rr, req)
-
-	// Without S3 client, should return mock ACL data
-	assert.Equal(t, http.StatusOK, rr.Code)
-	assert.Contains(t, rr.Header().Get("Content-Type"), "application/xml")
-	assert.Contains(t, rr.Body.String(), "AccessControlPolicy")
-	assert.Contains(t, rr.Body.String(), "mock-owner-id")
-}
 
 func TestCannedACLMapping(t *testing.T) {
 	tests := []struct {

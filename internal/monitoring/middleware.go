@@ -94,30 +94,3 @@ func HTTPMiddleware(next http.Handler) http.Handler {
 		RequestDuration.WithLabelValues(method, endpoint).Observe(duration)
 	})
 }
-
-// S3OperationMetrics records metrics for S3 operations
-func RecordS3Operation(operation, bucket, status string, duration time.Duration) {
-	S3OperationsTotal.WithLabelValues(operation, bucket, status).Inc()
-	S3OperationDuration.WithLabelValues(operation, bucket).Observe(duration.Seconds())
-}
-
-// EncryptionOperationMetrics records metrics for encryption operations
-func RecordEncryptionOperation(operation, providerType, status string, duration time.Duration) {
-	EncryptionOperationsTotal.WithLabelValues(operation, providerType, status).Inc()
-	EncryptionDuration.WithLabelValues(operation, providerType).Observe(duration.Seconds())
-}
-
-// BytesTransferredMetrics records data transfer metrics
-func RecordBytesTransferred(direction, operation string, bytes int64) {
-	BytesTransferred.WithLabelValues(direction, operation).Add(float64(bytes))
-}
-
-// MultipartUploadMetrics records multipart upload metrics
-func RecordMultipartUpload(status string) {
-	MultipartUploadsTotal.WithLabelValues(status).Inc()
-}
-
-// MultipartUploadPartMetrics records multipart upload part metrics
-func RecordMultipartUploadPart(status string) {
-	MultipartUploadPartsTotal.WithLabelValues(status).Inc()
-}

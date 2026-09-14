@@ -4,42 +4,71 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
-	"io"
 
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
 )
 
-// AESProvider implements encryption.KeyEncryptor using AES-CTR for encrypting Data Encryption Keys (DEKs)
-// This handles ONLY DEK encryption/decryption with the master KEK - no data encryption
+const (
+	// KEKSize is the only accepted length of the master key: 32 random bytes.
+	KEKSize = 32
+
+	// wrapSaltSize is the per-wrap salt that separates two wraps of the same DEK.
+	wrapSaltSize = 16
+
+	// The HKDF info strings. Distinct labels keep the published fingerprint and
+	// the wrapping key independent derivations of the same master key.
+	infoFingerprint = "s3ep-kek-fingerprint"
+	infoWrap        = "s3ep-kek-wrap-v1"
+
+	// aadWrap binds the wrapped DEK to its purpose.
+	aadWrap = "s3ep-dek-wrap-v1"
+)
+
+// ErrWrappedDEKAuth is returned when a wrapped DEK fails authentication. It is
+// distinct so a caller can tell a wrong or tampered key from a transport error
+// before it reads a single body byte.
+var ErrWrappedDEKAuth = errors.New("wrapped DEK authentication failed")
+
+// AESProvider wraps Data Encryption Keys with a local AES-256 master key.
+//
+// The master key itself is never used directly: an HKDF pseudorandom key is
+// extracted from it once, and both the published fingerprint and every wrapping
+// key are expanded from that. Publishing a fingerprint therefore says nothing
+// about the master key, and no two wraps share a key.
 type AESProvider struct {
-	cipher cipher.Block
-	kek    []byte // Key Encryption Key
+	prk         []byte
+	fingerprint string
 }
 
-// NewAESKeyEncryptor creates a new AES key encryptor from a provided KEK
+// NewAESKeyEncryptor creates an AES key encryptor from raw master key bytes.
 func NewAESKeyEncryptor(kek []byte) (encryption.KeyEncryptor, error) {
-	if len(kek) != 32 {
-		return nil, fmt.Errorf("AES-256 key must be exactly 32 bytes, got %d", len(kek))
+	if len(kek) != KEKSize {
+		return nil, fmt.Errorf("AES-256 key must be exactly %d bytes, got %d", KEKSize, len(kek))
 	}
 
-	// Create cipher to validate key
-	aesCipher, err := aes.NewCipher(kek)
+	prk, err := hkdf.Extract(sha256.New, kek, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
+		return nil, fmt.Errorf("failed to derive key material from AES key: %w", err)
 	}
 
-	return &AESProvider{
-		cipher: aesCipher,
-		kek:    kek,
-	}, nil
+	fingerprint, err := hkdf.Expand(sha256.New, prk, infoFingerprint, sha256.Size)
+	if err != nil {
+		return nil, fmt.Errorf("failed to derive key fingerprint: %w", err)
+	}
+
+	return &AESProvider{prk: prk, fingerprint: hex.EncodeToString(fingerprint)}, nil
 }
 
-// NewAESProvider creates a new AES key encryption provider implementing encryption.KeyEncryptor
+// NewAESProvider creates an AES key encryptor from the provider configuration.
+// aes_key is base64 of exactly 32 bytes and nothing else; a string that decodes
+// to another length, or does not decode at all, is a configuration error.
 func NewAESProvider(config map[string]interface{}) (encryption.KeyEncryptor, error) {
 	keyInterface, exists := config["aes_key"]
 	if !exists {
@@ -48,110 +77,67 @@ func NewAESProvider(config map[string]interface{}) (encryption.KeyEncryptor, err
 
 	keyStr, ok := keyInterface.(string)
 	if !ok {
-		return nil, fmt.Errorf("key must be a string")
+		return nil, fmt.Errorf("aes_key must be a string")
 	}
 
-	if keyStr == "" {
-		return nil, fmt.Errorf("key cannot be empty")
+	kek, err := base64.StdEncoding.DecodeString(keyStr)
+	if err != nil || len(kek) != KEKSize {
+		return nil, fmt.Errorf("aes_key: must be base64 of exactly %d bytes", KEKSize)
 	}
 
-	var kek []byte
-	var err error
-
-	// Try base64 decoding first, fallback to direct bytes
-	if decoded, decodeErr := base64.StdEncoding.DecodeString(keyStr); decodeErr == nil && len(decoded) == 32 {
-		kek = decoded
-	} else {
-		kek = []byte(keyStr)
-	}
-
-	if len(kek) != 32 {
-		return nil, fmt.Errorf("AES-256 key must be exactly 32 bytes, got %d", len(kek))
-	}
-
-	// Create cipher to validate key
-	aesCipher, err := aes.NewCipher(kek)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
-	}
-
-	return &AESProvider{
-		cipher: aesCipher,
-		kek:    kek,
-	}, nil
+	return NewAESKeyEncryptor(kek)
 }
 
-// NewAESProviderFromBase64 creates a new AES key encryptor from base64-encoded KEK
-func NewAESProviderFromBase64(base64KEK string) (encryption.KeyEncryptor, error) {
-	kek, err := base64.StdEncoding.DecodeString(base64KEK)
+// EncryptDEK wraps a Data Encryption Key: a fresh salt, a wrapping key derived
+// from it, and AES-256-GCM with a random nonce over the DEK.
+func (p *AESProvider) EncryptDEK(_ context.Context, dek []byte) ([]byte, error) {
+	salt := make([]byte, wrapSaltSize)
+	if _, err := rand.Read(salt); err != nil {
+		return nil, fmt.Errorf("failed to generate DEK wrap salt: %w", err)
+	}
+
+	aead, err := p.wrapAEAD(salt)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode base64 KEK: %w", err)
+		return nil, err
 	}
 
-	if len(kek) != 32 {
-		return nil, fmt.Errorf("AES-256 key must be exactly 32 bytes, got %d", len(kek))
-	}
-
-	// Create cipher to validate key
-	aesCipher, err := aes.NewCipher(kek)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
-	}
-
-	return &AESProvider{
-		cipher: aesCipher,
-		kek:    kek,
-	}, nil
+	// #nosec G407 - NewGCMWithRandomNonce has a zero nonce size: it draws a
+	// random nonce itself and prepends it, so the nonce argument must be empty.
+	return aead.Seal(salt, nil, dek, []byte(aadWrap)), nil
 }
 
-// EncryptDEK encrypts a Data Encryption Key with the Key Encryption Key using AES-CTR
-func (p *AESProvider) EncryptDEK(_ context.Context, dek []byte) ([]byte, string, error) {
-	// Generate random IV for DEK encryption
-	iv := make([]byte, aes.BlockSize)
-	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
-		return nil, "", fmt.Errorf("failed to generate IV for DEK: %w", err)
+// DecryptDEK unwraps a Data Encryption Key and fails closed on a tampered wrap.
+func (p *AESProvider) DecryptDEK(_ context.Context, encryptedDEK []byte) ([]byte, error) {
+	if len(encryptedDEK) <= wrapSaltSize {
+		return nil, fmt.Errorf("%w: wrapped DEK too short, got %d bytes", ErrWrappedDEKAuth, len(encryptedDEK))
 	}
 
-	// Create CTR mode cipher with KEK
-	// #nosec G407 - IV is randomly generated, not hardcoded
-	stream := cipher.NewCTR(p.cipher, iv)
-
-	// Encrypt the DEK
-	encryptedDEK := make([]byte, len(dek))
-	stream.XORKeyStream(encryptedDEK, dek)
-
-	// Prepend IV to encrypted DEK
-	result := make([]byte, len(iv)+len(encryptedDEK))
-	copy(result, iv)
-	copy(result[len(iv):], encryptedDEK)
-
-	return result, p.Fingerprint(), nil
-}
-
-// DecryptDEK decrypts a Data Encryption Key using the Key Encryption Key
-func (p *AESProvider) DecryptDEK(_ context.Context, encryptedDEK []byte, keyID string) ([]byte, error) {
-	// Verify key ID matches our fingerprint
-	if keyID != p.Fingerprint() {
-		return nil, fmt.Errorf("key ID mismatch: expected %s, got %s", p.Fingerprint(), keyID)
+	aead, err := p.wrapAEAD(encryptedDEK[:wrapSaltSize])
+	if err != nil {
+		return nil, err
 	}
 
-	if len(encryptedDEK) < aes.BlockSize {
-		return nil, fmt.Errorf("encrypted DEK too short: expected at least %d bytes, got %d", aes.BlockSize, len(encryptedDEK))
+	dek, err := aead.Open(nil, nil, encryptedDEK[wrapSaltSize:], []byte(aadWrap))
+	if err != nil {
+		return nil, ErrWrappedDEKAuth
 	}
-
-	// Extract IV and ciphertext
-	iv := encryptedDEK[:aes.BlockSize]
-	ciphertext := encryptedDEK[aes.BlockSize:]
-
-	// Create CTR mode cipher with KEK
-	// #nosec G407 - IV is extracted from encrypted data, not hardcoded
-	stream := cipher.NewCTR(p.cipher, iv)
-
-	// Decrypt the DEK
-	dek := make([]byte, len(ciphertext))
-	stream.XORKeyStream(dek, ciphertext)
 
 	return dek, nil
+}
+
+// wrapAEAD derives the wrapping key for one salt.
+func (p *AESProvider) wrapAEAD(salt []byte) (cipher.AEAD, error) {
+	wrapKey, err := hkdf.Expand(sha256.New, p.prk, infoWrap+string(salt), KEKSize)
+	if err != nil {
+		return nil, fmt.Errorf("failed to derive DEK wrapping key: %w", err)
+	}
+
+	block, err := aes.NewCipher(wrapKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
+	}
+
+	return cipher.NewGCMWithRandomNonce(block)
 }
 
 // Name returns the short unique name for this KeyEncryptor type
@@ -159,14 +145,7 @@ func (p *AESProvider) Name() string {
 	return "aes"
 }
 
-// Fingerprint returns a SHA-256 fingerprint of the AES KEK
-// This allows identification of the correct KEK provider during decryption
+// Fingerprint identifies the master key without revealing anything about it.
 func (p *AESProvider) Fingerprint() string {
-	hash := sha256.Sum256(p.kek)
-	return hex.EncodeToString(hash[:])
-}
-
-// RotateKEK is not implemented for AES key encryptor - requires external key management
-func (p *AESProvider) RotateKEK(_ context.Context) error {
-	return fmt.Errorf("AES key rotation is not implemented - requires external key management")
+	return p.fingerprint
 }

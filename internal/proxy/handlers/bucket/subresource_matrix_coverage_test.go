@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"
@@ -20,7 +21,7 @@ import (
 // BktbaseOpCalls are the backend calls the base bucket operations make. A
 // sub-resource request that reaches any of them is the routing defect that once
 // made DELETE /bucket?encryption delete the whole bucket (ADR 0007).
-var BktbaseOpCalls = []string{"CreateBucket", "DeleteBucket", "ListObjects", "ListObjectsV2"}
+var BktbaseOpCalls = []string{"CreateBucket", "DeleteBucket", "HeadBucket", "ListObjects", "ListObjectsV2"}
 
 // BkterrorDoc is the S3 <Error> document the proxy renders for a refusal.
 type BkterrorDoc struct {
@@ -51,7 +52,10 @@ func BktnewBackend() *MockS3Backend {
 	m.On("GetBucketCors", mock.Anything, mock.Anything).Return(&s3.GetBucketCorsOutput{}, nil).Maybe()
 	m.On("PutBucketCors", mock.Anything, mock.Anything).Return(&s3.PutBucketCorsOutput{}, nil).Maybe()
 	m.On("DeleteBucketCors", mock.Anything, mock.Anything).Return(&s3.DeleteBucketCorsOutput{}, nil).Maybe()
-	m.On("GetBucketPolicy", mock.Anything, mock.Anything).Return(&s3.GetBucketPolicyOutput{}, nil).Maybe()
+	// A policy document, not an empty output: a bucket without a policy answers
+	// 404 NoSuchBucketPolicy, which is not the real answer this matrix wants.
+	m.On("GetBucketPolicy", mock.Anything, mock.Anything).
+		Return(&s3.GetBucketPolicyOutput{Policy: aws.String(`{"Version":"2012-10-17","Statement":[]}`)}, nil).Maybe()
 	m.On("PutBucketPolicy", mock.Anything, mock.Anything).Return(&s3.PutBucketPolicyOutput{}, nil).Maybe()
 	m.On("DeleteBucketPolicy", mock.Anything, mock.Anything).Return(&s3.DeleteBucketPolicyOutput{}, nil).Maybe()
 	m.On("GetBucketLocation", mock.Anything, mock.Anything).Return(&s3.GetBucketLocationOutput{}, nil).Maybe()
@@ -87,6 +91,7 @@ func BktnewBackend() *MockS3Backend {
 	// panicking. AssertNotCalled is what has to report it.
 	m.On("CreateBucket", mock.Anything, mock.Anything).Return(&s3.CreateBucketOutput{}, nil).Maybe()
 	m.On("DeleteBucket", mock.Anything, mock.Anything).Return(&s3.DeleteBucketOutput{}, nil).Maybe()
+	m.On("HeadBucket", mock.Anything, mock.Anything).Return(&s3.HeadBucketOutput{}, nil).Maybe()
 	m.On("ListObjects", mock.Anything, mock.Anything).Return(&s3.ListObjectsOutput{}, nil).Maybe()
 	m.On("ListObjectsV2", mock.Anything, mock.Anything).Return(&s3.ListObjectsV2Output{}, nil).Maybe()
 	return m
@@ -102,12 +107,16 @@ type BktforeignHits struct {
 
 // BktnewRouter mirrors the bucket-related route table of internal/proxy/router.go.
 // The bucket package cannot import internal/proxy (that package imports this
-// one), so the registrations are repeated here. They must stay in step with
-// router.go lines 48-90; a drift shows up as a matrix cell whose status changes.
+// one), so the registrations are repeated here.
+//
+// Nothing in this file can notice a drift - it reads its own table and no other.
+// The check that can is TestRtPxBucketSubResourceRouteSetIsTheOneTheMatrixMirrors
+// in internal/proxy: it walks the real router and compares the set against the
+// one below. A route added there and not here fails it.
 func BktnewRouter(backend *MockS3Backend) (*mux.Router, *BktforeignHits) {
 	logger := logrus.NewEntry(logrus.New())
 	logger.Logger.SetLevel(logrus.PanicLevel)
-	h := NewHandler(backend, logger, "s3ep-", &config.Config{})
+	h := NewHandler(backend, nil, logger, &config.Config{})
 
 	hits := &BktforeignHits{}
 	r := mux.NewRouter()
@@ -149,9 +158,10 @@ func BktnewRouter(backend *MockS3Backend) (*mux.Router, *BktforeignHits) {
 // Two things are asserted for every one of the 39 cells:
 //   - the status is exactly what the code produces today - a real answer for a
 //     routed method, an explicit S3 refusal for an unrouted one;
-//   - none of CreateBucket, DeleteBucket, ListObjects or ListObjectsV2 was
-//     called. That is the ADR 0007 guard: a sub-resource request must
-//     never fall through to the base bucket operation of its HTTP method.
+//   - none of CreateBucket, DeleteBucket, HeadBucket, ListObjects or
+//     ListObjectsV2 was called. That is the ADR 0007 guard: a sub-resource
+//     request must never fall through to the base bucket operation of its HTTP
+//     method.
 func TestBktSubResourceMethodMatrixNeverReachesBaseBucketOperation(t *testing.T) {
 	const (
 		bktRealAnswer = "real answer"
@@ -210,22 +220,22 @@ func TestBktSubResourceMethodMatrixNeverReachesBaseBucketOperation(t *testing.T)
 		{"tagging", []cell{
 			{http.MethodGet, http.StatusOK, "", bktRealAnswer, ""},
 			{http.MethodPut, http.StatusOK, "", bktRealAnswer, "empty body is forwarded with no TagSet"},
-			{http.MethodDelete, http.StatusOK, "", bktRealAnswer, "AWS answers 204 with an empty body"},
+			{http.MethodDelete, http.StatusNoContent, "", bktRealAnswer, "as AWS: 204 with an empty body"},
 		}},
 		{"lifecycle", []cell{
 			{http.MethodGet, http.StatusOK, "", bktRealAnswer, ""},
 			{http.MethodPut, http.StatusOK, "", bktRealAnswer, "empty body is forwarded with no LifecycleConfiguration"},
-			{http.MethodDelete, http.StatusOK, "", bktRealAnswer, "AWS answers 204 with an empty body"},
+			{http.MethodDelete, http.StatusNoContent, "", bktRealAnswer, "as AWS: 204 with an empty body"},
 		}},
 		{"replication", []cell{
 			{http.MethodGet, http.StatusOK, "", bktRealAnswer, ""},
 			{http.MethodPut, http.StatusNotImplemented, "NotImplemented", bktRefusal, ""},
-			{http.MethodDelete, http.StatusOK, "", bktRealAnswer, "AWS answers 204 with an empty body"},
+			{http.MethodDelete, http.StatusNoContent, "", bktRealAnswer, "as AWS: 204 with an empty body"},
 		}},
 		{"website", []cell{
 			{http.MethodGet, http.StatusOK, "", bktRealAnswer, ""},
 			{http.MethodPut, http.StatusNotImplemented, "NotImplemented", bktRefusal, ""},
-			{http.MethodDelete, http.StatusOK, "", bktRealAnswer, "AWS answers 204 with an empty body"},
+			{http.MethodDelete, http.StatusNoContent, "", bktRealAnswer, "as AWS: 204 with an empty body"},
 		}},
 		{"accelerate", []cell{
 			{http.MethodGet, http.StatusOK, "", bktRealAnswer, ""},
@@ -489,7 +499,8 @@ func TestBktBaseRouteMethodsWithoutQuery(t *testing.T) {
 		{http.MethodGet, "/test-bucket/", http.StatusOK, "ListObjects"},
 		{http.MethodPut, "/test-bucket", http.StatusOK, "CreateBucket"},
 		{http.MethodDelete, "/test-bucket", http.StatusNoContent, "DeleteBucket"},
-		{http.MethodHead, "/test-bucket", http.StatusOK, "ListObjectsV2"},
+		// HEAD is the real HeadBucket, not a listing with MaxKeys 0 (ADR 0010).
+		{http.MethodHead, "/test-bucket", http.StatusOK, "HeadBucket"},
 	}
 
 	for _, tc := range cases {
@@ -516,7 +527,7 @@ func TestBktHandleRejectsMethodsTheBaseRouteDoesNotServe(t *testing.T) {
 			backend := BktnewBackend()
 			logger := logrus.NewEntry(logrus.New())
 			logger.Logger.SetLevel(logrus.PanicLevel)
-			h := NewHandler(backend, logger, "s3ep-", &config.Config{})
+			h := NewHandler(backend, nil, logger, &config.Config{})
 
 			req := httptest.NewRequest(method, "/test-bucket", nil)
 			req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
@@ -530,6 +541,37 @@ func TestBktHandleRejectsMethodsTheBaseRouteDoesNotServe(t *testing.T) {
 			for _, call := range BktbaseOpCalls {
 				backend.AssertNotCalled(t, call, mock.Anything, mock.Anything)
 			}
+		})
+	}
+}
+
+// Every sub-resource document the proxy renders carries the S3 namespace
+// (ADR 0008 D3). It was asserted on five of the twelve, so the other seven could
+// have lost it without a failure - and a namespace-aware parser matching on the
+// qualified name sees nothing at all when it is missing.
+func TestBktEverySubResourceDocumentCarriesTheS3Namespace(t *testing.T) {
+	const s3ns = `xmlns="http://s3.amazonaws.com/doc/2006-03-01/"`
+
+	// The GET of every sub-resource that answers with a document of the proxy's
+	// own. The backend answers each with an empty success, which is what a
+	// bucket with no such configuration looks like.
+	documents := []string{
+		"acl", "cors", "lifecycle", "location", "logging", "notification",
+		"replication", "requestPayment", "tagging", "versioning", "website", "accelerate",
+	}
+
+	for _, name := range documents {
+		t.Run(name, func(t *testing.T) {
+			backend := BktnewBackend()
+			router, _ := BktnewRouter(backend)
+
+			req := httptest.NewRequest(http.MethodGet, "/bkt?"+name+"=", nil)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+			assert.Contains(t, w.Body.String(), s3ns,
+				"the %s document must carry the S3 namespace", name)
 		})
 	}
 }

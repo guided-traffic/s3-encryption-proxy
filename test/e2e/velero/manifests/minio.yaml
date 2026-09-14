@@ -40,7 +40,7 @@ spec:
     spec:
       containers:
         - name: minio
-          image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+          image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
           args: ["server", "/data", "--address", ":9000", "--console-address", ":9001", "--certs-dir", "/certs"]
           envFrom:
             - secretRef:
@@ -121,7 +121,7 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: mc
-          image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+          image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
           command: ["/bin/sh", "-c"]
           args:
             - |

@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/health"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -19,21 +20,24 @@ import (
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/gorilla/mux"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/utils"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// createTestConfigNone creates a test configuration with none provider
-func createTestConfigNone() *config.Config {
+// createTestConfigExit creates a test configuration on the exit provider, which
+// needs no license.
+func createTestConfigExit() *config.Config {
 	return &config.Config{
-		BindAddress:    "localhost:8080",
-		LogLevel:       "info",
-		TargetEndpoint: "https://s3.amazonaws.com",
-		Region:         "us-east-1",
-		AccessKeyID:    "test-access-key",
-		SecretKey:      "test-secret-key",
+		BindAddress: "localhost:8080",
+		LogLevel:    "info",
+		S3Backends: []config.S3BackendConfig{{
+			TargetEndpoint: "https://s3.amazonaws.com",
+			Region:         "us-east-1",
+			AccessKeyID:    "test-access-key",
+			SecretKey:      "test-secret-key",
+		}},
 		S3Clients: []config.S3ClientCredentials{
 			{
 				Type:        "static",
@@ -46,12 +50,12 @@ func createTestConfigNone() *config.Config {
 			Enabled: false,
 		},
 		Encryption: config.EncryptionConfig{
-			EncryptionMethodAlias: "test-none",
+			EncryptionMethodAlias: "test-exit",
 			Providers: []config.EncryptionProvider{
 				{
-					Alias:       "test-none",
-					Type:        "none",
-					Description: "Test none provider",
+					Alias:       "test-exit",
+					Type:        "exit",
+					Description: "Test exit provider",
 					Config: map[string]interface{}{
 						"metadata_key_prefix": "s3ep-",
 					},
@@ -61,15 +65,15 @@ func createTestConfigNone() *config.Config {
 	}
 }
 
-func TestServer_NewServer_WithNoneProvider(t *testing.T) {
+func TestServer_NewServer_WithExitProvider(t *testing.T) {
 	// Set log level to reduce noise during tests
 	logrus.SetLevel(logrus.ErrorLevel)
 
-	cfg := createTestConfigNone()
+	cfg := createTestConfigExit()
 
 	// This will fail because we don't have real S3 credentials
 	// But we can test that the server structure is created correctly
-	server, err := NewServer(cfg)
+	server, err := NewServer(cfg, health.BuildInfo{})
 	if err != nil {
 		// Expected to fail due to invalid S3 credentials in test
 		// Check that it's the expected error type
@@ -87,8 +91,8 @@ func TestServer_HealthEndpoint(t *testing.T) {
 	logrus.SetLevel(logrus.ErrorLevel)
 
 	// Create a properly initialized test server
-	config := createTestConfigNone()
-	server, err := NewServer(config)
+	config := createTestConfigExit()
+	server, err := NewServer(config, health.BuildInfo{})
 	require.NoError(t, err)
 
 	// Create test request
@@ -260,7 +264,7 @@ func TestServer_HTTPStatusFromAWSError(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			utils.HandleS3Error(w, server.logger, tt.err, "Test error", "test-bucket", "test-key")
+			response.NewErrorWriter(server.logger).WriteS3Error(w, tt.err, "test-bucket", "test-key")
 
 			body := w.Body.String()
 			assert.Equal(t, tt.expectedStatus, w.Code)
@@ -350,7 +354,9 @@ func TestServer_RoutingSetup(t *testing.T) {
 			if tt.expectedMatch {
 				assert.True(t, matches, "Route should match")
 			} else {
-				assert.False(t, matches, "Route should not match")
+				// A method no route declares reaches the refusal handler rather
+				// than nothing at all, and mux reports that in MatchErr.
+				assert.ErrorIs(t, match.MatchErr, mux.ErrMethodMismatch, "no route may carry this method")
 			}
 		})
 	}
@@ -363,7 +369,7 @@ func TestServer_MiddlewareApplication(t *testing.T) {
 	// Create a test server
 	server := &Server{
 		logger: logrus.WithField("component", "test-proxy-server"),
-		config: createTestConfigNone(), // Add configuration to avoid nil pointer
+		config: createTestConfigExit(), // Add configuration to avoid nil pointer
 	}
 
 	// Create a simple handler for testing
@@ -395,7 +401,7 @@ func TestServer_CORSOptionsRequest(t *testing.T) {
 	// Create a test server
 	server := &Server{
 		logger: logrus.WithField("component", "test-proxy-server"),
-		config: createTestConfigNone(), // Add configuration to avoid nil pointer
+		config: createTestConfigExit(), // Add configuration to avoid nil pointer
 	}
 
 	// Create a handler that should not be called for OPTIONS
@@ -416,70 +422,14 @@ func TestServer_CORSOptionsRequest(t *testing.T) {
 	assert.Equal(t, "*", resp.Header.Get("Access-Control-Allow-Origin"))
 }
 
-func TestGetQueryParam(t *testing.T) {
-	tests := []struct {
-		name     string
-		params   map[string][]string
-		key      string
-		expected string
-	}{
-		{
-			name: "Existing parameter",
-			params: map[string][]string{
-				"prefix":   {"test-prefix"},
-				"max-keys": {"100"},
-			},
-			key:      "prefix",
-			expected: "test-prefix",
-		},
-		{
-			name: "Non-existing parameter",
-			params: map[string][]string{
-				"prefix": {"test-prefix"},
-			},
-			key:      "delimiter",
-			expected: "",
-		},
-		{
-			name: "Empty parameter value",
-			params: map[string][]string{
-				"prefix": {""},
-			},
-			key:      "prefix",
-			expected: "",
-		},
-		{
-			name: "Multiple values (returns first)",
-			params: map[string][]string{
-				"prefix": {"first", "second"},
-			},
-			key:      "prefix",
-			expected: "first",
-		},
-		{
-			name:     "Empty params map",
-			params:   map[string][]string{},
-			key:      "prefix",
-			expected: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := utils.GetQueryParam(tt.params, tt.key)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-// TestServer_HandleS3Error_KEK_MISSING tests that KEK_MISSING errors return 422
+// TestServer_WriteS3Error_KEK_MISSING tests that KEK_MISSING errors return 422
 // and that backend errors keep the status the backend answered with.
-func TestServer_HandleS3Error_KEK_MISSING(t *testing.T) {
+func TestServer_WriteS3Error_KEK_MISSING(t *testing.T) {
 	// Set log level to reduce noise during tests
 	logrus.SetLevel(logrus.ErrorLevel)
 
-	cfg := createTestConfigNone()
-	server, err := NewServer(cfg)
+	cfg := createTestConfigExit()
+	server, err := NewServer(cfg, health.BuildInfo{})
 	require.NoError(t, err)
 	require.NotNil(t, server)
 
@@ -518,7 +468,7 @@ func TestServer_HandleS3Error_KEK_MISSING(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			utils.HandleS3Error(w, server.logger, tt.err, "Test error", "test-bucket", "test-key")
+			response.NewErrorWriter(server.logger).WriteS3Error(w, tt.err, "test-bucket", "test-key")
 			assert.Equal(t, tt.expectedStatus, w.Code, "Expected status %d for error: %v", tt.expectedStatus, tt.err)
 		})
 	}
@@ -529,8 +479,8 @@ func TestServer_handleS3Error_KEK_MISSING(t *testing.T) {
 	// Set log level to reduce noise during tests
 	logrus.SetLevel(logrus.ErrorLevel)
 
-	cfg := createTestConfigNone()
-	server, err := NewServer(cfg)
+	cfg := createTestConfigExit()
+	server, err := NewServer(cfg, health.BuildInfo{})
 	require.NoError(t, err)
 	require.NotNil(t, server)
 
@@ -569,8 +519,7 @@ func TestServer_handleS3Error_KEK_MISSING(t *testing.T) {
 			// Create a ResponseRecorder to record the response
 			w := httptest.NewRecorder()
 
-			// Call utils.HandleS3Error
-			utils.HandleS3Error(w, server.logger, tt.err, "Failed to get object", "test-bucket", "test-key")
+			response.NewErrorWriter(server.logger).WriteS3Error(w, tt.err, "test-bucket", "test-key")
 
 			// Check status code
 			assert.Equal(t, tt.expectedStatus, w.Code, "Expected status %d for error: %v", tt.expectedStatus, tt.err)
@@ -641,7 +590,7 @@ func TestServer_UploadPartCopyIsNotShadowedByUploadPart(t *testing.T) {
 func TestServer_AuthErrorDoesNotReflectAttackerText(t *testing.T) {
 	logrus.SetLevel(logrus.ErrorLevel)
 
-	server, err := NewServer(createTestConfigNone())
+	server, err := NewServer(createTestConfigExit(), health.BuildInfo{})
 	require.NoError(t, err)
 
 	// No "/" in the key: the credential scope is split on it.

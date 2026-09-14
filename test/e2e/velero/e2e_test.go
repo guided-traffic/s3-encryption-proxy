@@ -15,7 +15,7 @@ package velero
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"strings"
@@ -33,10 +33,6 @@ const (
 	// Data-mover scenarios add a kopia upload and a snapshot round trip.
 	dataMoverTimeout = 15 * time.Minute
 )
-
-func jsonUnmarshal(raw string, out interface{}) error {
-	return json.Unmarshal([]byte(raw), out)
-}
 
 // TestMain runs a preflight check so a missing cluster fails once with a clear
 // message instead of once per scenario with an opaque one.
@@ -97,6 +93,23 @@ func TestPreflight(t *testing.T) {
 			"-o", "jsonpath={.spec.template.spec.containers[0].livenessProbe.httpGet.scheme}")
 		require.Equal(t, "HTTPS", strings.TrimSpace(out),
 			"the proxy deployment is not probing over HTTPS, so it is not serving TLS")
+	})
+
+	t.Run("kopia_repository_password_is_not_the_default", func(t *testing.T) {
+		// Velero writes this secret itself, with a password published in its own
+		// source, whenever it is missing. Under that default kopia's AES-GCM and
+		// its content HMACs are forgeable by anyone who can read the bucket, so
+		// the second layer the README promises is decoration. e2e-up.sh generates
+		// one; this is what proves the suite runs the configuration the README
+		// tells operators to use rather than the one nobody should use.
+		out := kubectl(t, ctx, "-n", e.get(t, "VELERO_NAMESPACE"), "get", "secret",
+			"velero-repo-credentials", "-o", "jsonpath={.data.repository-password}")
+		encoded := strings.TrimSpace(out)
+		require.NotEmpty(t, encoded, "velero-repo-credentials carries no repository-password")
+		decoded, err := base64.StdEncoding.DecodeString(encoded)
+		require.NoError(t, err, "repository-password is not base64")
+		require.NotEqual(t, "static-passw0rd", string(decoded),
+			"the kopia repository was created with Velero's published default password")
 	})
 
 	t.Run("velero_uses_the_proxy", func(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/sirupsen/logrus"
 )
 
@@ -46,7 +47,8 @@ func (h *TaggingHandler) handleGetBucketTagging(w http.ResponseWriter, r *http.R
 	h.Logger.WithField("bucket", bucket).Debug("Getting bucket tags")
 
 	input := &s3.GetBucketTaggingInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 	}
 
 	output, err := h.S3Backend.GetBucketTagging(r.Context(), input)
@@ -55,7 +57,10 @@ func (h *TaggingHandler) handleGetBucketTagging(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	h.XMLWriter.WriteXML(w, output)
+	h.XMLWriter.WriteS3Document(w, taggingDocument{
+		XMLNS:  s3Namespace,
+		TagSet: tagSetDocument{Tags: newTagDocuments(output.TagSet)},
+	})
 }
 
 // handlePutBucketTagging sets bucket tags
@@ -63,14 +68,14 @@ func (h *TaggingHandler) handlePutBucketTagging(w http.ResponseWriter, r *http.R
 	h.Logger.WithField("bucket", bucket).Debug("Setting bucket tags")
 
 	// Read the request body
-	body, err := h.RequestParser.ReadBody(r)
-	if err != nil {
-		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
+	body, ok := h.readDocument(w, r, bucket)
+	if !ok {
 		return
 	}
 
 	input := &s3.PutBucketTaggingInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 	}
 
 	// Parse tagging configuration from body
@@ -82,13 +87,12 @@ func (h *TaggingHandler) handlePutBucketTagging(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	output, err := h.S3Backend.PutBucketTagging(r.Context(), input)
-	if err != nil {
+	if _, err := h.S3Backend.PutBucketTagging(r.Context(), input); err != nil {
 		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
 
-	h.XMLWriter.WriteXML(w, output)
+	w.WriteHeader(http.StatusOK)
 }
 
 // handleDeleteBucketTagging deletes bucket tags
@@ -96,14 +100,14 @@ func (h *TaggingHandler) handleDeleteBucketTagging(w http.ResponseWriter, r *htt
 	h.Logger.WithField("bucket", bucket).Debug("Deleting bucket tags")
 
 	input := &s3.DeleteBucketTaggingInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 	}
 
-	output, err := h.S3Backend.DeleteBucketTagging(r.Context(), input)
-	if err != nil {
+	if _, err := h.S3Backend.DeleteBucketTagging(r.Context(), input); err != nil {
 		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
 
-	h.XMLWriter.WriteXML(w, output)
+	w.WriteHeader(http.StatusNoContent)
 }

@@ -9,17 +9,32 @@ Two rules, at different stages. The startup validation of
 change: an empty or non-lowercase prefix is refused at startup instead of being accepted
 and silently mis-handled. The immediate repair named below — a case-insensitive comparison on
 every write path — is **implemented**: the comparison no longer depends on the spelling a
-client chooses, and the none-provider write path, which had no comparison at all, now makes
-one. Before that, a client key differing only in case survived, reached the backend and
-collided with the proxy's own key there; four of ten uploads against a running proxy left
-the object permanently undecryptable. The refusal of such keys with `InvalidArgument` is
-**decided and specified, not implemented — it lands with the next major release, 5.0.0**.
-Until it ships the keys are dropped silently, uniformly, on every path. The `Decision`
-section below is written in the present tense for both rules.
+client chooses, and the pass-through write path — `exit` today (ADR 0025), then still named
+`none` — had no comparison at all and now makes one. Before that, a client key differing only
+in case survived, reached the backend and collided with the proxy's own key there; four of ten
+uploads against a running proxy left the object permanently undecryptable.
 
-**Amended 2026-09-09:** D2 gains a shape rule — at least four characters, starting with a
-letter or a digit, ending in `-` — that lands with 5.0.0 and closes the short-prefix risk
-recorded below.
+**D6 is implemented on the 5.0.0 branch, 2026-09-11.** A client key inside the namespace is
+answered `400 InvalidArgument` naming the key, on the single-request `PUT`, the proxy's own
+multipart producer and `CreateMultipartUpload`, under every provider — the exit provider
+included, where such a key would otherwise let a client forge the format markers the read
+path looks for. The refusal is taken before any backend request, so a refused upload opens no
+multipart upload and stores no object. All three paths call **one** exported collector rather
+than a check each of them could forget, which is how the case-sensitivity hole survived on one
+path once already. The silent drop the three paths used to do is gone.
+
+**Amended 2026-09-09, implemented 2026-09-11:** D2's shape rule — at least four characters,
+starting with a letter or a digit, ending in `-` — is what startup validates, and the refusal
+states the three rules rather than printing the pattern alone. `s3-`, `-abc-`, `s3ep` and an
+empty prefix are all refused; no shipped value is affected.
+
+**Closed 2026-09-10: the namespace is exclusive on the read side.** The read path used to
+accept the *unprefixed* keys `encrypted-dek`, `dek-algorithm` and `kek-fingerprint` behind the
+prefixed ones, as backward compatibility for a format that is no longer readable anyway
+(ADR 0017). Those names lay outside the prefix, so the filter of D6 and D7 did not touch them
+and a client could set them through `x-amz-meta-*`. The fallback is gone: every accessor reads
+the prefixed key and nothing else, so D1's exclusivity claim is now true rather than intended.
+ADR 0001 records the same closure against its D5.
 
 ## Context
 
@@ -87,7 +102,8 @@ upon. The prefix was documented as a namespace and enforced as nothing.
   multipart path.
 - **D7.** Every key inside the namespace is removed from every client-visible response —
   `GET`, `HEAD` and ranged `GET`. The namespace is invisible from outside the proxy, and the
-  wrapped data key never reaches a client.
+  wrapped data key of an object written under the configured prefix never reaches a client; a
+  prefix rename is the exception, in Residual risks.
 - **D8.** Which keys exist inside the namespace is part of the stored object format, not
   part of this decision. The key set changes when the format changes (ADR 0003).
 
@@ -113,9 +129,10 @@ upon. The prefix was documented as a namespace and enforced as nothing.
 - **The rule constrains shape, length and separator** since 2026-09-09, and nothing else:
   no maximum length, no ban on repeated dashes. A deployment whose prefix is shorter than
   four characters or lacks the trailing dash stops starting after the upgrade to 5.0.0. No
-  shipped value is affected: all four end in `-` and are five characters or longer. An
-  operator with such a value renames it, which for a bucket that already holds objects is
-  the stored-data migration of the previous point.
+  shipped value is affected: the chart's value and the four commented example configurations
+  all end in `-` and are five characters or longer. An operator with such a value renames it,
+  which for a bucket that already holds objects is the stored-data migration of the previous
+  point.
 - **Three write paths that behave differently collapse onto one rule.** That removes a class
   of bug where a defect fixed on the single `PUT` path stays open on a multipart path — the
   case-sensitivity hole is exactly that bug — at the cost of one shared check every write
@@ -155,20 +172,25 @@ upon. The prefix was documented as a namespace and enforced as nothing.
   startup validation and then fails at the backend with an opaque S3 error, at request time
   rather than at start time. Accepted; the failure is loud, just late and badly located.
 - **Changing a valid prefix to another valid prefix is undetectable at startup**, and under
-  the segment chain it is no longer a silent pass-through: an object whose metadata carries
-  no key under the configured prefix is refused with `InvalidObjectState` (ADR 0003 D10).
-  Settled there; this record only points at it. The startup guard still cannot tell a
-  renamed prefix from a fresh deployment, so the rename stays a documented migration.
-- **A prefix set in the wrong place in a deployment's values is not validated at all.** At
-  least one shipped deployment template carries `metadata_key_prefix` inside a provider's
-  own configuration block, where it is absorbed as free-form provider configuration and no
-  validation sees it. The value in question happens to be valid, so nothing is broken today.
-  Correcting the placement is a change to that template, not to this decision; until it
-  lands, D2 does not cover a prefix set in the wrong place.
-- **A second, unreachable validation routine with the opposite rule still exists**, one that
-  explicitly treats an empty prefix as valid. It has no caller, so it changes no behaviour,
-  but it now contradicts the live rule and is deleted with the rest of the dead configuration
-  code.
+  the segment chain it is no longer a silent pass-through under an encrypting provider: an
+  object whose metadata carries no key under the configured prefix is refused with
+  `InvalidObjectState` (ADR 0003 D10). Under the exit provider it still is one — that
+  provider serves an object it does not recognise verbatim (ADR 0025 D5), so a renamed prefix
+  there hands the client the ciphertext behind a `200 OK`, together with the `x-amz-meta-*`
+  keys the old prefix carries — the wrapped data key among them, because the response filter
+  tests the configured prefix and those keys no longer match it. The refusal and the
+  pass-through are settled in those records; that a rename turns the second into the leak
+  above is not, and the startup guard still cannot tell a renamed prefix from a fresh
+  deployment, so the rename stays a documented migration.
+- **Closed 2026-09-12: no shipped template sets the prefix in the wrong place.** The chart's
+  values set `metadata_key_prefix` under `encryption`, where the startup validation sees it, and
+  the four example configurations show it in the same place, commented out. The hole it exposed
+  stays open by construction: a provider's own configuration block is free-form, so a prefix
+  written inside one is still absorbed and still unvalidated. D2 covers where the key belongs,
+  not every place it could be typed.
+- **Closed 2026-09-12: the second, unreachable validation routine is gone.** One routine
+  validates the prefix and it is the one D2 describes, so nothing contradicts the live rule any
+  more.
 - **Not verified: whether any real S3 client legitimately uses metadata keys beginning with
   `s3ep-`.** No survey was done. The refusal in D6 assumes the collision space is empty in
   practice; if it is not, an affected client sees a hard `400` rather than a degradation.

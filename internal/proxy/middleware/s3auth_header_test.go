@@ -81,8 +81,8 @@ func TestAuthenticateRequest_SDKSignedHeaders(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			r := signWithSDK(t, tc.method, tc.target, nil, tc.payload)
-			require.NoError(t, service.AuthenticateRequest(r),
-				"a request signed by the AWS SDK signer must validate")
+			_, err := service.AuthenticateRequest(r)
+			require.NoError(t, err, "a request signed by the AWS SDK signer must validate")
 		})
 	}
 }
@@ -93,34 +93,34 @@ func TestAuthenticateRequest_HeaderTampering(t *testing.T) {
 	t.Run("changed_path", func(t *testing.T) {
 		r := signWithSDK(t, http.MethodGet, "/velero/a", nil, UnsignedPayload)
 		r.URL.Path = "/velero/b"
-		require.Error(t, service.AuthenticateRequest(r))
+		requireAuthErr(t, service, r)
 	})
 
 	t.Run("changed_query", func(t *testing.T) {
 		r := signWithSDK(t, http.MethodGet, "/velero?list-type=2", nil, UnsignedPayload)
 		r.URL.RawQuery = "list-type=2&prefix=secret"
-		require.Error(t, service.AuthenticateRequest(r))
+		requireAuthErr(t, service, r)
 	})
 
 	t.Run("changed_host", func(t *testing.T) {
 		r := signWithSDK(t, http.MethodGet, "/velero/a", nil, UnsignedPayload)
 		r.Host = "attacker.example.com"
 		r.Header.Set("Host", "attacker.example.com")
-		require.Error(t, service.AuthenticateRequest(r))
+		requireAuthErr(t, service, r)
 	})
 
 	t.Run("changed_payload_hash", func(t *testing.T) {
 		r := signWithSDK(t, http.MethodPut, "/velero/a", nil, UnsignedPayload)
 		r.Header.Set("X-Amz-Content-Sha256", "STREAMING-UNSIGNED-PAYLOAD-TRAILER")
-		require.Error(t, service.AuthenticateRequest(r),
-			"the payload hash is part of the canonical request")
+		_, err := service.AuthenticateRequest(r)
+		require.Error(t, err, "the payload hash is part of the canonical request")
 	})
 
 	t.Run("unknown_access_key", func(t *testing.T) {
 		r := signWithSDK(t, http.MethodGet, "/velero/a", nil, UnsignedPayload)
 		auth := r.Header.Get(AuthorizationHeader)
 		r.Header.Set(AuthorizationHeader, strings.Replace(auth, testAccessKey, "nobody-here", 1))
-		err := service.AuthenticateRequest(r)
+		_, err := service.AuthenticateRequest(r)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "access key not found")
 	})
@@ -145,7 +145,7 @@ func TestAuthenticateRequest_MalformedHeaders(t *testing.T) {
 			if header != "" {
 				r.Header.Set(AuthorizationHeader, header)
 			}
-			require.Error(t, service.AuthenticateRequest(r))
+			requireAuthErr(t, service, r)
 		})
 	}
 
@@ -153,7 +153,7 @@ func TestAuthenticateRequest_MalformedHeaders(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "/velero/a", nil)
 		r.Host = testHost
 		r.Header.Set(AuthorizationHeader, strings.Repeat("A", MaxAuthHeaderSize+1))
-		err := service.AuthenticateRequest(r)
+		_, err := service.AuthenticateRequest(r)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "too large")
 	})
@@ -170,7 +170,16 @@ func TestAuthenticateRequest_ClockSkew(t *testing.T) {
 	stale := time.Now().UTC().Add(-2 * time.Hour).Format(ISO8601BasicFormat)
 	r.Header.Set(XAmzDateHeader, stale)
 
-	err := service.AuthenticateRequest(r)
+	_, err := service.AuthenticateRequest(r)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "timestamp validation failed")
+}
+
+// requireAuthErr asserts that the request does not authenticate. It exists
+// because AuthenticateRequest returns the access key id alongside the error, so
+// the assertion no longer fits in a single require call.
+func requireAuthErr(t *testing.T, svc *S3AuthenticationService, r *http.Request, msgAndArgs ...interface{}) {
+	t.Helper()
+	_, err := svc.AuthenticateRequest(r)
+	require.Error(t, err, msgAndArgs...)
 }

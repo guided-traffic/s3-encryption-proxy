@@ -161,7 +161,6 @@ run_performance_tests() {
 
     # Set environment variables for tests
     export CGO_ENABLED=0
-    export SKIP_PERFORMANCE_CHECKS=true  # Skip strict performance validation
     export GOFLAGS="-a"                  # Force rebuilding of all packages
     # Note: QUICK_MODE is not exported to ensure tests always run in full mode
 
@@ -179,6 +178,12 @@ run_performance_tests() {
         log_error "Failed to rebuild project"
         exit 1
     }
+
+    # Named rather than left to the test's default, which is relative to the
+    # package directory. Removed first so a run that produces no summary embeds
+    # nothing instead of the previous run's numbers.
+    export S3EP_PERF_SUMMARY="${RESULTS_DIR}/performance-summary.md"
+    rm -f "${S3EP_PERF_SUMMARY}" "${RESULTS_DIR}/performance-totals.env"
 
     # Run the specific performance tests with verbose output and extended timeout for large files
     # Use -count=1 to disable test result caching and ensure fresh results every time
@@ -218,73 +223,30 @@ generate_markdown_report() {
 
 ## Executive Summary
 
-This report shows the performance impact of the S3 Encryption Proxy compared to direct MinIO access. The tests measure upload and download throughput for various file sizes and calculate the efficiency percentage.
+This report compares the S3 Encryption Proxy against direct MinIO access, on the same
+machine and in the same run. Both legs move the same bytes with the same client.
 
 ### Key Metrics
 
-- **Efficiency Percentage:** Indicates how much of the original (unencrypted) performance is retained when using the encryption proxy
-- **Overhead Percentage:** Shows the additional time required for encryption/decryption (100% - Efficiency%)
-- **Throughput:** Measured in MB/s for both upload and download operations
+- **Ratio:** how much of the direct leg's throughput the proxy leg retains. It is a proxy path against a direct path, not the cost of encryption (ADR 0020 D16)
+- **Proxy adds:** the milliseconds the proxy leg costs per MiB. No baseline in the denominator, so it is the only figure on which the upload and the download leg may be compared with each other
+- **Throughput:** MiB/s, total bytes over total time for the overall table, one sample per size below it
 
 ---
 
 EOF
 
-    # Parse and extract performance comparison results
-    if echo "$test_output" | grep -q "S3 Encryption Proxy vs Plain MinIO"; then
-        cat >> "$markdown_file" <<EOF
-## Performance Comparison Results
-
-The following table compares encrypted (via proxy) vs unencrypted (direct MinIO) performance:
-
-EOF
-
-        # Extract the comparison table - look for lines with the pipe-separated format
-        echo "$test_output" | grep -E "[0-9]+[KMGT]?B[ ]*\|" > /tmp/perf_data.txt || true
-
-        if [ -s /tmp/perf_data.txt ]; then
-            cat >> "$markdown_file" <<EOF
-| File Size | Encrypted Upload (MB/s) | Plain Upload (MB/s) | Encrypted Download (MB/s) | Plain Download (MB/s) | Upload Efficiency | Download Efficiency |
-|-----------|-------------------------|---------------------|---------------------------|-----------------------|-------------------|---------------------|
-EOF
-
-            while IFS= read -r line; do
-                # Parse the performance data line using awk for better field splitting
-                size=$(echo "$line" | awk '{print $1}')
-                enc_up=$(echo "$line" | awk -F'|' '{gsub(/[[:space:]]/, "", $2); print $2}')
-                plain_up=$(echo "$line" | awk -F'|' '{gsub(/[[:space:]]/, "", $3); print $3}')
-                enc_down=$(echo "$line" | awk -F'|' '{gsub(/[[:space:]]/, "", $4); print $4}')
-                plain_down=$(echo "$line" | awk -F'|' '{gsub(/[[:space:]]/, "", $5); print $5}')
-                up_eff=$(echo "$line" | awk -F'|' '{gsub(/[[:space:]]/, "", $6); gsub(/%/, "", $6); print $6}')
-                down_eff=$(echo "$line" | awk -F'|' '{gsub(/[[:space:]]/, "", $7); gsub(/%/, "", $7); print $7}')
-
-                if [[ -n "$size" && -n "$enc_up" && -n "$plain_up" ]]; then
-                    echo "| $size | $enc_up | $plain_up | $enc_down | $plain_down | $up_eff% | $down_eff% |" >> "$markdown_file"
-                fi
-            done < /tmp/perf_data.txt
-
-            rm -f /tmp/perf_data.txt
-        else
-            echo "No performance comparison data found in test output." >> "$markdown_file"
-        fi
-
-        cat >> "$markdown_file" <<EOF
-
-### Performance Analysis
-
-EOF
-
-        # Extract summary information (only the 3 key lines)
-        local summary_section
-        summary_section=$(echo "$test_output" | grep -A 3 "=== Performance Comparison Summary ===" | tail -3 || echo "Summary not available")
-
-        cat >> "$markdown_file" <<EOF
-\`\`\`
-=== Performance Comparison Summary ===
-$summary_section
-\`\`\`
-
-EOF
+    # The comparison tables are rendered by the measurement itself and copied in
+    # whole. They used to be rebuilt here by awking the test log's fixed-width
+    # table apart and grepping three summary lines by position, which published
+    # the equal-weighted mean of the per-size ratios rather than the
+    # byte-weighted numbers the test computes (ADR 0020 D16).
+    if [ -f "${RESULTS_DIR}/performance-summary.md" ]; then
+        cat "${RESULTS_DIR}/performance-summary.md" >> "$markdown_file"
+        echo >> "$markdown_file"
+    else
+        echo "No performance comparison summary was produced." >> "$markdown_file"
+        echo >> "$markdown_file"
     fi
 
     # Parse streaming performance results
@@ -342,20 +304,17 @@ EOF
 
     # Add encryption overhead analysis
     cat >> "$markdown_file" <<EOF
-## Encryption Overhead Analysis
+## What the ratio contains
 
-The encryption proxy introduces computational overhead due to:
+The proxy leg is not the direct leg plus a cipher. It carries, in this order:
 
-1. **Envelope Encryption**: Each object uses a unique Data Encryption Key (DEK) encrypted with a Key Encryption Key (KEK)
-2. **Streaming Encryption**: Large files are encrypted in chunks during multipart uploads
-3. **Metadata Processing**: Additional S3 metadata is stored and processed for encryption parameters
-4. **Network Latency**: Additional hop through the proxy service
+1. **One extra network hop**, plaintext client to proxy, on top of the proxy's own TLS hop to the backend
+2. **One AES-256-GCM segment chain per object**, sealed by a trailer that authenticates the plaintext length and its CRC32C
+3. **One data key per object**, wrapped by the configured key encryption key
+4. **Checksum verification** of every digest the client declares, against the decoded plaintext
 
-### Interpretation Guide
-
-- **High Efficiency (>80%)**: Encryption overhead is minimal, mostly network and processing latency
-- **Medium Efficiency (50-80%)**: Noticeable encryption overhead, but still practical for most use cases
-- **Low Efficiency (<50%)**: Significant overhead, may indicate system resource constraints or configuration issues
+A ratio worse than roughly a third of the direct path is a finding and is reported
+as one (ADR 0020 D9); nothing here fails a build (ADR 0020 D11).
 
 ---
 
@@ -365,7 +324,7 @@ The encryption proxy introduces computational overhead due to:
 
 - **Proxy Version:** $(./build/s3-encryption-proxy --version 2>/dev/null || echo "Unknown")
 - **Test Method:** Go integration tests with real MinIO backend
-- **Encryption Provider:** $(echo "$test_output" | grep -o "provider.*" | head -1 || echo "AES-CTR (default)")
+- **Encryption Provider:** aes (AES-256-GCM segment chain, one wrapped data key per object)
 - **Test Data:** Randomly generated binary data
 
 ### Test Configuration
@@ -426,11 +385,9 @@ show_summary() {
         log_info "Quick Summary from Report:"
         echo
         # Extract key metrics if available
-        if grep -q "Average.*Efficiency" "$markdown_file"; then
-            grep "Average.*Efficiency" "$markdown_file" | sed 's/^/  /'
-        fi
-        if grep -q "Encryption Overhead" "$markdown_file"; then
-            grep "Encryption Overhead" "$markdown_file" | sed 's/^/  /'
+        if [ -f "${RESULTS_DIR}/performance-summary.md" ]; then
+            sed -n '/^| \*\*Upload\*\*/p;/^| \*\*Download\*\*/p' \
+                "${RESULTS_DIR}/performance-summary.md" | sed 's/^/  /'
         fi
         echo
     fi
@@ -442,7 +399,7 @@ show_summary() {
 # Cleanup function
 cleanup() {
     log_info "Cleaning up temporary files..."
-    rm -f /tmp/perf_data.txt /tmp/streaming_data.txt
+    rm -f /tmp/streaming_data.txt
 
     # Clean up raw log file unless KEEP_RAW_LOG is set
     if [[ "${KEEP_RAW_LOG}" != "true" && -n "${RAW_LOG_FILE:-}" && -f "${RAW_LOG_FILE}" ]]; then
@@ -500,7 +457,7 @@ TEST SIZES:
 EXPECTED RUNTIME:
     All tests: 15-30 minutes (depending on system performance)
 
-For more information, see docs/PERFORMANCE_TESTING.md
+For more information, see docs/developer/performance.md
 EOF
         exit 0
     fi

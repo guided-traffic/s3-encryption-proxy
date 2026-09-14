@@ -94,7 +94,7 @@ func TestHandleCreateBucket(t *testing.T) {
 
 			// Create handler
 			logger := logrus.NewEntry(logrus.New())
-			handler := NewHandler(mockClient, logger, "x-amz-meta-", &config.Config{})
+			handler := NewHandler(mockClient, nil, logger, &config.Config{})
 
 			// Create request
 			var body *bytes.Buffer
@@ -192,7 +192,7 @@ func TestHandleDeleteBucket(t *testing.T) {
 
 			// Create handler
 			logger := logrus.NewEntry(logrus.New())
-			handler := NewHandler(mockClient, logger, "x-amz-meta-", &config.Config{})
+			handler := NewHandler(mockClient, nil, logger, &config.Config{})
 
 			// Create request
 			req := httptest.NewRequest(http.MethodDelete, "/"+tt.bucketName, nil)
@@ -272,7 +272,7 @@ func TestBucketHandle_UnroutedSubResourceIsNotABaseOperation(t *testing.T) {
 				Return(&s3.ListObjectsOutput{}, nil).Maybe()
 
 			logger := logrus.NewEntry(logrus.New())
-			handler := NewHandler(mockClient, logger, "s3ep-", &config.Config{})
+			handler := NewHandler(mockClient, nil, logger, &config.Config{})
 
 			req := httptest.NewRequest(tt.method, tt.url, nil)
 			req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
@@ -300,7 +300,7 @@ func TestBucketHandle_BaseOperationsStillReachTheBackend(t *testing.T) {
 		})).Return(&s3.ListObjectsV2Output{}, nil)
 
 		logger := logrus.NewEntry(logrus.New())
-		handler := NewHandler(mockClient, logger, "s3ep-", &config.Config{})
+		handler := NewHandler(mockClient, nil, logger, &config.Config{})
 
 		req := httptest.NewRequest(http.MethodGet, "/test-bucket?list-type=2&prefix=p&x-id=ListObjectsV2", nil)
 		req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
@@ -319,7 +319,7 @@ func TestBucketHandle_BaseOperationsStillReachTheBackend(t *testing.T) {
 		})).Return(&s3.DeleteBucketOutput{}, nil)
 
 		logger := logrus.NewEntry(logrus.New())
-		handler := NewHandler(mockClient, logger, "s3ep-", &config.Config{})
+		handler := NewHandler(mockClient, nil, logger, &config.Config{})
 
 		req := httptest.NewRequest(http.MethodDelete, "/test-bucket", nil)
 		req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
@@ -344,7 +344,7 @@ func TestBucketHandle_KnownSubResourceKeepsMethodNotAllowed(t *testing.T) {
 			for i := 0; i < 20; i++ {
 				mockClient := &MockS3Backend{}
 				logger := logrus.NewEntry(logrus.New())
-				handler := NewHandler(mockClient, logger, "s3ep-", &config.Config{})
+				handler := NewHandler(mockClient, nil, logger, &config.Config{})
 
 				req := httptest.NewRequest(http.MethodDelete, url, nil)
 				req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})

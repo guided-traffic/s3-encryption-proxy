@@ -4,12 +4,15 @@ package s3methods
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -87,99 +90,33 @@ func TestPassthroughOperations_GetObjectTorrent(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Get object torrent - this will likely fail with MinIO but should be handled gracefully
+	// ?torrent is refused by decision, not by the backend: the document would be
+	// composed from the bytes the backend holds, which are the ciphertext, and a
+	// response carries only what the proxy can vouch for. The request never
+	// leaves the proxy (ADR 0008 D1/D11, ADR 0007 D1/D8).
 	_, err = testCtx.ProxyClient.GetObjectTorrent(ctx, &s3.GetObjectTorrentInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(objectKey),
 	})
-	// Note: MinIO doesn't support torrents, so we expect this to fail
-	// The test is to ensure our passthrough handler properly forwards the request
-	// and doesn't crash the proxy
-	assert.Error(t, err) // Expected to fail with MinIO
-	t.Logf("GetObjectTorrent failed as expected with MinIO: %v", err)
+
+	const rule = "?torrent under an encrypting provider is 422 NotSupportedWithEncryption, the proxy's " +
+		"own refusal - not whatever the backend happens to answer (ADR 0007 D1/D8)"
+	require.Error(t, err, rule)
+
+	var api smithy.APIError
+	require.ErrorAs(t, err, &api, "%s; got %v", rule, err)
+	assert.Equal(t, "NotSupportedWithEncryption", api.ErrorCode(), rule)
+
+	var httpErr *awshttp.ResponseError
+	require.ErrorAs(t, err, &httpErr, rule)
+	assert.Equal(t, http.StatusUnprocessableEntity, httpErr.HTTPStatusCode(), rule)
 }
 
-func TestPassthroughOperations_LegalHold(t *testing.T) {
-	ctx := context.Background()
-	testCtx := integration.NewTestContext(t)
-	defer testCtx.CleanupTestBucket()
-
-	bucketName := testCtx.TestBucket
-	objectKey := "test-object.txt"
-	content := "test content for legal hold"
-
-	// Put object via proxy
-	_, err := testCtx.ProxyClient.PutObject(ctx, &s3.PutObjectInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String(objectKey),
-		Body:   strings.NewReader(content),
-	})
-	require.NoError(t, err)
-
-	// Try to get legal hold - this will likely fail with MinIO but should be handled gracefully
-	_, err = testCtx.ProxyClient.GetObjectLegalHold(ctx, &s3.GetObjectLegalHoldInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String(objectKey),
-	})
-	// Note: MinIO may not support legal holds in the same way as AWS S3
-	// The test is to ensure our passthrough handler properly forwards the request
-	if err != nil {
-		t.Logf("GetObjectLegalHold failed as expected with MinIO: %v", err)
-	}
-
-	// Try to put legal hold - this will likely fail with MinIO but should be handled gracefully
-	_, err = testCtx.ProxyClient.PutObjectLegalHold(ctx, &s3.PutObjectLegalHoldInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String(objectKey),
-		LegalHold: &types.ObjectLockLegalHold{
-			Status: types.ObjectLockLegalHoldStatusOn,
-		},
-	})
-	// Note: MinIO may not support legal holds in the same way as AWS S3
-	if err != nil {
-		t.Logf("PutObjectLegalHold failed as expected with MinIO: %v", err)
-	}
-}
-
-func TestPassthroughOperations_Retention(t *testing.T) {
-	ctx := context.Background()
-	testCtx := integration.NewTestContext(t)
-	defer testCtx.CleanupTestBucket()
-
-	bucketName := testCtx.TestBucket
-	objectKey := "test-object.txt"
-	content := "test content for retention"
-
-	// Put object via proxy
-	_, err := testCtx.ProxyClient.PutObject(ctx, &s3.PutObjectInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String(objectKey),
-		Body:   strings.NewReader(content),
-	})
-	require.NoError(t, err)
-
-	// Try to get retention - this will likely fail with MinIO but should be handled gracefully
-	_, err = testCtx.ProxyClient.GetObjectRetention(ctx, &s3.GetObjectRetentionInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String(objectKey),
-	})
-	// Note: MinIO may not support retention in the same way as AWS S3
-	if err != nil {
-		t.Logf("GetObjectRetention failed as expected with MinIO: %v", err)
-	}
-
-	// Try to put retention - this will likely fail with MinIO but should be handled gracefully
-	// _, err = testCtx.ProxyClient.PutObjectRetention(ctx, &s3.PutObjectRetentionInput{
-	// 	Bucket: aws.String(bucketName),
-	// 	Key:    aws.String(objectKey),
-	// 	Retention: &types.ObjectLockRetention{
-	// 		Mode:            types.ObjectLockRetentionModeGovernance,
-	// 		RetainUntilDate: aws.Time(time.Now().Add(24 * time.Hour)),
-	// 	},
-	// })
-	// Note: MinIO may not support retention in the same way as AWS S3
-	// Commented out to avoid test failures, but the infrastructure is there
-}
+// TestPassthroughOperations_LegalHold is gone: it drove GET and PUT ?legal-hold
+// and then swallowed whatever came back in a t.Logf, so it could not fail. What
+// it was meant to cover is TestSubpassRetentionAndLegalHoldRoundTrip, which
+// asserts ADR 0007 D4 for both verbs by reading the result straight from the
+// backend.
 
 func TestPassthroughOperations_SelectObjectContent(t *testing.T) {
 	ctx := context.Background()
@@ -198,7 +135,8 @@ func TestPassthroughOperations_SelectObjectContent(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Try S3 Select - this will likely fail with MinIO but should be handled gracefully
+	// S3 Select is refused, not forwarded: the proxy would have to run a query
+	// over plaintext the backend does not hold (ADR 0007 D8).
 	_, err = testCtx.ProxyClient.SelectObjectContent(ctx, &s3.SelectObjectContentInput{
 		Bucket:         aws.String(bucketName),
 		Key:            aws.String(objectKey),
@@ -213,9 +151,15 @@ func TestPassthroughOperations_SelectObjectContent(t *testing.T) {
 			CSV: &types.CSVOutput{},
 		},
 	})
-	// Note: MinIO may not support S3 Select in the same way as AWS S3
-	// The test is to ensure our passthrough handler properly forwards the request
-	if err != nil {
-		t.Logf("SelectObjectContent failed as expected with MinIO: %v", err)
-	}
+	const rule = "S3 Select is 501 NotImplemented, the proxy's own refusal, rather than a query " +
+		"forwarded to a backend that holds ciphertext (ADR 0007 D8)"
+	require.Error(t, err, rule)
+
+	var api smithy.APIError
+	require.ErrorAs(t, err, &api, "%s; got %v", rule, err)
+	assert.Equal(t, "NotImplemented", api.ErrorCode(), rule)
+
+	var httpErr *awshttp.ResponseError
+	require.ErrorAs(t, err, &httpErr, rule)
+	assert.Equal(t, http.StatusNotImplemented, httpErr.HTTPStatusCode(), rule)
 }

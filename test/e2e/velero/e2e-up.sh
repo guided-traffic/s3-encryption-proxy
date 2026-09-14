@@ -30,15 +30,25 @@ k() { kubectl --context "$KCTX" "$@"; }
 log "ensuring test PKI"
 "$REPO/test/ssl-setup/gen-certs.sh" --if-needed
 
+# --- 0b. key material ------------------------------------------------------
+# No usable key is tracked in this repository (ADR 0021). --if-needed keeps a
+# key that is already there, so a cluster brought up again still reads what it
+# wrote.
+log "ensuring local key material"
+"$REPO/scripts/gen-keys.sh" --if-needed
+# shellcheck disable=SC1091 # generated, not tracked
+. "$REPO/.env"
+export S3EP_AES_KEY
+
 # --- 1. license ------------------------------------------------------------
-# Any provider other than "none" hard-fails without a license, so the pod would
+# Any provider other than "exit" hard-fails without a license, so the pod would
 # crashloop with a message that looks nothing like a licensing problem.
 if [ -z "${S3EP_LICENSE_TOKEN:-}" ]; then
   if [ -f "$REPO/config/license.jwt" ]; then
     S3EP_LICENSE_TOKEN="$(tr -d '\n' < "$REPO/config/license.jwt")"
   else
     echo "S3EP_LICENSE_TOKEN is unset and config/license.jwt is missing" >&2
-    echo "run 'make setup-dev-license' or export S3EP_LICENSE_TOKEN" >&2
+    echo "export S3EP_LICENSE_TOKEN, or place a token at config/license.jwt" >&2
     exit 1
   fi
 fi
@@ -97,6 +107,11 @@ else
 fi
 log "loading image into kind"
 kind load docker-image "$PROXY_IMAGE" --name "$KIND_CLUSTER_NAME"
+# The tag is fixed and pullPolicy is Never, so a rebuilt image leaves the
+# rendered pod template byte-identical and Helm rolls nothing -- the suite would
+# then run against the previous binary. The image id is what actually changed,
+# so it goes into the pod template and the rollout follows from it.
+PROXY_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$PROXY_IMAGE")"
 
 # --- 4. MinIO backend ------------------------------------------------------
 log "installing MinIO"
@@ -156,6 +171,11 @@ k -n "$PROXY_NAMESPACE" create secret generic s3ep-ca \
 k -n "$PROXY_NAMESPACE" create secret generic s3ep-license \
   --from-literal=license.jwt="$S3EP_LICENSE_TOKEN" \
   --dry-run=client -o yaml | k apply -f -
+# Not --set-string: a base64 key carries '=' and '+', which the helm value
+# parser reads as syntax.
+k -n "$PROXY_NAMESPACE" create secret generic s3ep-aes-key \
+  --from-literal=aes-key="$S3EP_AES_KEY" \
+  --dry-run=client -o yaml | k apply -f -
 
 # A previous run that was interrupted mid-install leaves the release in
 # pending-install and every later upgrade fails with "another operation is in
@@ -166,15 +186,28 @@ if helm --kube-context "$KCTX" -n "$PROXY_NAMESPACE" list -a -o json 2>/dev/null
   helm --kube-context "$KCTX" -n "$PROXY_NAMESPACE" uninstall "$PROXY_RELEASE" --wait || true
 fi
 
-helm --kube-context "$KCTX" upgrade --install "$PROXY_RELEASE" "$REPO/deploy/helm/s3-encryption-proxy" \
-  -n "$PROXY_NAMESPACE" -f "$HERE/values-proxy.yaml" \
-  --set-string "image.tag=${PROXY_IMAGE##*:}" \
-  --wait --timeout 5m
-# The chart has no checksum/config annotation, so a config change on an existing
-# release updates the ConfigMap without restarting the pods.
-k -n "$PROXY_NAMESPACE" rollout restart deploy/s3ep-proxy
+proxy_upgrade() {
+  helm --kube-context "$KCTX" upgrade --install "$PROXY_RELEASE" "$REPO/deploy/helm/s3-encryption-proxy" \
+    -n "$PROXY_NAMESPACE" -f "$HERE/values-proxy.yaml" \
+    --set-string "image.tag=${PROXY_IMAGE##*:}" \
+    --set-string "podAnnotations.s3ep-image-id=${PROXY_IMAGE_ID}" \
+    --wait --timeout 5m
+}
+
+# A ConfigMap whose .data.config.yaml is owned by another field manager - a
+# kubectl apply from an earlier session - makes every later upgrade fail with a
+# server-side-apply conflict, and the release stays on the old configuration
+# while the new image crash-loops on it. Clear that state rather than making the
+# operator do it by hand, as the stuck-release branch above does. The ConfigMap
+# is the chart's own and the same upgrade recreates it.
+if ! proxy_upgrade; then
+  log "the proxy upgrade failed; clearing s3ep-proxy-config and retrying once"
+  k -n "$PROXY_NAMESPACE" delete configmap s3ep-proxy-config --ignore-not-found
+  proxy_upgrade
+fi
+# helm upgrade --wait already waited. This call stays because it is the one that
+# fails loudly when a rejected configuration crashloops the pod.
 k -n "$PROXY_NAMESPACE" rollout status deploy/s3ep-proxy --timeout=5m
-k apply -f "$HERE/manifests/proxy-nodeport.yaml"
 
 # --- 7. Velero -------------------------------------------------------------
 log "installing Velero ${VELERO_VERSION} (chart ${VELERO_CHART_VERSION})"
@@ -188,6 +221,18 @@ aws_secret_access_key=${PROXY_CLIENT_SECRET_KEY}
 EOF
 k -n "$VELERO_NAMESPACE" create secret generic velero-s3ep-credentials \
   --from-file=cloud="$CREDS" --dry-run=client -o yaml | k apply -f -
+
+# The kopia repository password. Velero writes this secret itself when it is
+# missing, using a published default, and an existing repository keeps the
+# password it was created with -- so it cannot be fixed after the first backup.
+# Creating it here is what makes the suite exercise the configuration the README
+# tells operators to use. Only when absent: overwriting it would orphan the
+# repository of a cluster that is being reused.
+if ! k -n "$VELERO_NAMESPACE" get secret velero-repo-credentials >/dev/null 2>&1; then
+  log "creating velero-repo-credentials with a generated kopia password"
+  k -n "$VELERO_NAMESPACE" create secret generic velero-repo-credentials \
+    --from-literal=repository-password="$(openssl rand -base64 32)"
+fi
 
 helm repo add vmware-tanzu https://vmware-tanzu.github.io/helm-charts >/dev/null 2>&1 || true
 helm repo update vmware-tanzu >/dev/null

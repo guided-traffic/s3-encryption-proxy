@@ -2,10 +2,8 @@ package keyencryption
 
 import (
 	"context"
-	"crypto/aes"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -68,24 +66,21 @@ func TestKekAESNewFromRawKEK(t *testing.T) {
 }
 
 func TestKekAESNewProviderFromConfigMap(t *testing.T) {
-	rawKey := string(KekAESKeyA)
-	b64Key := base64.StdEncoding.EncodeToString(KekAESKeyB)
-
 	tests := []struct {
-		name        string
-		config      map[string]interface{}
-		wantErr     string
-		wantKEKHash []byte
+		name    string
+		config  map[string]interface{}
+		wantKEK []byte
+		wantErr string
 	}{
 		{
-			name:        "base64 encoded 32 byte key is decoded",
-			config:      map[string]interface{}{"aes_key": b64Key},
-			wantKEKHash: KekAESKeyB,
+			name:    "base64 encoded 32 byte key is decoded",
+			config:  map[string]interface{}{"aes_key": base64.StdEncoding.EncodeToString(KekAESKeyB)},
+			wantKEK: KekAESKeyB,
 		},
 		{
-			name:        "raw 32 byte ascii key is used verbatim",
-			config:      map[string]interface{}{"aes_key": rawKey},
-			wantKEKHash: KekAESKeyA,
+			name:    "raw 32 byte ascii key is refused",
+			config:  map[string]interface{}{"aes_key": string(KekAESKeyA)},
+			wantErr: "must be base64 of exactly 32 bytes",
 		},
 		{
 			name:    "missing aes_key",
@@ -95,22 +90,22 @@ func TestKekAESNewProviderFromConfigMap(t *testing.T) {
 		{
 			name:    "aes_key not a string",
 			config:  map[string]interface{}{"aes_key": 12345},
-			wantErr: "key must be a string",
+			wantErr: "aes_key must be a string",
 		},
 		{
 			name:    "empty aes_key",
 			config:  map[string]interface{}{"aes_key": ""},
-			wantErr: "key cannot be empty",
+			wantErr: "must be base64 of exactly 32 bytes",
 		},
 		{
-			name:    "base64 of wrong length falls back to raw bytes and is rejected",
+			name:    "base64 of wrong length is rejected",
 			config:  map[string]interface{}{"aes_key": base64.StdEncoding.EncodeToString(make([]byte, 16))},
-			wantErr: "must be exactly 32 bytes",
+			wantErr: "must be base64 of exactly 32 bytes",
 		},
 		{
 			name:    "short non base64 key rejected",
 			config:  map[string]interface{}{"aes_key": "too-short"},
-			wantErr: "must be exactly 32 bytes, got 9",
+			wantErr: "must be base64 of exactly 32 bytes",
 		},
 	}
 
@@ -124,40 +119,8 @@ func TestKekAESNewProviderFromConfigMap(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			expected := sha256.Sum256(tc.wantKEKHash)
-			assert.Equal(t, hex.EncodeToString(expected[:]), provider.Fingerprint(),
+			assert.Equal(t, KekNewAES(t, tc.wantKEK).Fingerprint(), provider.Fingerprint(),
 				"fingerprint must be derived from the decoded KEK")
-		})
-	}
-}
-
-func TestKekAESNewProviderFromBase64(t *testing.T) {
-	tests := []struct {
-		name    string
-		input   string
-		wantErr string
-	}{
-		{name: "valid base64 32 bytes", input: base64.StdEncoding.EncodeToString(KekAESKeyA)},
-		{name: "invalid base64", input: "!!!not-base64!!!", wantErr: "failed to decode base64 KEK"},
-		{name: "valid base64 but 16 bytes", input: base64.StdEncoding.EncodeToString(make([]byte, 16)), wantErr: "must be exactly 32 bytes, got 16"},
-		{name: "empty string decodes to zero bytes", input: "", wantErr: "must be exactly 32 bytes, got 0"},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			provider, err := NewAESProviderFromBase64(tc.input)
-			if tc.wantErr != "" {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tc.wantErr)
-				assert.Nil(t, provider)
-				return
-			}
-			require.NoError(t, err)
-			require.NotNil(t, provider)
-
-			// The provider built from base64 must be interchangeable with the raw one.
-			raw := KekNewAES(t, KekAESKeyA)
-			assert.Equal(t, raw.Fingerprint(), provider.Fingerprint())
 		})
 	}
 }
@@ -179,97 +142,31 @@ func TestKekAESDEKRoundTrip(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			ciphertext, keyID, err := provider.EncryptDEK(ctx, tc.dek)
+			wrapped, err := provider.EncryptDEK(ctx, tc.dek)
 			require.NoError(t, err)
-			assert.Equal(t, provider.Fingerprint(), keyID)
 
-			// Layout is IV || CTR(dek), so the wrapped DEK grows by exactly one AES block.
-			require.Len(t, ciphertext, aes.BlockSize+len(tc.dek))
-			if len(tc.dek) > 0 {
-				assert.NotEqual(t, tc.dek, ciphertext[aes.BlockSize:], "ciphertext must differ from plaintext DEK")
-			}
+			// salt || nonce || ciphertext || tag.
+			require.Len(t, wrapped, wrapSaltSize+12+len(tc.dek)+16)
 
-			plaintext, err := provider.DecryptDEK(ctx, ciphertext, keyID)
+			plaintext, err := provider.DecryptDEK(ctx, wrapped)
 			require.NoError(t, err)
 			assert.Equal(t, sha256.Sum256(tc.dek), sha256.Sum256(plaintext))
 		})
 	}
 }
 
-func TestKekAESEncryptDEKUsesFreshIV(t *testing.T) {
+func TestKekAESEncryptDEKUsesFreshSalt(t *testing.T) {
 	provider := KekNewAES(t, KekAESKeyA)
 	ctx := context.Background()
 	dek := []byte("0123456789abcdef0123456789abcdef")
 
-	first, _, err := provider.EncryptDEK(ctx, dek)
+	first, err := provider.EncryptDEK(ctx, dek)
 	require.NoError(t, err)
-	second, _, err := provider.EncryptDEK(ctx, dek)
+	second, err := provider.EncryptDEK(ctx, dek)
 	require.NoError(t, err)
 
-	assert.NotEqual(t, first[:aes.BlockSize], second[:aes.BlockSize], "IV must be freshly generated per call")
+	assert.NotEqual(t, first[:wrapSaltSize], second[:wrapSaltSize], "salt must be freshly generated per call")
 	assert.NotEqual(t, first, second, "same DEK must not produce identical wrapped output")
-}
-
-func TestKekAESDecryptDEKRejectsForeignKeyID(t *testing.T) {
-	providerA := KekNewAES(t, KekAESKeyA)
-	providerB := KekNewAES(t, KekAESKeyB)
-	ctx := context.Background()
-
-	ciphertext, keyID, err := providerA.EncryptDEK(ctx, []byte("0123456789abcdef0123456789abcdef"))
-	require.NoError(t, err)
-
-	_, err = providerB.DecryptDEK(ctx, ciphertext, keyID)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "key ID mismatch")
-	assert.Contains(t, err.Error(), providerB.Fingerprint())
-
-	_, err = providerA.DecryptDEK(ctx, ciphertext, "")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "key ID mismatch")
-}
-
-func TestKekAESDecryptDEKTooShort(t *testing.T) {
-	provider := KekNewAES(t, KekAESKeyA)
-	ctx := context.Background()
-
-	for _, size := range []int{0, 1, aes.BlockSize - 1} {
-		_, err := provider.DecryptDEK(ctx, make([]byte, size), provider.Fingerprint())
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "encrypted DEK too short")
-	}
-
-	// Exactly one block is the boundary: it is the IV with an empty payload.
-	dek, err := provider.DecryptDEK(ctx, make([]byte, aes.BlockSize), provider.Fingerprint())
-	require.NoError(t, err)
-	assert.Empty(t, dek)
-}
-
-// TestKekAESWrapIsUnauthenticated documents that the AES KEK layer uses raw CTR:
-// a wrong key or a flipped bit yields a silently wrong DEK instead of an error.
-// Integrity therefore depends entirely on the DEK layer (GCM/HMAC).
-func TestKekAESWrapIsUnauthenticated(t *testing.T) {
-	providerA := KekNewAES(t, KekAESKeyA)
-	providerB := KekNewAES(t, KekAESKeyB)
-	ctx := context.Background()
-	dek := []byte("0123456789abcdef0123456789abcdef")
-
-	ciphertext, _, err := providerA.EncryptDEK(ctx, dek)
-	require.NoError(t, err)
-
-	// Wrong KEK, but the caller supplies the matching fingerprint of that KEK.
-	wrong, err := providerB.DecryptDEK(ctx, ciphertext, providerB.Fingerprint())
-	require.NoError(t, err, "CTR unwrapping cannot detect a wrong KEK")
-	assert.NotEqual(t, dek, wrong, "wrong KEK must not recover the DEK")
-
-	// Bit flip inside the wrapped DEK.
-	tampered := make([]byte, len(ciphertext))
-	copy(tampered, ciphertext)
-	tampered[aes.BlockSize] ^= 0x01
-	corrupted, err := providerA.DecryptDEK(ctx, tampered, providerA.Fingerprint())
-	require.NoError(t, err, "CTR unwrapping cannot detect tampering")
-	require.Len(t, corrupted, len(dek))
-	assert.Equal(t, dek[0]^0x01, corrupted[0])
-	assert.Equal(t, dek[1:], corrupted[1:], "CTR keeps the flip strictly local")
 }
 
 func TestKekAESFingerprintStabilityAndUniqueness(t *testing.T) {
@@ -279,20 +176,5 @@ func TestKekAESFingerprintStabilityAndUniqueness(t *testing.T) {
 
 	assert.Equal(t, providerA.Fingerprint(), providerA2.Fingerprint(), "same KEK must fingerprint identically")
 	assert.NotEqual(t, providerA.Fingerprint(), providerB.Fingerprint(), "different KEKs must fingerprint differently")
-	assert.Len(t, providerA.Fingerprint(), 64, "SHA-256 hex digest")
-
-	// The fingerprint is an unsalted SHA-256 over the raw KEK, which is also what
-	// ends up in object metadata. Pinning it here makes any change to that
-	// derivation an explicit, visible decision.
-	expected := sha256.Sum256(KekAESKeyA)
-	assert.Equal(t, hex.EncodeToString(expected[:]), providerA.Fingerprint())
-}
-
-func TestKekAESNameAndRotateKEK(t *testing.T) {
-	provider := KekNewAES(t, KekAESKeyA)
-	assert.Equal(t, "aes", provider.Name())
-
-	err := provider.RotateKEK(context.Background())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "AES key rotation is not implemented")
+	assert.Len(t, providerA.Fingerprint(), 64, "32 derived bytes, hex encoded")
 }

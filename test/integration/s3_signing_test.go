@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"io"
 	"net/http"
 	"testing"
 
@@ -57,16 +58,13 @@ func TestAWSV4SigningHelper(t *testing.T) {
 	require.NoError(t, err, "Failed to send signed HTTP request")
 	defer resp.Body.Close()
 
-	t.Logf("Response status: %d", resp.StatusCode)
-
-	// Check if the signing was successful
-	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
-		t.Logf("✅ AWS Signature V4 signing successful")
-	} else {
-		t.Logf("❌ AWS Signature V4 signing failed with status %d", resp.StatusCode)
-		// Read response body for debugging
-		body := make([]byte, 1024)
-		n, _ := resp.Body.Read(body)
-		t.Logf("Response body: %s", string(body[:n]))
-	}
+	// The helper's whole job is to produce a signature the proxy accepts, so a
+	// refusal is the result this test exists to catch. Reporting the status
+	// through t.Logf passed on every status the proxy could answer with,
+	// including the 403 that means the helper signs nothing the proxy accepts -
+	// and every other test in the tree signs its requests with this helper.
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err, "Failed to read response body")
+	require.Equalf(t, http.StatusOK, resp.StatusCode,
+		"a request signed by the helper must be accepted, got: %s", string(body))
 }

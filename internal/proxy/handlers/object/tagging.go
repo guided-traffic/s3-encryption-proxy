@@ -1,8 +1,12 @@
 package object
 
 import (
+	"encoding/xml"
 	"net/http"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
@@ -36,7 +40,11 @@ func NewTaggingHandler(
 	}
 }
 
-// Handle handles object tagging operations (?tagging)
+// Handle handles object tagging operations (?tagging). The tags travel to the
+// backend and the backend's answer comes back: they carry no plaintext of the
+// object and the proxy has nothing to add to them (ADR 0007 D4). They are stored
+// in the clear next to the ciphertext, which SECURITY_ARCHITECTURE.md §3.6
+// states as the accepted cost.
 func (h *TaggingHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
@@ -60,17 +68,63 @@ func (h *TaggingHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleGetTagging handles GET object tagging requests
-func (h *TaggingHandler) handleGetTagging(w http.ResponseWriter, _ *http.Request, _, _ string) {
-	h.errorWriter.WriteNotImplemented(w, "GetObjectTagging")
+func (h *TaggingHandler) handleGetTagging(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	output, err := h.s3Backend.GetObjectTagging(r.Context(), &s3.GetObjectTaggingInput{
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
+		VersionId:           objectVersionID(r),
+	})
+	if err != nil {
+		h.errorWriter.WriteS3Error(w, err, bucket, key)
+		return
+	}
+
+	writeVersionHeaders(w, output.VersionId, nil)
+	h.xmlWriter.WriteS3Document(w, newTaggingDocument(output.TagSet))
 }
 
-// handlePutTagging handles PUT object tagging requests
-func (h *TaggingHandler) handlePutTagging(w http.ResponseWriter, _ *http.Request, _, _ string) {
-	h.errorWriter.WriteNotImplemented(w, "PutObjectTagging")
+func (h *TaggingHandler) handlePutTagging(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	body, ok := readDocument(w, r, h.requestParser, h.errorWriter, h.logger, bucket, key)
+	if !ok {
+		return
+	}
+
+	var doc taggingDocument
+	if err := xml.Unmarshal(body, &doc); err != nil { // #nosec G709 -- encoding/xml fills a fixed struct and resolves no entities
+		h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "MalformedXML",
+			"The XML you provided was not well-formed or did not validate against our published schema")
+		return
+	}
+
+	output, err := h.s3Backend.PutObjectTagging(r.Context(), &s3.PutObjectTaggingInput{
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
+		VersionId:           objectVersionID(r),
+		Tagging:             &types.Tagging{TagSet: doc.tagSet()},
+	})
+	if err != nil {
+		h.errorWriter.WriteS3Error(w, err, bucket, key)
+		return
+	}
+
+	writeVersionHeaders(w, output.VersionId, nil)
+	w.WriteHeader(http.StatusOK)
 }
 
-// handleDeleteTagging handles DELETE object tagging requests
-func (h *TaggingHandler) handleDeleteTagging(w http.ResponseWriter, _ *http.Request, _, _ string) {
-	h.errorWriter.WriteNotImplemented(w, "DeleteObjectTagging")
+func (h *TaggingHandler) handleDeleteTagging(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	output, err := h.s3Backend.DeleteObjectTagging(r.Context(), &s3.DeleteObjectTaggingInput{
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Key:                 aws.String(key),
+		VersionId:           objectVersionID(r),
+	})
+	if err != nil {
+		h.errorWriter.WriteS3Error(w, err, bucket, key)
+		return
+	}
+
+	writeVersionHeaders(w, output.VersionId, nil)
+	w.WriteHeader(http.StatusNoContent)
 }

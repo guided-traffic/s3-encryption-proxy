@@ -75,7 +75,7 @@ func TestTaggingHandler_Handle(t *testing.T) {
 			name:           "DELETE bucket tagging - success",
 			method:         "DELETE",
 			bucket:         "test-bucket",
-			expectedStatus: http.StatusOK,
+			expectedStatus: http.StatusNoContent,
 			setupMock: func(m *MockS3Backend) {
 				m.On("DeleteBucketTagging", mock.Anything, mock.MatchedBy(func(input *s3.DeleteBucketTaggingInput) bool {
 					return *input.Bucket == "test-bucket"

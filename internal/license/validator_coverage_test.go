@@ -99,10 +99,12 @@ func Liclogged(hook *test.Hook, substr string) bool {
 	return false
 }
 
-// LicclearLicenseEnv neutralises every environment variable the loader reads.
+// LicclearLicenseEnv neutralises the environment variable the loader reads, and
+// the two names 4.x also accepted, so a shell that still exports one cannot
+// decide a test either way.
 func LicclearLicenseEnv(t *testing.T) {
 	t.Helper()
-	for _, name := range []string{"S3EP_LICENSE", "S3EP_LICENSE_TOKEN", "S3_ENCRYPTION_PROXY_LICENSE"} {
+	for _, name := range []string{LicenseEnvVar, "S3EP_LICENSE", "S3_ENCRYPTION_PROXY_LICENSE"} {
 		t.Setenv(name, "")
 	}
 }
@@ -253,9 +255,9 @@ func TestLicValidateLicenseRejectsUntrustedTokens(t *testing.T) {
 			}
 
 			// A rejected license must leave the proxy unlicensed.
-			assert.Nil(t, validator.GetLicenseInfo())
+			assert.Nil(t, validator.info)
 			assert.Error(t, validator.ValidateProviderType("aes"))
-			assert.NoError(t, validator.ValidateProviderType("none"))
+			assert.NoError(t, validator.ValidateProviderType("exit"))
 		})
 	}
 }
@@ -275,27 +277,20 @@ func TestLicValidateLicenseWhitespaceTokenIsRejected(t *testing.T) {
 func TestLicValidateProviderTypeMessage(t *testing.T) {
 	validator := NewValidator()
 
-	for _, providerType := range []string{"aes", "rsa", "tink", ""} {
+	// "none" is in the list on purpose: it is the old name of the exit provider
+	// and carries none of its privileges.
+	for _, providerType := range []string{"aes", "rsa", "tink", "none", ""} {
 		err := validator.ValidateProviderType(providerType)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "license required for encryption provider type '"+providerType+"'")
 		assert.Contains(t, err.Error(), "https://s3ep.com")
+		assert.Contains(t, err.Error(), "type 'exit'", "the message must name the provider that needs no license")
 	}
 
 	// An invalidated license behaves exactly like a missing one.
 	validator.info = &LicenseInfo{Valid: false}
 	assert.Error(t, validator.ValidateProviderType("aes"))
-	assert.NoError(t, validator.ValidateProviderType("none"))
-}
-
-// TestLicGetLicenseInfo verifies the accessor reflects validator state.
-func TestLicGetLicenseInfo(t *testing.T) {
-	validator := NewValidator()
-	assert.Nil(t, validator.GetLicenseInfo())
-
-	info := &LicenseInfo{Valid: true, Claims: &LicenseClaims{LicenseeName: "Unit Test"}}
-	validator.info = info
-	assert.Same(t, info, validator.GetLicenseInfo())
+	assert.NoError(t, validator.ValidateProviderType("exit"))
 }
 
 // TestLicParseEmbeddedPublicKey pins the shape of the embedded trust anchor.
@@ -428,24 +423,24 @@ func TestLicGracefulShutdownExitsWithRestartCode(t *testing.T) {
 	assert.Contains(t, stderr.String(), "Shutting down to prevent unlicensed encryption operations")
 }
 
-// TestLicLoadLicenseFromEnvPrecedence asserts the documented lookup order and
-// that surrounding whitespace is stripped.
-func TestLicLoadLicenseFromEnvPrecedence(t *testing.T) {
+// TestLicLoadLicenseFromEnvIsOneName asserts that exactly one variable carries
+// the token, that the two names 4.x also accepted are ignored, and that
+// surrounding whitespace is stripped (ADR 0016 D6).
+func TestLicLoadLicenseFromEnvIsOneName(t *testing.T) {
 	LicclearLicenseEnv(t)
 	assert.Empty(t, LoadLicenseFromEnv())
 
+	t.Setenv("S3EP_LICENSE", "primary-value")
 	t.Setenv("S3_ENCRYPTION_PROXY_LICENSE", "legacy-value")
-	assert.Equal(t, "legacy-value", LoadLicenseFromEnv())
+	assert.Empty(t, LoadLicenseFromEnv(),
+		"only S3EP_LICENSE_TOKEN carries the token; a deployment on either other name is refused at startup, not read")
 
 	t.Setenv("S3EP_LICENSE_TOKEN", "  token-value\n")
 	assert.Equal(t, "token-value", LoadLicenseFromEnv(), "whitespace must be trimmed")
-
-	t.Setenv("S3EP_LICENSE", "primary-value")
-	assert.Equal(t, "primary-value", LoadLicenseFromEnv(), "S3EP_LICENSE has the highest precedence")
 }
 
-// TestLicLoadLicenseFromFile covers configured paths, fallback paths and the
-// cases where nothing usable is found.
+// TestLicLoadLicenseFromFile covers the configured path and the cases where it
+// yields no token. There is no search list behind it (ADR 0016).
 func TestLicLoadLicenseFromFile(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -472,30 +467,18 @@ func TestLicLoadLicenseFromFile(t *testing.T) {
 			want: "relative-token",
 		},
 		{
-			name: "fallback license.jwt in working directory",
+			name:       "a missing path is not searched for elsewhere",
+			configured: "does-not-exist.jwt",
 			setup: func(t *testing.T, dir string) string {
+				// Every location 4.x searched, all of them holding a token. None
+				// of them is license_file, so none of them is read.
 				require.NoError(t, os.WriteFile(filepath.Join(dir, "license.jwt"), []byte("cwd-token"), 0o600))
-				return ""
-			},
-			want: "cwd-token",
-		},
-		{
-			name: "fallback config directory",
-			setup: func(t *testing.T, dir string) string {
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "build", "license.jwt"), []byte("build-token"), 0o600))
 				require.NoError(t, os.MkdirAll(filepath.Join(dir, "config"), 0o750))
 				require.NoError(t, os.WriteFile(filepath.Join(dir, "config", "license.jwt"), []byte("config-token"), 0o600))
 				return ""
 			},
-			want: "config-token",
-		},
-		{
-			name:       "configured path missing falls back",
-			configured: "does-not-exist.jwt",
-			setup: func(t *testing.T, dir string) string {
-				require.NoError(t, os.WriteFile(filepath.Join(dir, "build", "license.jwt"), []byte("build-token"), 0o600))
-				return ""
-			},
-			want: "build-token",
+			want: "",
 		},
 		{
 			name:       "blank file is ignored",
@@ -533,9 +516,35 @@ func TestLicLoadLicenseFromFile(t *testing.T) {
 				configured = produced
 			}
 
-			assert.Equal(t, tt.want, LoadLicenseFromFile(configured))
+			token, err := LoadLicenseFromFile(configured, false)
+			require.NoError(t, err, "a default license_file that yields nothing is not an error: a provider may need no license")
+			assert.Equal(t, tt.want, token)
 		})
 	}
+}
+
+// A written license_file is binding: the named path is the only one read, and a
+// path that yields no token refuses the start rather than substituting a token
+// the operator did not choose (ADR 0016).
+func TestLicLoadLicenseFromFileBinding(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "build"), 0o750))
+	t.Chdir(dir)
+	// A fallback location that carries a token, so a fallback would be visible.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "build", "license.jwt"), []byte("build-token"), 0o600))
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "named.jwt"), []byte("named-token"), 0o600))
+	token, err := LoadLicenseFromFile("named.jwt", true)
+	require.NoError(t, err)
+	assert.Equal(t, "named-token", token)
+
+	_, err = LoadLicenseFromFile("mistyped.jwt", true)
+	require.Error(t, err, "a named path that cannot be read refuses the start")
+	assert.Contains(t, err.Error(), "mistyped.jwt", "the error has to name the path")
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "blank.jwt"), []byte("  \n"), 0o600))
+	_, err = LoadLicenseFromFile("blank.jwt", true)
+	require.Error(t, err, "a named path carrying no token is the same refusal")
 }
 
 // TestLicLoadLicensePrefersEnvironment verifies the source precedence of the
@@ -546,15 +555,28 @@ func TestLicLoadLicensePrefersEnvironment(t *testing.T) {
 	LicclearLicenseEnv(t)
 
 	// Nothing configured at all.
-	assert.Empty(t, LoadLicense(""))
+	token, err := LoadLicense("", false)
+	require.NoError(t, err)
+	assert.Empty(t, token)
 
 	// File only.
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "file-license.jwt"), []byte("file-token"), 0o600))
-	assert.Equal(t, "file-token", LoadLicense("file-license.jwt"))
+	token, err = LoadLicense("file-license.jwt", true)
+	require.NoError(t, err)
+	assert.Equal(t, "file-token", token)
 
-	// Environment wins over the configured file.
-	t.Setenv("S3EP_LICENSE", "env-token")
-	assert.Equal(t, "env-token", LoadLicense("file-license.jwt"))
+	// Environment wins over the configured file, binding or not: it is an
+	// explicit statement of its own, and it is read before any file is opened.
+	t.Setenv("S3EP_LICENSE_TOKEN", "env-token")
+	token, err = LoadLicense("file-license.jwt", true)
+	require.NoError(t, err)
+	assert.Equal(t, "env-token", token)
+
+	// A binding path that cannot be read is only reached when the environment
+	// says nothing, and then it refuses the start.
+	LicclearLicenseEnv(t)
+	_, err = LoadLicense("mistyped.jwt", true)
+	require.Error(t, err)
 }
 
 // D-25 / A-1: without a valid license StartRuntimeMonitoring returns before it
@@ -690,4 +712,21 @@ func TestLicCheckClaimsRejectsATokenWithoutAnExpiryClaim(t *testing.T) {
 		assert.Nil(t, checkClaims(now, claims),
 			"a licence is valid up to and including its expiry instant")
 	})
+}
+
+// A licence that lapses at runtime must not end the process from the monitoring
+// goroutine: that skips the readiness 503, the drain and the multipart sweep of
+// ADR 0029. With a handler wired the validator hands the shutdown over and
+// returns, and the process ends where every other shutdown ends.
+func TestLicExpiryHandlerReplacesTheExit(t *testing.T) {
+	v := NewValidator()
+
+	called := 0
+	v.SetExpiryHandler(func() { called++ })
+
+	// Returning at all is half the assertion: without the handler this call ends
+	// the process, which is why the test above needs a child process.
+	v.gracefulShutdown()
+
+	assert.Equal(t, 1, called, "the lapsed licence must reach the shutdown path exactly once")
 }

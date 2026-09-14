@@ -146,11 +146,15 @@ func TestDeleteObjectFunctionality(t *testing.T) {
 		})
 		require.NoError(t, err, "Object should exist in MinIO")
 
+		// The proxy does not describe an object it did not write: this one was
+		// put into the backend directly, so HEAD refuses it (ADR 0003). Deleting
+		// it still works, which is the point of this case — a bucket can be
+		// cleaned up through the proxy whatever is in it.
 		_, err = ctx.ProxyClient.HeadObject(context.Background(), &s3.HeadObjectInput{
 			Bucket: aws.String(ctx.TestBucket),
 			Key:    aws.String(testKey),
 		})
-		require.NoError(t, err, "Object should be accessible via proxy")
+		require.Error(t, err, "an object the proxy did not write must not be described by it")
 
 		// Delete object via proxy
 		deleteOutput, err := ctx.ProxyClient.DeleteObject(context.Background(), &s3.DeleteObjectInput{

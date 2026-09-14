@@ -6,6 +6,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/sirupsen/logrus"
 )
 
@@ -44,7 +45,8 @@ func (h *NotificationHandler) handleGetBucketNotificationConfiguration(w http.Re
 	h.Logger.WithField("bucket", bucket).Debug("Getting bucket notification configuration")
 
 	input := &s3.GetBucketNotificationConfigurationInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 	}
 
 	output, err := h.S3Backend.GetBucketNotificationConfiguration(r.Context(), input)
@@ -53,7 +55,7 @@ func (h *NotificationHandler) handleGetBucketNotificationConfiguration(w http.Re
 		return
 	}
 
-	h.XMLWriter.WriteXML(w, output)
+	h.XMLWriter.WriteS3Document(w, newNotificationConfigurationDocument(output))
 }
 
 // handlePutBucketNotificationConfiguration sets bucket notification configuration
@@ -61,14 +63,14 @@ func (h *NotificationHandler) handlePutBucketNotificationConfiguration(w http.Re
 	h.Logger.WithField("bucket", bucket).Debug("Setting bucket notification configuration")
 
 	// Read the request body
-	body, err := h.RequestParser.ReadBody(r)
-	if err != nil {
-		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
+	body, ok := h.readDocument(w, r, bucket)
+	if !ok {
 		return
 	}
 
 	input := &s3.PutBucketNotificationConfigurationInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 	}
 
 	// Parse notification configuration from body
@@ -80,11 +82,10 @@ func (h *NotificationHandler) handlePutBucketNotificationConfiguration(w http.Re
 		return
 	}
 
-	output, err := h.S3Backend.PutBucketNotificationConfiguration(r.Context(), input)
-	if err != nil {
+	if _, err := h.S3Backend.PutBucketNotificationConfiguration(r.Context(), input); err != nil {
 		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
 
-	h.XMLWriter.WriteXML(w, output)
+	w.WriteHeader(http.StatusOK)
 }

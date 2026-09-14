@@ -8,8 +8,18 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// BuildInfo is what the binary was stamped with at link time. /version answers
+// it verbatim, so an operator reading the endpoint and an operator reading the
+// s3ep_server_info metric are told the same thing.
+type BuildInfo struct {
+	Version   string
+	Commit    string
+	BuildTime string
+}
+
 // Handler handles health and version endpoints
 type Handler struct {
+	build                BuildInfo
 	logger               *logrus.Entry
 	logHealthRequests    bool
 	shutdownStateHandler func() (bool, time.Time)
@@ -18,8 +28,9 @@ type Handler struct {
 }
 
 // NewHandler creates a new health handler
-func NewHandler(logger *logrus.Entry, logHealthRequests bool) *Handler {
+func NewHandler(logger *logrus.Entry, logHealthRequests bool, build BuildInfo) *Handler {
 	return &Handler{
+		build:             build,
 		logger:            logger,
 		logHealthRequests: logHealthRequests,
 	}
@@ -109,10 +120,11 @@ func (h *Handler) Version(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 
-	// This would typically come from build info
 	response := map[string]string{
-		"version": "dev", // This should be injected at build time
-		"service": "s3-encryption-proxy",
+		"version":    h.build.Version,
+		"commit":     h.build.Commit,
+		"build_time": h.build.BuildTime,
+		"service":    "s3-encryption-proxy",
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
