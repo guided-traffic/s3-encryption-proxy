@@ -19,7 +19,7 @@ This page carries the [index](#index) of what exists and the
 [label index](#label-index) for the finding labels older ticket text still
 cites.
 
-**State (2026-09-14, after the 5.0.0 merge).** Ten live ticket files; everything
+**State (2026-09-14, after the 5.0.0 merge).** Eleven live ticket files; everything
 the release carried is in [archive/](archive/). The bundle merged on 2026-09-14
 and `5.0.0` was cut, so the nine files that were its work list went with it:
 [023](archive/023-major-v5.md), the scope list itself, and
@@ -50,7 +50,11 @@ provider, is parked by owner decision.
 [038](038-s3-encryption-operator.md) are announcements so that 5.0.0's
 configuration does not foreclose them; nothing is built.
 [039](039-backend-certificate-verification-failure-is-named.md) is the one open
-work list, two small items.
+work list, two small items. [040](040-managed-buckets.md) is a plan, raised
+2026-09-14 and nothing in it decided: managed buckets, a startup readability
+verdict and a pass onto the current key encryption key. Its fourth part is
+forbidden by three accepted ADRs today, so refining answers that before anything
+is estimated.
 
 ## Index
 
@@ -81,6 +85,7 @@ work list, two small items.
 | [037](037-multiple-backends.md) | Announced 2026-09-14, **shape built, feature not** | Several backends kept in sync, with a fallback to another copy when an object does not authenticate. The configuration shape landed in 5.0.0 because it is the only breaking part: `s3_backends` is a list and this release reads exactly one entry. The feature — write policy, read order, what counts as a fallback trigger — is open | — |
 | [038](038-s3-encryption-operator.md) | Announced 2026-09-14, **not scheduled** | A Kubernetes operator provisioning proxy instances through Custom Resources: backends, licence distribution, credential Secrets. A separate program with its own entry point and its own chart; `s3-encryption-proxy` stays the single-instance one ([ADR 0033](../adr/0033-a-proxy-instance-holds-its-uploads.md)). Independent of [036](036-high-availability.md): an operator that provisions single instances needs nothing from it. Configuration is read at start only, so a changed backend rolls the pod | — |
 | [039](039-backend-certificate-verification-failure-is-named.md) | Open (2026-09-14), **two small items** | The CA bundle in the image (`/etc/ssl/certs/ca-certificates.crt`, Go's root-loading rule, `SSL_CERT_FILE`) documented in `docs/developer/configuration.md`, and a backend certificate that fails verification logged at error level with its own message and an x509 `reason` instead of the generic `S3 operation failed`. Four runs against the demo MinIO under a private CA are recorded in the ticket | — |
+| [040](040-managed-buckets.md) | Raised 2026-09-14, **planning only, nothing decided** | A configured list of buckets the deployment owns; a startup verdict per bucket (reachable, permitted, every object readable) with a failure policy over it; a pass that moves a bucket onto the current key encryption key; a readiness switch and an init-phase progress line. **Its fourth part is forbidden verbatim by [ADR 0017](../adr/0017-stored-data-compatibility-is-not-owed.md) D3, [ADR 0002](../adr/0002-one-data-key-per-object.md) D7 and [ADR 0004](../adr/0004-one-local-key-provider.md) D12**, and its second falsifies ADR 0002's "the bucket is not consulted at startup and cannot be" — so amendments come first, in the session the decision is taken. The premise that a key move needs no re-upload is **refuted by measurement**: the only metadata-replace mechanism S3 has is a self-copy, which is a full server-side rewrite, and it strips Object Lock state while leaving the old wrapping on the noncurrent version. Fifteen open questions, four of them blocking | — |
 | [035](archive/035-the-pinned-defect-sweep.md) | **Archived 2026-09-14** | The pinned-defect sweep: 55 candidates across ~65 000 lines of test code, 28 refused adversarially as behaviour an ADR decides, **27 unpinned to assert the target** and the product then fixed to meet them. Every suite green on 2026-09-13 — unit, integration, integration over TLS, conformance against MinIO and LocalStack, rclone 28 of 28, s3cmd 19 of 19, Velero in CI. The rule it produced is [ADR 0031](../adr/0031-a-test-states-the-target-and-stays-red-until-the-product-meets-it.md) and `CLAUDE.md`. **Two process items went to history open**: a red test still names its rule in a source comment rather than in the failure message ([ADR 0031](../adr/0031-a-test-states-the-target-and-stays-red-until-the-product-meets-it.md) D7/D9), and the three end-to-end required checks are not pinned to the app that reports them | — |
 The `010-*` directories are in [archive/](archive/) beside the ticket they belong
 to (`010-baseline`, `010-tier1`, `010-tier1.3`, `010-tier2`, `010-tier4.1`):
