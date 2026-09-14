@@ -1,3 +1,44 @@
+## [5.0.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v5.0.0...v5.0.1) (2026-09-14)
+
+
+## 📊 Quality Metrics
+
+![Coverage](https://img.shields.io/badge/coverage-95.3%25-brightgreen)
+![Go Version](https://img.shields.io/github/go-mod/go-version/guided-traffic/s3-encryption-proxy?logo=go)
+![Security](https://img.shields.io/badge/security-✅%20passed-green)
+![Linting](https://img.shields.io/badge/linting-✅%20passed-green)
+
+**Test Coverage**: 95.3% of code is covered by tests
+
+
+### Bug Fixes
+
+* **deps:** Update aws-sdk-go-v2 monorepo ([#345](https://github.com/guided-traffic/s3-encryption-proxy/issues/345)) ([8cdfff8](https://github.com/guided-traffic/s3-encryption-proxy/commit/8cdfff8f4ee9d7d4f9149400288d502b8a2182d9))
+* **deps:** Update module github.com/go-viper/mapstructure/v2 to v2.5.0 ([#348](https://github.com/guided-traffic/s3-encryption-proxy/issues/348)) ([628d666](https://github.com/guided-traffic/s3-encryption-proxy/commit/628d666336d0b54925180895153a1eaaff4e5fb1))
+
+
+## 🐳 Docker Images
+
+This release is available as a Docker image:
+
+```bash
+# Latest version
+docker pull guidedtraffic/s3-encryption-proxy:latest
+
+# Specific version
+docker pull guidedtraffic/s3-encryption-proxy:5.0.1
+```
+
+**Supported platforms:** linux/amd64
+
+## 📥 Download Assets
+
+Pre-built binaries and coverage reports are attached to this release:
+- `s3-encryption-proxy-v5.0.1-linux-amd64` - Main proxy binary
+- `s3ep-keygen-v5.0.1-linux-amd64` - Key generation utility
+- `coverage-v5.0.1.out` - Coverage profile (Go format)
+- `coverage-v5.0.1.txt` - Coverage report (human readable)
+
 ## [5.0.0](https://github.com/guided-traffic/s3-encryption-proxy/compare/v4.0.3...v5.0.0) (2026-09-14)
 
 > ## ⚠️ Not compatible with 4.x or anything before it
