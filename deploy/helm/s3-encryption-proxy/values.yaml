@@ -232,11 +232,11 @@ config: |
   read_header_timeout: 30
   idle_timeout: 60
 
-  s3_backend:
-    target_endpoint: "https://s3.amazonaws.com"
-    region: "us-east-1"
-    access_key_id: "${S3_ACCESS_KEY_ID}"
-    secret_key: "${S3_SECRET_KEY}"
+  s3_backends:
+    - target_endpoint: "https://s3.amazonaws.com"
+      region: "us-east-1"
+      access_key_id: "${S3_ACCESS_KEY_ID}"
+      secret_key: "${S3_SECRET_KEY}"
 
   s3_clients:
     - type: "static"

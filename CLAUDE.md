@@ -341,9 +341,11 @@ for adding a client suite is in [DEVELOPER.md](DEVELOPER.md), *Adding things*.
 This is every key the code reads, and since ADR 0013 D11 it is also every key the
 proxy accepts: the loader decodes in its exact mode, so a key that is not here
 refuses the start and the error names it. Values marked `# default` are the
-defaults set in `internal/config/config.go` (`setDefaults`); everything else is an
-example. **Adding a key to the struct and forgetting this table is now a startup
-failure for anyone whose configuration carries it**, so the two move together.
+defaults the loader applies — `setDefaults` in `internal/config/config.go` for
+every key, and `resolveBackends` per entry for `s3_backends[].region`, since
+viper defaults a key and not a list element; everything else is an example.
+**Adding a key to the struct and forgetting this table is now a startup failure
+for anyone whose configuration carries it**, so the two move together.
 
 ```yaml
 # Server Configuration
@@ -365,16 +367,21 @@ tls:                          # TLS listener of the proxy itself
   cert_file: "test/ssl-setup/public.crt"   # example, gen-certs.sh output
   key_file: "test/ssl-setup/private.key"   # example, gen-certs.sh output
 
-# S3 Backend Configuration
-s3_backend:
-  target_endpoint: "https://minio:9000"  # example; required, and its scheme decides
-                                         # whether the backend leg is TLS. A missing
-                                         # scheme refuses the start, and so does
-                                         # http:// under a provider that encrypts
-  region: "us-east-1"                    # default
-  access_key_id: "minioadmin"            # example
-  secret_key: "minioadmin123"            # example, ${ENV} references work
-  insecure_skip_verify: false            # default; the demo configs set true
+# S3 Backend Configuration. A list: exactly one entry is read, and a second
+# refuses the start by a message of its own. The list is the shape, not yet the
+# feature — turning a mapping into a list refuses every configuration written
+# against it (ADR 0013 D11), so it is paid for in a major release
+s3_backends:
+  - target_endpoint: "https://minio:9000"  # example; required, and its scheme decides
+                                           # whether the backend leg is TLS. A missing
+                                           # scheme refuses the start, and so does
+                                           # http:// under a provider that encrypts
+    region: "us-east-1"                    # default, applied per entry after decoding
+                                           # rather than by viper, which defaults a key
+                                           # and not a list element
+    access_key_id: "minioadmin"            # example
+    secret_key: "minioadmin123"            # example, ${ENV} references work
+    insecure_skip_verify: false            # default; the demo configs set true
 
 # S3 Client Authentication (required - the proxy refuses to start without at least one)
 s3_clients:
@@ -452,16 +459,18 @@ optimizations:
 There is no legacy top-level backend block any more. A configuration that still
 uses top-level `target_endpoint` / `region` / `access_key_id` / `secret_key` /
 `use_tls` / `skip_ssl_verification` refuses the start, and the error names those
-keys (ADR 0013 D11).
+keys (ADR 0013 D11). The singular `s3_backend` mapping is refused the same way,
+by a message of its own: the fields are unchanged, so it says to move the block
+under a single `- ` entry of `s3_backends`.
 
 No environment variable overrides a configuration key: the one mechanism is a
 `${VAR}` reference written into one of the fields that are expanded — the four
-under `s3_backend`, the two per entry under `s3_clients`, and every string under
-`encryption.providers[].config` — and an unset or empty one refuses the start.
-A `${VAR}` anywhere else is kept verbatim. The license token is the exception,
-read from `S3EP_LICENSE_TOKEN` before `license_file` is opened; that key names
-the one file read, with no well-known locations behind it. The image starts from `config/default.yaml`,
-which takes every value it needs that way
+per entry under `s3_backends`, the two per entry under `s3_clients`, and every
+string under `encryption.providers[].config` — and an unset or empty one refuses
+the start. A `${VAR}` anywhere else is kept verbatim. The license token is the
+exception, read from `S3EP_LICENSE_TOKEN` before `license_file` is opened; that
+key names the one file read, with no well-known locations behind it. The image
+starts from `config/default.yaml`, which takes every value it needs that way
 ([docs/developer/configuration.md](docs/developer/configuration.md)).
 
 ### Integrity is not configurable

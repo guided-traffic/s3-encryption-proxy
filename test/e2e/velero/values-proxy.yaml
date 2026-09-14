@@ -122,16 +122,16 @@ config: |
   log_health_requests: false
 
 
-  s3_backend:
-    # HTTPS is required, not preferred: the SDK can only send an unseekable
-    # stream with UNSIGNED-PAYLOAD, and it only accepts that over TLS.
-    target_endpoint: "https://minio.minio.svc.cluster.local:9000"
-    region: "us-east-1"
-    access_key_id: "minioadmin"
-    secret_key: "minioadmin123"
-    # Verification stays on. The proxy trusts the test CA through SSL_CERT_FILE
-    # below, so the backend chain is really validated.
-    insecure_skip_verify: false
+  s3_backends:
+    - # HTTPS is required, not preferred: the SDK can only send an unseekable
+      # stream with UNSIGNED-PAYLOAD, and it only accepts that over TLS.
+      target_endpoint: "https://minio.minio.svc.cluster.local:9000"
+      region: "us-east-1"
+      access_key_id: "minioadmin"
+      secret_key: "minioadmin123"
+      # Verification stays on. The proxy trusts the test CA through SSL_CERT_FILE
+      # below, so the backend chain is really validated.
+      insecure_skip_verify: false
 
   s3_clients:
     - type: "static"

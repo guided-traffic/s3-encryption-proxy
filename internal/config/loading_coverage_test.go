@@ -40,11 +40,11 @@ func CfgWriteConfigFile(t *testing.T, dir, name, body string) string {
 
 // CfgMinimalYAML is a complete, valid configuration that requires no license.
 const CfgMinimalYAML = `
-s3_backend:
-  target_endpoint: "https://minio:9000"
-  region: "eu-central-1"
-  access_key_id: "backendkey"
-  secret_key: "backendsecret"
+s3_backends:
+  - target_endpoint: "https://minio:9000"
+    region: "eu-central-1"
+    access_key_id: "backendkey"
+    secret_key: "backendsecret"
 encryption:
   encryption_method_alias: "way-out"
   providers:
@@ -67,7 +67,10 @@ func TestCfgInitConfigWithExplicitFile(t *testing.T) {
 
 	assert.Equal(t, path, viper.ConfigFileUsed())
 	assert.Equal(t, "warn", viper.GetString("log_level"))
-	assert.Equal(t, "https://minio:9000", viper.GetString("s3_backend.target_endpoint"))
+	backends, ok := viper.Get("s3_backends").([]interface{})
+	require.True(t, ok, "s3_backends decodes as a list")
+	require.Len(t, backends, 1)
+	assert.Equal(t, "https://minio:9000", backends[0].(map[string]interface{})["target_endpoint"])
 	// Defaults still apply for keys the file does not mention.
 	assert.Equal(t, "0.0.0.0:8080", viper.GetString("bind_address"))
 	assert.Equal(t, "s3ep-", viper.GetString("encryption.metadata_key_prefix"))
@@ -88,7 +91,7 @@ func TestCfgInitConfigDiscoversFileInHomeDirectory(t *testing.T) {
 
 // A configuration file that cannot be read refuses the start and the error names
 // it. It used to be discarded, and what the operator then saw was
-// "s3_backend.target_endpoint is required" — a key their file may well have set.
+// "s3_backends[0].target_endpoint is required" — a key their file may well have set.
 func TestCfgInitConfigRefusesAFileItCannotRead(t *testing.T) {
 	t.Run("missing path", func(t *testing.T) {
 		CfgResetViper(t)
@@ -102,7 +105,7 @@ func TestCfgInitConfigRefusesAFileItCannotRead(t *testing.T) {
 
 	t.Run("unparseable file", func(t *testing.T) {
 		CfgResetViper(t)
-		path := CfgWriteConfigFile(t, t.TempDir(), "broken.yaml", "s3_backend: [not a mapping\n")
+		path := CfgWriteConfigFile(t, t.TempDir(), "broken.yaml", "s3_backends: [not a mapping\n")
 
 		require.Error(t, InitConfig(path))
 	})
@@ -118,7 +121,7 @@ func TestCfgInitConfigRefusesAFileItCannotRead(t *testing.T) {
 		require.NoError(t, InitConfig(""))
 		_, err := Load()
 		require.Error(t, err, "the start still fails, on the keys that have no default")
-		assert.Contains(t, err.Error(), "s3_backend.target_endpoint")
+		assert.Contains(t, err.Error(), "s3_backends is required")
 	})
 }
 
@@ -159,9 +162,9 @@ func TestCfgSecurityControlsCannotBeFlippedFromTheEnvironment(t *testing.T) {
 
 	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", `
 bind_address: "0.0.0.0:8080"
-s3_backend:
-  target_endpoint: "https://minio:9000"
-  insecure_skip_verify: false
+s3_backends:
+  - target_endpoint: "https://minio:9000"
+    insecure_skip_verify: false
 s3_clients:
   - type: "static"
     access_key_id: "username0"
@@ -178,7 +181,7 @@ encryption:
 	cfg, err := Load()
 
 	require.NoError(t, err)
-	assert.False(t, cfg.S3Backend.InsecureSkipVerify, "the certificate check stays on")
+	assert.False(t, cfg.Backend().InsecureSkipVerify, "the certificate check stays on")
 	assert.False(t, cfg.Monitoring.PprofEnabled, "the heap endpoint stays off")
 	require.NotNil(t, cfg.Encryption.MetadataKeyPrefix)
 	assert.Equal(t, "s3ep-", *cfg.Encryption.MetadataKeyPrefix, "the namespace stays the proxy's")
@@ -193,8 +196,9 @@ func TestCfgSetDefaults(t *testing.T) {
 	assert.Equal(t, "text", viper.GetString("log_format"))
 	assert.False(t, viper.GetBool("log_health_requests"))
 
-	assert.Equal(t, "us-east-1", viper.GetString("s3_backend.region"))
-	assert.False(t, viper.GetBool("s3_backend.insecure_skip_verify"))
+	// s3_backends is a list, and viper defaults a key rather than a list element,
+	// so the region default is not here. resolveBackends applies it per entry.
+	assert.Nil(t, viper.Get("s3_backends"), "a list element has no viper default")
 
 	assert.False(t, viper.GetBool("tls.enabled"))
 	assert.False(t, viper.GetBool("monitoring.enabled"))
@@ -223,10 +227,10 @@ func TestCfgLoadFromYAMLFile(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 
-	assert.Equal(t, "https://minio:9000", cfg.S3Backend.TargetEndpoint)
-	assert.Equal(t, "eu-central-1", cfg.S3Backend.Region)
-	assert.Equal(t, "backendkey", cfg.S3Backend.AccessKeyID)
-	assert.Equal(t, "backendsecret", cfg.S3Backend.SecretKey)
+	assert.Equal(t, "https://minio:9000", cfg.Backend().TargetEndpoint)
+	assert.Equal(t, "eu-central-1", cfg.Backend().Region)
+	assert.Equal(t, "backendkey", cfg.Backend().AccessKeyID)
+	assert.Equal(t, "backendsecret", cfg.Backend().SecretKey)
 
 	// A YAML sequence reaches loadProvidersFromInterfaceSlice as []interface{}.
 	require.Len(t, cfg.Encryption.Providers, 1)
@@ -248,8 +252,8 @@ func TestCfgLoadProviderConfigFromYAMLKeepsNestedValues(t *testing.T) {
 	CfgNoLicense(t)
 
 	body := `
-s3_backend:
-  target_endpoint: "https://minio:9000"
+s3_backends:
+  - target_endpoint: "https://minio:9000"
 encryption:
   encryption_method_alias: "way-out"
   providers:
@@ -322,8 +326,8 @@ func TestCfgMetadataKeyPrefix(t *testing.T) {
 			CfgResetViper(t)
 
 			body := `
-s3_backend:
-  target_endpoint: "https://minio:9000"
+s3_backends:
+  - target_endpoint: "https://minio:9000"
 encryption:
   encryption_method_alias: "way-out"
 ` + tt.extraYAML + `  providers:
@@ -363,10 +367,10 @@ func TestCfgLoadExpandsEnvironmentVariables(t *testing.T) {
 	t.Setenv("CFG_AES_KEY", CfgTestAESKey)
 
 	body := `
-s3_backend:
-  target_endpoint: "https://minio:9000"
-  access_key_id: "${CFG_BACKEND_KEY}"
-  secret_key: "${CFG_BACKEND_SECRET}"
+s3_backends:
+  - target_endpoint: "https://minio:9000"
+    access_key_id: "${CFG_BACKEND_KEY}"
+    secret_key: "${CFG_BACKEND_SECRET}"
 encryption:
   encryption_method_alias: "way-out"
   providers:
@@ -386,8 +390,8 @@ s3_clients:
 
 	cfg, err := Load()
 	require.NoError(t, err)
-	assert.Equal(t, "expanded-backend-key", cfg.S3Backend.AccessKeyID)
-	assert.Equal(t, "expanded-backend-secret", cfg.S3Backend.SecretKey)
+	assert.Equal(t, "expanded-backend-key", cfg.Backend().AccessKeyID)
+	assert.Equal(t, "expanded-backend-secret", cfg.Backend().SecretKey)
 	assert.Equal(t, "expanded-client-secret", cfg.S3Clients[0].SecretKey)
 	assert.Equal(t, CfgTestAESKey, cfg.Encryption.Providers[1].Config["aes_key"])
 }
@@ -397,9 +401,9 @@ func TestCfgLoadFailsOnUnsetEnvironmentVariable(t *testing.T) {
 	CfgNoLicense(t)
 
 	body := `
-s3_backend:
-  target_endpoint: "https://minio:9000"
-  secret_key: "${CFG_DEFINITELY_UNSET_SECRET}"
+s3_backends:
+  - target_endpoint: "https://minio:9000"
+    secret_key: "${CFG_DEFINITELY_UNSET_SECRET}"
 encryption:
   encryption_method_alias: "way-out"
   providers:
@@ -417,14 +421,14 @@ s3_clients:
 	require.Error(t, err)
 	assert.Nil(t, cfg)
 	assert.Contains(t, err.Error(), "environment variable expansion failed")
-	assert.Contains(t, err.Error(), "s3_backend.secret_key")
+	assert.Contains(t, err.Error(), "s3_backends[0].secret_key")
 	assert.Contains(t, err.Error(), "${CFG_DEFINITELY_UNSET_SECRET} is not set or empty")
 }
 
 func TestCfgLoadFailsOnUnmarshalError(t *testing.T) {
 	CfgResetViper(t)
 	setDefaults()
-	viper.Set("s3_backend.target_endpoint", "https://minio:9000")
+	viper.Set("s3_backends", []map[string]interface{}{{"target_endpoint": "https://minio:9000"}})
 	viper.Set("optimizations.multipart_part_size", "twelve-megabytes")
 
 	cfg, err := Load()
@@ -438,7 +442,7 @@ func TestCfgLoadFailsOnValidationError(t *testing.T) {
 	CfgResetViper(t)
 	CfgNoLicense(t)
 	setDefaults()
-	viper.Set("s3_backend.target_endpoint", "https://minio:9000")
+	viper.Set("s3_backends", []map[string]interface{}{{"target_endpoint": "https://minio:9000"}})
 	viper.Set("encryption.encryption_method_alias", "way-out")
 	viper.Set("encryption.providers", []map[string]interface{}{
 		{"alias": "way-out", "type": "exit", "config": map[string]interface{}{}},
@@ -457,8 +461,8 @@ func TestCfgLoadFailsWhenProvidersAreNotASequence(t *testing.T) {
 	CfgNoLicense(t)
 
 	body := `
-s3_backend:
-  target_endpoint: "https://minio:9000"
+s3_backends:
+  - target_endpoint: "https://minio:9000"
 encryption:
   encryption_method_alias: "way-out"
   providers:
@@ -600,7 +604,7 @@ func TestCfgLoadAndStartLicenseWithoutLicense(t *testing.T) {
 	// NOTE: validator.Stop() is deliberately not called here - it blocks forever
 	// when runtime monitoring was never started (see the defect report).
 
-	assert.Equal(t, "https://minio:9000", cfg.S3Backend.TargetEndpoint)
+	assert.Equal(t, "https://minio:9000", cfg.Backend().TargetEndpoint)
 	// Without a valid license only the exit provider is permitted.
 	assert.Error(t, validator.ValidateProviderType("aes"))
 	assert.NoError(t, validator.ValidateProviderType("exit"))
@@ -616,7 +620,7 @@ func TestCfgLoadAndStartLicensePropagatesLoadError(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, cfg)
 	assert.Nil(t, validator)
-	assert.Contains(t, err.Error(), "target_endpoint is required")
+	assert.Contains(t, err.Error(), "s3_backends is required")
 }
 
 // ADR 0013 D11. A key this version does not define refuses the start, and the
@@ -630,8 +634,8 @@ func TestCfgUnknownKeyRefusesTheStart(t *testing.T) {
 	// to the document. Two seams, because a removed key can sit at either depth
 	// and a second top-level `encryption:` would replace the first one.
 	base := `
-s3_backend:
-  target_endpoint: "https://minio:9000"
+s3_backends:
+  - target_endpoint: "https://minio:9000"
 encryption:
 %s  encryption_method_alias: "way-out"
   providers:
@@ -753,8 +757,8 @@ func TestCfgProviderConfigRefusesAKeyTheProviderDoesNotRead(t *testing.T) {
 			CfgResetViper(t)
 
 			body := `
-s3_backend:
-  target_endpoint: "https://minio:9000"
+s3_backends:
+  - target_endpoint: "https://minio:9000"
 encryption:
   encryption_method_alias: "way-out"
   providers:
@@ -783,8 +787,8 @@ func TestCfgProviderDescriptionIsNotAConfigKey(t *testing.T) {
 	CfgResetViper(t)
 
 	body := `
-s3_backend:
-  target_endpoint: "https://minio:9000"
+s3_backends:
+  - target_endpoint: "https://minio:9000"
 encryption:
   encryption_method_alias: "way-out"
   providers:
@@ -846,8 +850,8 @@ func TestCfgShippedExamplesCarryNoUnknownKeys(t *testing.T) {
 func TestCfgZeroSessionIdleTimeoutIsRefusedByName(t *testing.T) {
 	const body = `
 bind_address: "0.0.0.0:8080"
-s3_backend:
-  target_endpoint: "https://minio:9000"
+s3_backends:
+  - target_endpoint: "https://minio:9000"
 s3_clients:
   - type: "static"
     access_key_id: "username0"
@@ -875,8 +879,8 @@ optimizations:
 func TestCfgVerifyPayloadHashIsReadFromTheFile(t *testing.T) {
 	const body = `
 bind_address: "0.0.0.0:8080"
-s3_backend:
-  target_endpoint: "https://minio:9000"
+s3_backends:
+  - target_endpoint: "https://minio:9000"
 s3_clients:
   - type: "static"
     access_key_id: "username0"
@@ -910,8 +914,8 @@ func TestCfgVerifyPayloadHashDefaultsToOff(t *testing.T) {
 	CfgResetViper(t)
 	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", `
 bind_address: "0.0.0.0:8080"
-s3_backend:
-  target_endpoint: "https://minio:9000"
+s3_backends:
+  - target_endpoint: "https://minio:9000"
 s3_clients:
   - type: "static"
     access_key_id: "username0"
@@ -931,8 +935,8 @@ s3_clients:
 func TestCfgZeroRequestDocumentSizeIsRefusedByName(t *testing.T) {
 	const body = `
 bind_address: "0.0.0.0:8080"
-s3_backend:
-  target_endpoint: "https://minio:9000"
+s3_backends:
+  - target_endpoint: "https://minio:9000"
 s3_clients:
   - type: "static"
     access_key_id: "username0"
@@ -962,8 +966,8 @@ func TestCfgAbsentSessionIdleTimeoutTakesTheDefault(t *testing.T) {
 
 	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", `
 bind_address: "0.0.0.0:8080"
-s3_backend:
-  target_endpoint: "https://minio:9000"
+s3_backends:
+  - target_endpoint: "https://minio:9000"
 s3_clients:
   - type: "static"
     access_key_id: "username0"
@@ -988,8 +992,8 @@ func TestCfgRetiredSessionMaxAgeIsRefusedByName(t *testing.T) {
 
 	body := `
 bind_address: "0.0.0.0:8080"
-s3_backend:
-  target_endpoint: "https://minio:9000"
+s3_backends:
+  - target_endpoint: "https://minio:9000"
 s3_clients:
   - type: "static"
     access_key_id: "username0"
@@ -1010,14 +1014,103 @@ optimizations:
 // The key was renamed, not removed: the value and every check on it are
 // unchanged. A generic unknown-key error would leave an operator guessing that
 // the two names are the same setting, so the refusal says so.
+// The backend block is a list because backends are symmetric. This release reads
+// exactly one; the list is here so that the release which keeps several in sync
+// does not have to refuse every existing configuration to get it (ADR 0013 D11).
+func TestCfgBackendsAreAList(t *testing.T) {
+	backendYAML := func(entries string) string {
+		return `
+bind_address: "0.0.0.0:8080"
+s3_backends:
+` + entries + `s3_clients:
+  - type: "static"
+    access_key_id: "username0"
+    secret_key: "this-is-not-very-secure"
+`
+	}
+
+	t.Run("the old singular key is refused by name", func(t *testing.T) {
+		CfgNoLicense(t)
+		CfgResetViper(t)
+
+		body := `
+bind_address: "0.0.0.0:8080"
+s3_backend:
+  target_endpoint: "https://minio:9000"
+s3_clients:
+  - type: "static"
+    access_key_id: "username0"
+    secret_key: "this-is-not-very-secure"
+`
+		path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", body)
+		require.NoError(t, InitConfig(path))
+
+		_, err := Load()
+		require.Error(t, err, "a key whose shape changed must not start the proxy")
+		assert.Contains(t, err.Error(), "s3_backend is now the list s3_backends")
+	})
+
+	t.Run("one entry is served, and its region defaults", func(t *testing.T) {
+		CfgNoLicense(t)
+		CfgResetViper(t)
+
+		path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml",
+			backendYAML("  - target_endpoint: \"https://minio:9000\"\n"))
+		require.NoError(t, InitConfig(path))
+
+		cfg, err := Load()
+		require.NoError(t, err)
+		require.Len(t, cfg.S3Backends, 1)
+		assert.Equal(t, "https://minio:9000", cfg.Backend().TargetEndpoint)
+		assert.Equal(t, "us-east-1", cfg.Backend().Region,
+			"viper defaults a key, not a list element, so resolveBackends applies this one")
+	})
+
+	t.Run("a second entry is refused, not ignored", func(t *testing.T) {
+		CfgNoLicense(t)
+		CfgResetViper(t)
+
+		path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", backendYAML(
+			"  - target_endpoint: \"https://minio:9000\"\n"+
+				"  - target_endpoint: \"https://other:9000\"\n"))
+		require.NoError(t, InitConfig(path))
+
+		_, err := Load()
+		require.Error(t, err, "serving the first and dropping the rest is accept-and-discard")
+		assert.Contains(t, err.Error(), "names 2 backends and this release serves exactly one")
+	})
+
+	// The expansion walks the list. It is the one field group expanded outside a
+	// secret, because the container's default configuration is written against it
+	// - so a backend that is not expanded sends every request to a host literally
+	// named "${S3EP_BACKEND_ENDPOINT}". Proven to bite by removing the loop.
+	//
+	// Backend() reads the list rather than a copy taken at decode time, so there
+	// is no ordering to get wrong between expanding and resolving. That was a real
+	// bug for the length of one edit, and the shape is what closed it, not a test.
+	t.Run("a ${VAR} in an entry reaches the served backend expanded", func(t *testing.T) {
+		CfgNoLicense(t)
+		CfgResetViper(t)
+		t.Setenv("CFG_BACKEND_ENDPOINT_TEST", "https://expanded:9000")
+
+		path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml",
+			backendYAML("  - target_endpoint: \"${CFG_BACKEND_ENDPOINT_TEST}\"\n"))
+		require.NoError(t, InitConfig(path))
+
+		cfg, err := Load()
+		require.NoError(t, err)
+		assert.Equal(t, "https://expanded:9000", cfg.Backend().TargetEndpoint)
+	})
+}
+
 func TestCfgRenamedSegmentSizeIsRefusedByName(t *testing.T) {
 	CfgNoLicense(t)
 	CfgResetViper(t)
 
 	body := `
 bind_address: "0.0.0.0:8080"
-s3_backend:
-  target_endpoint: "https://minio:9000"
+s3_backends:
+  - target_endpoint: "https://minio:9000"
 s3_clients:
   - type: "static"
     access_key_id: "username0"
@@ -1055,8 +1148,8 @@ func TestCfgMultipartPartSizeKeepsItsChecks(t *testing.T) {
 
 			body := `
 bind_address: "0.0.0.0:8080"
-s3_backend:
-  target_endpoint: "https://minio:9000"
+s3_backends:
+  - target_endpoint: "https://minio:9000"
 s3_clients:
   - type: "static"
     access_key_id: "username0"

@@ -16,7 +16,7 @@ func TestLoad_ValidExitConfig(t *testing.T) {
 
 	// Set required configuration values for the exit provider. https, because a
 	// plain-HTTP backend is refused under every provider (ADR 0013 D5).
-	viper.Set("s3_backend.target_endpoint", "https://localhost:9000")
+	viper.Set("s3_backends", []map[string]interface{}{{"target_endpoint": "https://localhost:9000"}})
 	viper.Set("encryption.encryption_method_alias", "way-out")
 	viper.Set("encryption.providers", []map[string]interface{}{
 		{
@@ -70,7 +70,7 @@ func TestLoad_MissingTargetEndpoint(t *testing.T) {
 	cfg, err := Load()
 	assert.Error(t, err)
 	assert.Nil(t, cfg)
-	assert.Contains(t, err.Error(), "target_endpoint is required")
+	assert.Contains(t, err.Error(), "s3_backends is required")
 }
 
 func TestGetActiveProvider(t *testing.T) {
@@ -168,7 +168,7 @@ func TestGetAllProviders(t *testing.T) {
 
 func TestValidateEncryption_ValidAES(t *testing.T) {
 	cfg := &Config{
-		S3Backend: S3BackendConfig{TargetEndpoint: "http://localhost:9000"},
+		S3Backends: []S3BackendConfig{{TargetEndpoint: "http://localhost:9000"}},
 		Encryption: EncryptionConfig{
 			EncryptionMethodAlias: "aes",
 			Providers: []EncryptionProvider{
@@ -189,7 +189,7 @@ func TestValidateEncryption_ValidAES(t *testing.T) {
 
 func TestValidateEncryption_MissingActiveProvider(t *testing.T) {
 	cfg := &Config{
-		S3Backend: S3BackendConfig{TargetEndpoint: "http://localhost:9000"},
+		S3Backends: []S3BackendConfig{{TargetEndpoint: "http://localhost:9000"}},
 		Encryption: EncryptionConfig{
 			EncryptionMethodAlias: "missing",
 			Providers: []EncryptionProvider{
@@ -211,7 +211,7 @@ func TestValidateEncryption_MissingActiveProvider(t *testing.T) {
 
 func TestValidateEncryption_MissingAESKey(t *testing.T) {
 	cfg := &Config{
-		S3Backend: S3BackendConfig{TargetEndpoint: "http://localhost:9000"},
+		S3Backends: []S3BackendConfig{{TargetEndpoint: "http://localhost:9000"}},
 		Encryption: EncryptionConfig{
 			EncryptionMethodAlias: "aes",
 			Providers: []EncryptionProvider{
@@ -231,7 +231,7 @@ func TestValidateEncryption_MissingAESKey(t *testing.T) {
 
 func TestValidateEncryption_UnsupportedType(t *testing.T) {
 	cfg := &Config{
-		S3Backend: S3BackendConfig{TargetEndpoint: "http://localhost:9000"},
+		S3Backends: []S3BackendConfig{{TargetEndpoint: "http://localhost:9000"}},
 		Encryption: EncryptionConfig{
 			EncryptionMethodAlias: "default",
 			Providers: []EncryptionProvider{

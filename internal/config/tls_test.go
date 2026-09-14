@@ -20,7 +20,7 @@ func TestTLSConfig(t *testing.T) {
 		{
 			name: "TLS disabled",
 			config: map[string]interface{}{
-				"s3_backend.target_endpoint": "https://s3.amazonaws.com",
+				"s3_backends": []map[string]interface{}{{"target_endpoint": "https://s3.amazonaws.com"}},
 				"encryption": map[string]interface{}{
 					"encryption_method_alias": "way-out",
 					"providers": []map[string]interface{}{
@@ -44,7 +44,7 @@ func TestTLSConfig(t *testing.T) {
 		{
 			name: "TLS enabled with valid files",
 			config: map[string]interface{}{
-				"s3_backend.target_endpoint": "https://s3.amazonaws.com",
+				"s3_backends": []map[string]interface{}{{"target_endpoint": "https://s3.amazonaws.com"}},
 				"encryption": map[string]interface{}{
 					"encryption_method_alias": "way-out",
 					"providers": []map[string]interface{}{
@@ -70,7 +70,7 @@ func TestTLSConfig(t *testing.T) {
 		{
 			name: "TLS enabled without cert_file",
 			config: map[string]interface{}{
-				"s3_backend.target_endpoint": "https://s3.amazonaws.com",
+				"s3_backends": []map[string]interface{}{{"target_endpoint": "https://s3.amazonaws.com"}},
 				"encryption": map[string]interface{}{
 					"encryption_method_alias": "way-out",
 					"providers": []map[string]interface{}{
@@ -96,7 +96,7 @@ func TestTLSConfig(t *testing.T) {
 		{
 			name: "TLS enabled without key_file",
 			config: map[string]interface{}{
-				"s3_backend.target_endpoint": "https://s3.amazonaws.com",
+				"s3_backends": []map[string]interface{}{{"target_endpoint": "https://s3.amazonaws.com"}},
 				"encryption": map[string]interface{}{
 					"encryption_method_alias": "way-out",
 					"providers": []map[string]interface{}{
@@ -122,7 +122,7 @@ func TestTLSConfig(t *testing.T) {
 		{
 			name: "TLS enabled with non-existent cert_file",
 			config: map[string]interface{}{
-				"s3_backend.target_endpoint": "https://s3.amazonaws.com",
+				"s3_backends": []map[string]interface{}{{"target_endpoint": "https://s3.amazonaws.com"}},
 				"encryption": map[string]interface{}{
 					"encryption_method_alias": "way-out",
 					"providers": []map[string]interface{}{
@@ -212,7 +212,7 @@ func TestTLSDefaults(t *testing.T) {
 	setDefaults()
 
 	// Set minimal required config
-	viper.Set("s3_backend.target_endpoint", "https://s3.amazonaws.com")
+	viper.Set("s3_backends", []map[string]interface{}{{"target_endpoint": "https://s3.amazonaws.com"}})
 	viper.Set("encryption.encryption_method_alias", "way-out")
 	viper.Set("encryption.providers", []map[string]interface{}{
 		{"alias": "way-out", "type": "exit"},
@@ -243,7 +243,7 @@ func TestTLSEnvironmentVariables(t *testing.T) {
 	setDefaults()
 
 	// Directly set values in viper instead of relying on environment variable parsing
-	viper.Set("s3_backend.target_endpoint", "https://s3.amazonaws.com")
+	viper.Set("s3_backends", []map[string]interface{}{{"target_endpoint": "https://s3.amazonaws.com"}})
 	viper.Set("encryption.encryption_method_alias", "way-out")
 	viper.Set("encryption.providers", []map[string]interface{}{
 		{"alias": "way-out", "type": "exit"},

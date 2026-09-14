@@ -110,9 +110,9 @@ make build-keygen                          # builds ./build/s3ep-keygen
 # ${S3EP_AES_KEY} reference). s3ep-keygen prints a banner around the key, so
 # take the key line only.
 export S3EP_AES_KEY="$(./build/s3ep-keygen | sed -n 2p)"
-# Edit config/aes-example.yaml: s3_backend.target_endpoint addresses the demo's
-# MinIO by container name (https://minio:9000), so point it at a backend you
-# can reach
+# Edit config/aes-example.yaml: s3_backends[0].target_endpoint addresses the
+# demo's MinIO by container name (https://minio:9000), so point it at a backend
+# you can reach
 
 # The aes provider is licensed: export S3EP_LICENSE_TOKEN or put the token in
 # config/license.jwt first, or the proxy refuses to start (see License below).
@@ -374,18 +374,20 @@ tls:
   cert_file: "/certs/public.crt"  # example
   key_file: "/certs/private.key"  # example
 
-# S3 Backend Configuration
-s3_backend:
+# S3 Backend Configuration. The key is a list and this release reads exactly
+# one entry; a second refuses the start, and the singular s3_backend is refused
+# by name.
+s3_backends:
   # The scheme of target_endpoint decides whether the backend connection uses TLS,
   # and it is required: a scheme-less endpoint refuses the start. http:// refuses
   # the start under every provider, the exit provider included — the backend
   # credential would travel in a SigV4 header over plaintext, and aws-sdk-go-v2
   # will not send an unseekable streaming body without TLS.
-  target_endpoint: "https://s3.amazonaws.com"  # example
-  region: "us-east-1"               # default
-  access_key_id: "your-access-key"  # example
-  secret_key: "your-secret-key"     # example
-  insecure_skip_verify: false       # default; development only
+  - target_endpoint: "https://s3.amazonaws.com"  # example
+    region: "us-east-1"               # default, applied per entry
+    access_key_id: "your-access-key"  # example
+    secret_key: "your-secret-key"     # example
+    insecure_skip_verify: false       # default; development only
 
 # S3 Client Authentication. Required: without at least one client the proxy
 # refuses to start, and there is no unauthenticated mode.
@@ -571,7 +573,10 @@ were removed together with the code that never observed them.
 `GET /health` and `GET /version` answer a JSON document without a signature, and
 they keep answering while the proxy drains so a readiness probe can take the
 instance out of rotation. They are the only unauthenticated paths on the S3
-listener.
+listener. `/version` answers `version`, `commit`, `build_time` and `service`:
+what the binary was stamped with at link time, the same values the
+`s3ep_server_info` metric carries. It answered a hard-coded `dev` until this
+release.
 
 A request to either path counts as the probe **only when it is unsigned and
 carries no query string**. Anything else addressed to them — a signed request, or
@@ -621,10 +626,29 @@ The breaks, all deliberate ([ADR 0017](./docs/adr/0017-stored-data-compatibility
   ([ADR 0013](./docs/adr/0013-a-configuration-key-exists-only-if-code-reads-it.md)).
   The legacy top-level backend block — `target_endpoint`, `region`,
   `access_key_id`, `secret_key`, `use_tls`, `skip_ssl_verification` — is no
-  longer migrated into `s3_backend`, and it is now named in the refusal rather
-  than producing only `s3_backend.target_endpoint is required`.
+  longer migrated into the backend block, and it is now named in the refusal
+  rather than producing only `s3_backends[0].target_endpoint is required`.
   **Go through your configuration before upgrading:** a leftover key, or a
   misspelled one, stops the proxy at startup, and the error names it.
+- **`s3_backend` is now the list `s3_backends`.** The old key is refused at
+  startup by a message of its own telling you to move the block under a single
+  `- ` entry. The entry's fields — `target_endpoint`, `region`, `access_key_id`,
+  `secret_key`, `insecure_skip_verify` — and their checks are unchanged, so a
+  file works again as soon as the block is indented; startup messages about the
+  backend now name `s3_backends[0]`. **This release reads exactly one entry and
+  refuses a second by name**: the list is the shape, not yet the feature. It is
+  here because backends are symmetric — a deployment that keeps several in sync
+  names them all and none of them is *the* backend — and because turning a
+  mapping into a list in a later release would refuse every configuration
+  written for this one, which a major release is the place to pay for
+  ([ADR 0013](./docs/adr/0013-a-configuration-key-exists-only-if-code-reads-it.md) D11).
+- **The Helm chart installs one instance and refuses a second.** `replicaCount`
+  above 1 and `autoscaling.enabled: true` both fail the render with a message
+  naming the reason, and the shipped `values-production.yaml` — three replicas
+  and autoscaling to twenty until this release — now installs one, with
+  autoscaling and the pod disruption budget off. A deployment running more than
+  one pod has to come down to one before it upgrades; why it never worked is
+  under [Kubernetes with Helm](#kubernetes-with-helm).
 - **`optimizations.streaming_segment_size` is now
   `optimizations.multipart_part_size`.** The old name is refused at startup by a
   message of its own that names the replacement, rather than as an unknown key:
@@ -672,8 +696,8 @@ The breaks, all deliberate ([ADR 0017](./docs/adr/0017-stored-data-compatibility
 Configuration values can reference environment variables using the `${VAR_NAME}` syntax. This avoids storing secrets directly in config files.
 
 **Supported fields:**
-- `s3_backend.target_endpoint`, `s3_backend.region`
-- `s3_backend.access_key_id`, `s3_backend.secret_key`
+- `s3_backends[].target_endpoint`, `s3_backends[].region`
+- `s3_backends[].access_key_id`, `s3_backends[].secret_key`
 - `s3_clients[].access_key_id`, `s3_clients[].secret_key`
 - All string values in `encryption.providers[].config` — for the `aes` provider that is `aes_key`
 
@@ -690,9 +714,9 @@ which is why a control an operator writes down stays in force.
 
 **Example configuration:**
 ```yaml
-s3_backend:
-  access_key_id: "${S3_ACCESS_KEY_ID}"
-  secret_key: "${S3_SECRET_KEY}"
+s3_backends:
+  - access_key_id: "${S3_ACCESS_KEY_ID}"
+    secret_key: "${S3_SECRET_KEY}"
 
 s3_clients:
   - type: "static"
@@ -726,10 +750,10 @@ value it needs from an environment variable. It is what makes a plain
 
 | Variable | Configuration key | What it is |
 |---|---|---|
-| `S3EP_BACKEND_ENDPOINT` | `s3_backend.target_endpoint` | The S3 backend, **with a scheme**. `http://` is refused under every provider, the exit provider included |
-| `S3EP_BACKEND_REGION` | `s3_backend.region` | The backend's region |
-| `S3EP_BACKEND_ACCESS_KEY_ID` | `s3_backend.access_key_id` | The credential the proxy uses against the backend |
-| `S3EP_BACKEND_SECRET_KEY` | `s3_backend.secret_key` | — |
+| `S3EP_BACKEND_ENDPOINT` | `s3_backends[0].target_endpoint` | The S3 backend, **with a scheme**. `http://` is refused under every provider, the exit provider included |
+| `S3EP_BACKEND_REGION` | `s3_backends[0].region` | The backend's region |
+| `S3EP_BACKEND_ACCESS_KEY_ID` | `s3_backends[0].access_key_id` | The credential the proxy uses against the backend |
+| `S3EP_BACKEND_SECRET_KEY` | `s3_backends[0].secret_key` | — |
 | `S3EP_CLIENT_ACCESS_KEY_ID` | `s3_clients[0].access_key_id` | The credential a client uses against the proxy. Minimum 8 characters |
 | `S3EP_CLIENT_SECRET_KEY` | `s3_clients[0].secret_key` | Minimum 16 characters |
 | `S3EP_AES_KEY` | `encryption.providers[0].config.aes_key` | The key encryption key: base64 of exactly 32 random bytes |
@@ -949,17 +973,26 @@ helm install s3-encryption-proxy . \
 > `license_file` at the mount. See the chart's own
 > [README](./deploy/helm/s3-encryption-proxy/README.md).
 
+> **One instance per release, and the chart refuses a second.** `replicaCount`
+> above 1 and `autoscaling.enabled: true` both fail the render. A client-driven
+> multipart upload is held in the process that answered `CreateMultipartUpload`
+> — its part table and the object's data key live there and nowhere else — so a
+> part balanced onto another pod is answered `404 NoSuchUpload`, and nothing in
+> the chart makes a client stay on one pod: the Service sets no session affinity
+> and the default Ingress annotations carry none. A second replica does not take
+> a share of the work, it takes requests belonging to an upload the first one is
+> holding. Running several cooperating proxies is a separate product, the
+> `s3-encryption-operator`, with a chart of its own
+> ([ADR 0033](./docs/adr/0033-a-proxy-instance-holds-its-uploads.md)).
+
 Example custom values (the shipped `values-production.yaml` sets different
-numbers; this block shows the keys, not that file):
+resource numbers; this block shows the keys, not that file):
 
 ```yaml
-replicaCount: 3
+replicaCount: 1        # anything above 1 fails the render
 
 autoscaling:
-  enabled: true
-  minReplicas: 2
-  maxReplicas: 10
-  targetCPUUtilizationPercentage: 70
+  enabled: false       # refused as well: an autoscaler is a second replica
 
 resources:
   limits:
@@ -1256,8 +1289,8 @@ its own.
 
 `HEAD /{bucket}` calls the backend's `HeadBucket`. It answers `x-amz-bucket-region`
 from the backend when the backend sends one, and otherwise with the configured
-`s3_backend.region` — **the region a client reads here is the proxy's statement,
-not the backend's**, because MinIO sends no region header at all.
+`s3_backends[0].region` — **the region a client reads here is the proxy's
+statement, not the backend's**, because MinIO sends no region header at all.
 
 ### Storage headers on upload
 

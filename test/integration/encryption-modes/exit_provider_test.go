@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/health"
 	"io"
 	"net"
 	"net/http"
@@ -72,14 +73,14 @@ func StartExitProviderProxyInstanceTuned(t *testing.T, tune func(*config.Config)
 	cfg.LogLevel = "error"
 
 	// Override target endpoint to use localhost (should already be correct in exit-example.yaml)
-	cfg.S3Backend.TargetEndpoint = "https://localhost:9000"
+	cfg.S3Backends[0].TargetEndpoint = "https://localhost:9000"
 
 	if tune != nil {
 		tune(cfg)
 	}
 
 	// Create proxy server
-	server, err := proxy.NewServer(cfg)
+	server, err := proxy.NewServer(cfg, health.BuildInfo{})
 	require.NoError(t, err, "Failed to create proxy server")
 
 	// Create context for the server
@@ -370,12 +371,12 @@ func TestExitProviderMultipleObjects(t *testing.T) {
 func exitTestConfig(activeAlias, providers string) string {
 	return fmt.Sprintf(`---
 bind_address: "127.0.0.1:0"
-s3_backend:
-  target_endpoint: %q
-  region: "us-east-1"
-  access_key_id: %q
-  secret_key: %q
-  insecure_skip_verify: true
+s3_backends:
+  - target_endpoint: %q
+    region: "us-east-1"
+    access_key_id: %q
+    secret_key: %q
+    insecure_skip_verify: true
 s3_clients:
   - type: "static"
     access_key_id: %q

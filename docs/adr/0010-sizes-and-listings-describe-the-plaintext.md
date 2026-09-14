@@ -147,8 +147,8 @@ receives before using them, re-encodes on output only when the client asked, and
 `EncodingType` in that case.
 
 **D10.** `HEAD /{bucket}` is a bucket existence check, not a listing with a page size of zero. It
-answers with `x-amz-bucket-region`, falling back to the configured `s3_backend.region` when the
-backend states no region.
+answers with `x-amz-bucket-region`, falling back to the `region` configured under `s3_backends`
+when the backend states no region.
 
 **D11.** Every error on a listing path is an S3 XML error document, like every other error the
 proxy returns.

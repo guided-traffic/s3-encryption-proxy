@@ -56,7 +56,7 @@ type, `handlers/bucket/listing.go` for the stored-to-plaintext conversion.
 | `utils/` | One file: the detached, 30-second context that lets a multipart abort finish after the client is gone |
 | `handlers/object/` | GET, PUT, HEAD, DELETE, DeleteObjects, ranged reads, the internal multipart producer, and the object sub-resources: `?tagging`, `?retention` and `?legal-hold` forwarded, `?acl`, `?select` and `?torrent` refused |
 | `handlers/multipart/` | The client-driven multipart verbs |
-| `handlers/bucket/`, `handlers/root/`, `handlers/health/` | Bucket verbs and sub-resources, ListBuckets, `/health` and `/version` |
+| `handlers/bucket/`, `handlers/root/`, `handlers/health/` | Bucket verbs and sub-resources, ListBuckets, `/health`, and the version, commit and build time the binary was linked with on `/version` |
 | `interfaces/s3_backend.go` | The 52 methods of the AWS SDK's S3 client the handlers compile against. Mocked in the handler unit tests. `CopyObject` is deliberately absent: both server-side copy verbs are refused ([ADR 0011](../adr/0011-the-proxy-owns-the-part-layout.md) D9) |
 
 What each verb actually does is in [request-paths.md](request-paths.md).

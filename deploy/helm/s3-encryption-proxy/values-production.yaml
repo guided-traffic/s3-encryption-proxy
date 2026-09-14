@@ -8,7 +8,11 @@
 # deploying. Secrets are never stored here - pass them via --set or an external
 # secret manager (see README.md).
 
-replicaCount: 3
+# One instance, and the chart refuses more: a client-driven multipart upload is
+# held in the process that created it, so a part reaching another pod is answered
+# 404 NoSuchUpload. Several cooperating proxies are the s3-encryption-operator's
+# job, not this chart's.
+replicaCount: 1
 
 image:
   # registry/repository come from values.yaml (docker.io/guidedtraffic/s3-encryption-proxy).
@@ -24,21 +28,19 @@ resources:
     cpu: 500m
     memory: 512Mi
 
-# Enable autoscaling in production
+# Autoscaling is refused by this chart for the same reason replicaCount is: a new
+# pod does not take a share of the work, it takes requests that belong to an
+# upload another pod is holding.
 autoscaling:
-  enabled: true
-  minReplicas: 3
-  maxReplicas: 20
-  targetCPUUtilizationPercentage: 70
-  targetMemoryUtilizationPercentage: 80
+  enabled: false
 
-# Keep the service available during node drains and cluster upgrades.
-# maxUnavailable stays drainable at any replica count that autoscaling picks.
+# A single instance cannot be drained without downtime, so the budget would only
+# block the drain. Leave it off until the operator brings instances that can hand
+# work over.
 podDisruptionBudget:
-  enabled: true
-  maxUnavailable: 1
+  enabled: false
 
-# Strict affinity rules for production: never place two replicas on one node
+# Kept for the day a second instance is possible; inert at one replica.
 affinity:
   podAntiAffinity:
     requiredDuringSchedulingIgnoredDuringExecution:
@@ -117,12 +119,12 @@ config: |
   log_format: "json"
   log_health_requests: false
 
-  s3_backend:
-    target_endpoint: "https://s3.amazonaws.com"  # CHANGE ME
-    region: "us-east-1"                          # CHANGE ME
-    access_key_id: "${S3_ACCESS_KEY_ID}"
-    secret_key: "${S3_SECRET_KEY}"
-    insecure_skip_verify: false
+  s3_backends:
+    - target_endpoint: "https://s3.amazonaws.com"  # CHANGE ME
+      region: "us-east-1"                          # CHANGE ME
+      access_key_id: "${S3_ACCESS_KEY_ID}"
+      secret_key: "${S3_SECRET_KEY}"
+      insecure_skip_verify: false
 
   s3_clients:
     - type: "static"

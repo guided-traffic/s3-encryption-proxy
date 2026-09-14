@@ -101,8 +101,8 @@ func TestCfgDefaultConfigLoads(t *testing.T) {
 	cfg, err := Load()
 
 	require.NoError(t, err, "the configuration the image ships with must load")
-	assert.Equal(t, "https://minio:9000", cfg.S3Backend.TargetEndpoint)
-	assert.Equal(t, "eu-central-1", cfg.S3Backend.Region)
+	assert.Equal(t, "https://minio:9000", cfg.Backend().TargetEndpoint)
+	assert.Equal(t, "eu-central-1", cfg.Backend().Region)
 	require.Len(t, cfg.S3Clients, 1)
 	assert.Equal(t, "username0", cfg.S3Clients[0].AccessKeyID)
 	require.Len(t, cfg.Encryption.Providers, 1)

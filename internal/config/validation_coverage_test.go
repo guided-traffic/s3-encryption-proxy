@@ -56,7 +56,7 @@ func CfgExitProviderConfig() *Config {
 	return &Config{
 		// https, because a plain-HTTP backend is refused under every provider
 		// (ADR 0013 D5) and would mask the check each test here is about.
-		S3Backend: S3BackendConfig{TargetEndpoint: "https://localhost:9000"},
+		S3Backends: []S3BackendConfig{{TargetEndpoint: "https://localhost:9000"}},
 		Encryption: EncryptionConfig{
 			EncryptionMethodAlias: "way-out",
 			Providers: []EncryptionProvider{
@@ -542,11 +542,11 @@ func TestCfgValidateOptimizationsBoundaries(t *testing.T) {
 func TestCfgValidateRequiresTargetEndpoint(t *testing.T) {
 	t.Run("missing everywhere", func(t *testing.T) {
 		cfg := CfgExitProviderConfig()
-		cfg.S3Backend.TargetEndpoint = ""
+		cfg.S3Backends[0].TargetEndpoint = ""
 
 		err := validate(cfg)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "s3_backend.target_endpoint is required")
+		assert.Contains(t, err.Error(), "s3_backends[0].target_endpoint is required")
 	})
 }
 
@@ -765,7 +765,7 @@ func TestCfgValidateMonitoringPprofBindAddress(t *testing.T) {
 func TestCfgValidateBackendTransport(t *testing.T) {
 	encrypting := func(endpoint string) *Config {
 		cfg := CfgExitProviderConfig()
-		cfg.S3Backend.TargetEndpoint = endpoint
+		cfg.S3Backends[0].TargetEndpoint = endpoint
 		cfg.Encryption.EncryptionMethodAlias = "aes"
 		cfg.Encryption.Providers = []EncryptionProvider{
 			{Alias: "aes", Type: "aes", Config: map[string]interface{}{"aes_key": "k"}},
@@ -774,7 +774,7 @@ func TestCfgValidateBackendTransport(t *testing.T) {
 	}
 	exiting := func(endpoint string) *Config {
 		cfg := CfgExitProviderConfig()
-		cfg.S3Backend.TargetEndpoint = endpoint
+		cfg.S3Backends[0].TargetEndpoint = endpoint
 		return cfg
 	}
 
@@ -787,7 +787,7 @@ func TestCfgValidateBackendTransport(t *testing.T) {
 		{
 			name:        "plain http under an encrypting provider",
 			cfg:         encrypting("http://minio:9000"),
-			expectError: "s3_backend.target_endpoint is plain HTTP",
+			expectError: "s3_backends[0].target_endpoint is plain HTTP",
 		},
 		{
 			// The exception this used to admit let the proxy start and then fail
@@ -796,7 +796,7 @@ func TestCfgValidateBackendTransport(t *testing.T) {
 			// and stored fine.
 			name:        "plain http under the exit provider",
 			cfg:         exiting("http://minio:9000"),
-			expectError: "s3_backend.target_endpoint is plain HTTP",
+			expectError: "s3_backends[0].target_endpoint is plain HTTP",
 		},
 		{name: "https under the exit provider", cfg: exiting("https://minio:9000")},
 		{
@@ -813,7 +813,7 @@ func TestCfgValidateBackendTransport(t *testing.T) {
 			name: "no provider resolves, so the check abstains",
 			cfg: func() *Config {
 				cfg := CfgExitProviderConfig()
-				cfg.S3Backend.TargetEndpoint = "http://minio:9000"
+				cfg.S3Backends[0].TargetEndpoint = "http://minio:9000"
 				cfg.Encryption.EncryptionMethodAlias = "does-not-exist"
 				return cfg
 			}(),

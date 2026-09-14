@@ -44,25 +44,29 @@ chart's own `${VAR}` set, which overlaps the image's seven only in
 ## 1. Defaults
 
 `setDefaults` writes the defaults into viper before the file is read, so a key
-the file omits still has a value. Two things qualify that. `shutdown_timeout`
+the file omits still has a value. Three things qualify that. `shutdown_timeout`
 has no viper default at all — its 30-second fallback lives in the two places in
 the binary that consume it, the shutdown path in `main.go` and
 `Server.shutdownBudget`, and again in the Helm chart, whose
 `terminationGracePeriodSeconds` helper derives the pod's grace period from the
-same key and falls back to 30 as well. And `multipart_part_size`,
-`multipart_upload_concurrency` and `encryption.metadata_key_prefix` restate their
-default as a literal at the point of use as well. `setDefaults` fills all three,
-so an omitted key never reaches those branches — but a written `0` does: a value
-in the file beats a viper default, and `validateOptimizations` range-checks only
-a non-zero value, so `multipart_part_size: 0` and
-`multipart_upload_concurrency: 0` pass validation and are then replaced by the
-literal at the point of use, which is the silent fixup ADR 0017 D8 rules out.
-`encryption.metadata_key_prefix` has no such hole: an explicit empty string is
-non-nil and is refused by the prefix pattern.
+same key and falls back to 30 as well. `s3_backends[].region` has none either,
+and cannot: viper defaults a key, not a list element, so `resolveBackends`
+applies `us-east-1` to an entry that names no region, after the unmarshal — and
+therefore after the `${VAR}` expansion, so a region written as a reference to an
+unset variable refuses the start rather than falling back. And
+`multipart_part_size`, `multipart_upload_concurrency` and
+`encryption.metadata_key_prefix` restate their default as a literal at the point
+of use as well. `setDefaults` fills all three, so an omitted key never reaches
+those branches — but a written `0` does: a value in the file beats a viper
+default, and `validateOptimizations` range-checks only a non-zero value, so
+`multipart_part_size: 0` and `multipart_upload_concurrency: 0` pass validation
+and are then replaced by the literal at the point of use, which is the silent
+fixup ADR 0017 D8 rules out. `encryption.metadata_key_prefix` has no such hole:
+an explicit empty string is non-nil and is refused by the prefix pattern.
 
 A default that also appears in a shipped YAML file is two sources that drift, so
 `config/default.yaml` restates no default value. It does name one key that has a
-default — `s3_backend.region`, `us-east-1` in `setDefaults` — as
+default — `s3_backends[].region`, the `us-east-1` above — as
 `${S3EP_BACKEND_REGION}`, because the image asks a deployment for its region
 rather than assuming it, and naming the key there makes that variable mandatory.
 The other six references are keys with no default at all.
@@ -71,7 +75,7 @@ The other six references are keys with no default at all.
 
 `Load` unmarshals with `ErrorUnused`, so a key the proxy does not define refuses
 the start and the error names it (ADR 0013 D11). A misspelling is caught by the
-same mechanism, with the one boundary described below. Three checks run before
+same mechanism, with the one boundary described below. Four checks run before
 the unmarshal, for two different reasons.
 `optimizations.multipart_session_max_age` is refused by name because its meaning
 moved into `multipart_session_idle_timeout` rather than disappearing — the same
@@ -80,7 +84,11 @@ operator reads about the change once instead of inferring it from behaviour.
 `optimizations.streaming_segment_size` is refused by name for the mirror of that
 reason: it is now `optimizations.multipart_part_size`, with the value and its
 checks unchanged, and a generic unknown-key error would leave the operator to
-guess that the setting still exists under another name. A
+guess that the setting still exists under another name. `s3_backend` is refused
+by name for the same reason once more: the block is now one entry of the list
+`s3_backends`, so its shape changed and its meaning did not, and the message
+says to move it under a single `- ` entry rather than leaving a generic
+unknown-key error to read as a setting that is gone. A
 `multipart_session_idle_timeout` below 1 is refused there because `setDefaults`
 fills 3600: in the decoded struct an absent key and a written 0 look the same,
 so the check reads `viper.IsSet` to see what the configuration actually wrote
@@ -110,11 +118,16 @@ surface at all.
 `expandConfigEnvVars` (`internal/config/envexpand.go`) resolves `${VAR}` in a
 **named list of fields**, after the unmarshal and before validation:
 
-- `s3_backend.target_endpoint`, `s3_backend.region`
-- `s3_backend.access_key_id`, `s3_backend.secret_key`
+- `s3_backends[].target_endpoint`, `s3_backends[].region`
+- `s3_backends[].access_key_id`, `s3_backends[].secret_key`
 - `s3_clients[].access_key_id`, `s3_clients[].secret_key`
 - every string value directly under `encryption.providers[].config` — a nested
   map is skipped, not descended into
+
+Every entry of `s3_backends` is walked, not only the one this release serves
+from, and an error names the entry it means: `s3_backends[0].secret_key`. The
+expansion also runs before the entry count is checked, so an unset variable in
+a second entry is reported before that second entry is refused.
 
 The list is per field rather than "every string" so that a value the loader has
 no business rewriting — a certificate path, a description, a metadata prefix —

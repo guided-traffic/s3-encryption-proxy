@@ -188,6 +188,28 @@ worse than no control: it gets relied upon.
    naming its secret. Issuing a certificate nothing uses reads as "TLS is
    configured" and is not.
 */}}
+{{/*
+One instance, and the chart refuses to render a second.
+
+A client-driven multipart upload's part table and its data key live in the
+process that created the upload and nowhere else, so an UploadPart that lands on
+another pod is answered 404 NoSuchUpload. Nothing in this chart makes a client
+stick to one pod: the Service sets no sessionAffinity and the Ingress carries no
+affinity annotation by default. Two replicas therefore do not share the workload,
+they break uploads that a single replica completes.
+
+This is the single-instance chart. Running several proxies that cooperate is the
+operator's job and has a chart of its own.
+*/}}
+{{- define "s3-encryption-proxy.validateReplicas" -}}
+{{- if gt (int .Values.replicaCount) 1 -}}
+{{- fail (printf "replicaCount is %d and this chart installs one instance. A client-driven multipart upload is held in the process that created it, so a part that reaches another pod is answered 404 NoSuchUpload - two replicas break uploads that one completes. Set replicaCount: 1; several cooperating proxies are the s3-encryption-operator's job." (int .Values.replicaCount)) -}}
+{{- end -}}
+{{- if .Values.autoscaling.enabled -}}
+{{- fail "autoscaling.enabled is true and this chart installs one instance. Scaling out does not share the workload here: a client-driven multipart upload is held in the process that created it, so a part that reaches a new pod is answered 404 NoSuchUpload. Set autoscaling.enabled: false; scaling several cooperating proxies is the s3-encryption-operator's job." -}}
+{{- end -}}
+{{- end }}
+
 {{- define "s3-encryption-proxy.validateTLS" -}}
 {{- if .Values.serviceTLS.enabled -}}
 {{- if and (not .Values.serviceTLS.existingSecret) (not .Values.serviceTLS.issuer.name) -}}

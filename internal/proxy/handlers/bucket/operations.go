@@ -153,7 +153,7 @@ func (h *Handler) handleHeadBucket(w http.ResponseWriter, r *http.Request, bucke
 		region = aws.ToString(output.BucketRegion)
 	}
 	if region == "" && h.config != nil {
-		region = h.config.S3Backend.Region
+		region = h.config.Backend().Region
 	}
 	if region != "" {
 		w.Header().Set("x-amz-bucket-region", region)

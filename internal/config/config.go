@@ -158,8 +158,13 @@ type Config struct {
 	// Monitoring configuration
 	Monitoring MonitoringConfig `mapstructure:"monitoring"`
 
-	// S3 configuration
-	S3Backend S3BackendConfig `mapstructure:"s3_backend"`
+	// S3 configuration. The key is a list because backends are symmetric: a
+	// deployment that keeps several in sync names them all, and none of them is
+	// "the" backend. This release reads exactly one and refuses a second, so the
+	// list is the shape and not yet the feature - it is here now because turning
+	// a mapping into a list later would refuse every existing configuration
+	// (ADR 0013 D11), and this release is where that is paid for.
+	S3Backends []S3BackendConfig `mapstructure:"s3_backends"`
 
 	// S3 Client Authentication configuration
 	S3Clients  []S3ClientCredentials `mapstructure:"s3_clients"`
@@ -264,6 +269,16 @@ func Load() (*Config, error) {
 				"part, and the plaintext size above which a PUT becomes a multipart upload")
 	}
 
+	// The backend block is a list now. Refused by name because the key is one
+	// every deployment writes, and because the shape changed rather than the
+	// meaning: a generic unknown-key error would read as "this setting is gone".
+	if viper.IsSet("s3_backend") {
+		return nil, fmt.Errorf(
+			"s3_backend is now the list s3_backends; move the block under a single " +
+				"\"- \" entry and its fields are unchanged. It is a list because backends are " +
+				"symmetric; this release reads exactly one")
+	}
+
 	// 0 does not mean "no timeout" here, it means "every session is already
 	// idle": the sweeper would end a client-driven upload at the backend moments
 	// after it opened. setDefaults fills 3600, so this is checked against what
@@ -328,6 +343,12 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("environment variable expansion failed: %w", err)
 	}
 
+	// After the expansion, never before: resolveBackends copies the entry into
+	// cfg.Backend(), and a copy taken first would carry the ${VAR} text itself.
+	if err := resolveBackends(&cfg); err != nil {
+		return nil, err
+	}
+
 	// Validate required fields
 	if err := validate(&cfg); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
@@ -384,9 +405,8 @@ func setDefaults() {
 	viper.SetDefault("read_header_timeout", 30)
 	viper.SetDefault("idle_timeout", 60)
 
-	// New s3_backend configuration defaults
-	viper.SetDefault("s3_backend.region", "us-east-1")
-	viper.SetDefault("s3_backend.insecure_skip_verify", false)
+	// s3_backends is a list, and viper defaults a key, not a list element, so
+	// the region default is applied per entry in resolveBackends instead.
 
 	// TLS defaults
 	viper.SetDefault("tls.enabled", false)
@@ -419,10 +439,51 @@ func setDefaults() {
 
 }
 
+// resolveBackends picks the one backend this release serves from, and applies the
+// per-entry defaults viper cannot: it fills a key, not a list element.
+//
+// A second entry is refused rather than ignored. Reading the first and dropping
+// the rest is the accept-and-discard shape this project refuses everywhere else
+// (ADR 0007), and it would be worse here than usual: an operator who listed two
+// backends believing both were written to would have one of them silently empty.
+func resolveBackends(cfg *Config) error {
+	switch len(cfg.S3Backends) {
+	case 0:
+		return fmt.Errorf("s3_backends is required: name exactly one backend")
+	case 1:
+	default:
+		return fmt.Errorf(
+			"s3_backends names %d backends and this release serves exactly one. The key is a "+
+				"list because backends are symmetric and a later release will keep several in "+
+				"sync; until then a second entry would be configuration nothing reads",
+			len(cfg.S3Backends))
+	}
+
+	if cfg.S3Backends[0].Region == "" {
+		cfg.S3Backends[0].Region = defaultBackendRegion
+	}
+	return nil
+}
+
+// Backend is the backend this release serves from. s3_backends is a list because
+// backends are symmetric and a later release will keep several in sync; this one
+// names exactly one, which resolveBackends enforces. The zero value keeps a
+// half-built configuration from panicking in a validator that runs before it.
+func (cfg *Config) Backend() S3BackendConfig {
+	if len(cfg.S3Backends) == 0 {
+		return S3BackendConfig{}
+	}
+	return cfg.S3Backends[0]
+}
+
+// defaultBackendRegion is what an entry that names no region gets. S3 requires a
+// region in the signature whether or not the backend cares about it.
+const defaultBackendRegion = "us-east-1"
+
 // validate validates the configuration
 func validate(cfg *Config) error {
-	if cfg.S3Backend.TargetEndpoint == "" {
-		return fmt.Errorf("s3_backend.target_endpoint is required")
+	if cfg.Backend().TargetEndpoint == "" {
+		return fmt.Errorf("s3_backends[0].target_endpoint is required")
 	}
 
 	// Validate TLS configuration
@@ -483,7 +544,7 @@ func validate(cfg *Config) error {
 func backendUsesTLS(endpoint string) (bool, error) {
 	parsed, err := url.Parse(endpoint)
 	if err != nil {
-		return false, fmt.Errorf("s3_backend.target_endpoint is not a URL (%q): %w", endpoint, err)
+		return false, fmt.Errorf("s3_backends[0].target_endpoint is not a URL (%q): %w", endpoint, err)
 	}
 	switch parsed.Scheme {
 	case "https":
@@ -492,7 +553,7 @@ func backendUsesTLS(endpoint string) (bool, error) {
 		return false, nil
 	default:
 		return false, fmt.Errorf(
-			"s3_backend.target_endpoint must start with https:// or http:// (%q)", endpoint)
+			"s3_backends[0].target_endpoint must start with https:// or http:// (%q)", endpoint)
 	}
 }
 
@@ -506,7 +567,7 @@ func backendUsesTLS(endpoint string) (bool, error) {
 // When no provider resolves the check abstains — the configuration has other
 // problems and this one has nothing to say about them.
 func validateBackendTransport(cfg *Config) error {
-	usesTLS, err := backendUsesTLS(cfg.S3Backend.TargetEndpoint)
+	usesTLS, err := backendUsesTLS(cfg.Backend().TargetEndpoint)
 	if err != nil {
 		return err
 	}
@@ -520,13 +581,13 @@ func validateBackendTransport(cfg *Config) error {
 	}
 
 	return fmt.Errorf(
-		"s3_backend.target_endpoint is plain HTTP (%q), and the active encryption provider is %q "+
+		"s3_backends[0].target_endpoint is plain HTTP (%q), and the active encryption provider is %q "+
 			"(type %q): the backend credential would travel in a SigV4 header over plaintext and a "+
 			"listener on that leg would learn every bucket name, object key and object size. "+
 			"aws-sdk-go-v2 also only sends an unseekable streaming body with UNSIGNED-PAYLOAD over "+
 			"TLS, so a single-request upload fails with \"failed to seek body to start\". "+
 			"Use an https:// endpoint",
-		cfg.S3Backend.TargetEndpoint, provider.Alias, provider.Type)
+		cfg.Backend().TargetEndpoint, provider.Alias, provider.Type)
 }
 
 // validateListenerBudgets checks the four listener budgets of ADR 0015. The two

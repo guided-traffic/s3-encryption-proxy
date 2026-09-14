@@ -1275,7 +1275,7 @@ func TestBktHeadBucketIsARealHeadBucket(t *testing.T) {
 		backend := &MockS3Backend{}
 		captured := BktcaptureHead(backend, &s3.HeadBucketOutput{BucketRegion: aws.String("eu-central-1")})
 		h := BktnewHandlerWithConfig(backend, &config.Config{
-			S3Backend: config.S3BackendConfig{Region: "us-east-1"},
+			S3Backends: []config.S3BackendConfig{{Region: "us-east-1"}},
 		})
 
 		w := Bktserve(h.Handle, http.MethodHead, "/"+bktBucket, nil)
@@ -1295,7 +1295,7 @@ func TestBktHeadBucketIsARealHeadBucket(t *testing.T) {
 		backend := &MockS3Backend{}
 		BktcaptureHead(backend, &s3.HeadBucketOutput{})
 		h := BktnewHandlerWithConfig(backend, &config.Config{
-			S3Backend: config.S3BackendConfig{Region: "us-east-1"},
+			S3Backends: []config.S3BackendConfig{{Region: "us-east-1"}},
 		})
 
 		w := Bktserve(h.Handle, http.MethodHead, "/"+bktBucket, nil)

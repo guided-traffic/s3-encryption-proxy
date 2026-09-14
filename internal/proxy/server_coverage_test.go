@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/health"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -40,12 +41,12 @@ func RtPxconfig() *config.Config {
 	return &config.Config{
 		BindAddress: "127.0.0.1:0",
 		LogLevel:    "error",
-		S3Backend: config.S3BackendConfig{
+		S3Backends: []config.S3BackendConfig{{
 			TargetEndpoint: "https://minio.invalid:9000",
 			Region:         "us-east-1",
 			AccessKeyID:    "backend-key",
 			SecretKey:      "backend-secret",
-		},
+		}},
 		S3Clients: []config.S3ClientCredentials{
 			{
 				Type:        "static",
@@ -117,7 +118,7 @@ func TestRtPxNewServerRejectsUnusableConfig(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			server, err := NewServer(tc.cfg)
+			server, err := NewServer(tc.cfg, health.BuildInfo{})
 			require.Error(t, err)
 			assert.Nil(t, server, "a server must not be returned alongside an error")
 			assert.Contains(t, err.Error(), tc.wantMsg)
@@ -148,7 +149,7 @@ func TestRtPxMetadataPrefixResolution(t *testing.T) {
 			cfg := RtPxconfig()
 			cfg.Encryption.MetadataKeyPrefix = tc.prefix
 
-			server, err := NewServer(cfg)
+			server, err := NewServer(cfg, health.BuildInfo{})
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, server.encryptionMgr.GetMetadataKeyPrefix(),
 				"the prefix the handlers write and read is the manager's")
@@ -177,7 +178,7 @@ func TestRtPxNewServerLoadsAllProvidersButActivatesOne(t *testing.T) {
 		Config: map[string]interface{}{"aes_key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="},
 	})
 
-	server, err := NewServer(cfg)
+	server, err := NewServer(cfg, health.BuildInfo{})
 	require.NoError(t, err)
 
 	providers := server.encryptionMgr.GetLoadedProviders()
@@ -204,7 +205,7 @@ func TestRtPxNewServerLoadsAllProvidersButActivatesOne(t *testing.T) {
 func TestRtPxHealthReportsShutdownState(t *testing.T) {
 	logrus.SetLevel(logrus.ErrorLevel)
 
-	server, err := NewServer(RtPxconfig())
+	server, err := NewServer(RtPxconfig(), health.BuildInfo{})
 	require.NoError(t, err)
 
 	get := func() *httptest.ResponseRecorder {
@@ -239,7 +240,7 @@ func TestRtPxHealthReportsShutdownState(t *testing.T) {
 func TestRtPxRequestTrackerCountsRequests(t *testing.T) {
 	logrus.SetLevel(logrus.ErrorLevel)
 
-	server, err := NewServer(RtPxconfig())
+	server, err := NewServer(RtPxconfig(), health.BuildInfo{})
 	require.NoError(t, err)
 
 	var started, ended, inFlightDuringRequest int
@@ -268,7 +269,7 @@ func TestRtPxStartReportsListenFailure(t *testing.T) {
 
 	cfg := RtPxconfig()
 	cfg.BindAddress = "127.0.0.1:99999" // outside the valid port range
-	server, err := NewServer(cfg)
+	server, err := NewServer(cfg, health.BuildInfo{})
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -284,7 +285,7 @@ func TestRtPxStartReportsListenFailure(t *testing.T) {
 func TestRtPxStartShutsDownOnContextCancel(t *testing.T) {
 	logrus.SetLevel(logrus.ErrorLevel)
 
-	server, err := NewServer(RtPxconfig()) // port 0: the OS picks a free port
+	server, err := NewServer(RtPxconfig(), health.BuildInfo{}) // port 0: the OS picks a free port
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -338,7 +339,7 @@ func (l *RtPxfailingListener) Addr() net.Addr {
 func TestRtPxStartReportsShutdownFailure(t *testing.T) {
 	logrus.SetLevel(logrus.ErrorLevel)
 
-	server, err := NewServer(RtPxconfig())
+	server, err := NewServer(RtPxconfig(), health.BuildInfo{})
 	require.NoError(t, err)
 
 	ln := RtPxnewFailingListener()
@@ -425,7 +426,7 @@ func TestRtPxListenerBudgetsReachTheServer(t *testing.T) {
 	cfg.ReadHeaderTimeout = 33
 	cfg.IdleTimeout = 44
 
-	server, err := NewServer(cfg)
+	server, err := NewServer(cfg, health.BuildInfo{})
 	require.NoError(t, err)
 
 	assert.Equal(t, 11*time.Second, server.httpServer.ReadTimeout, "read_timeout bounds a request body")
@@ -439,7 +440,7 @@ func TestRtPxListenerBudgetsReachTheServer(t *testing.T) {
 // link speed (ADR 0015). A fixed default here made the largest servable object a
 // function of the client's bandwidth.
 func TestRtPxTransferBudgetsDefaultToNoDeadline(t *testing.T) {
-	server, err := NewServer(RtPxconfig())
+	server, err := NewServer(RtPxconfig(), health.BuildInfo{})
 	require.NoError(t, err)
 
 	assert.Zero(t, server.httpServer.ReadTimeout, "an upload may take as long as it takes")

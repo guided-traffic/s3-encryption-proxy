@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/health"
 	"io"
 	"net"
 	"os"
@@ -76,10 +77,10 @@ func StartAESProviderProxyInstance(t *testing.T) *AESProxyTestInstance {
 	cfg.LogLevel = "error"
 
 	// Override target endpoint to use localhost instead of minio service name
-	cfg.S3Backend.TargetEndpoint = "https://localhost:9000"
+	cfg.S3Backends[0].TargetEndpoint = "https://localhost:9000"
 
 	// Create proxy server
-	server, err := proxy.NewServer(cfg)
+	server, err := proxy.NewServer(cfg, health.BuildInfo{})
 	require.NoError(t, err, "Failed to create proxy server")
 
 	// Create context for the server

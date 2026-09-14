@@ -15,11 +15,11 @@
 # `--config /path/to/your.yaml`. The Helm chart takes the second route: it
 # renders its own configuration into a ConfigMap and points the pod at it.
 
-s3_backend:
-  target_endpoint: "${S3EP_BACKEND_ENDPOINT}"
-  region: "${S3EP_BACKEND_REGION}"
-  access_key_id: "${S3EP_BACKEND_ACCESS_KEY_ID}"
-  secret_key: "${S3EP_BACKEND_SECRET_KEY}"
+s3_backends:
+  - target_endpoint: "${S3EP_BACKEND_ENDPOINT}"
+    region: "${S3EP_BACKEND_REGION}"
+    access_key_id: "${S3EP_BACKEND_ACCESS_KEY_ID}"
+    secret_key: "${S3EP_BACKEND_SECRET_KEY}"
 
 s3_clients:
   - type: "static"

@@ -279,7 +279,7 @@ one-way door for the objects written behind it.
 | KEK (`aes_key`) | Config file, or an environment variable referenced as `${VAR}` and expanded at load ([envexpand.go:17](internal/config/envexpand.go#L17), applied to every provider config value at [envexpand.go:91-103](internal/config/envexpand.go#L91)) | For the process lifetime | **Never** |
 | DEK | Only KEK-wrapped, in `s3ep-encrypted-dek` | Plaintext while an object is being processed; also in an LRU DEK cache bounded at 1024 entries, keyed by fingerprint, object key and a hash of the wrapped DEK ([providers.go:212-269](internal/orchestration/providers.go#L212), [providers.go:345-390](internal/orchestration/providers.go#L345)) | **Never in plaintext** |
 | DEK of a multipart upload in flight | — | In the session for that upload id, together with whatever short last part is buffered for it, until `Complete`, `Abort`, the expiry sweep, or process exit ([segmented_session.go:21-47](internal/orchestration/segmented_session.go#L21)) | **Never in plaintext** |
-| Backend credential (`s3_backend.access_key_id` / `secret_key`) | Config or `${VAR}` | For the process lifetime | Yes, as SigV4 to the backend — that is its purpose |
+| Backend credential (`s3_backends[0].access_key_id` / `secret_key`) | Config or `${VAR}` | For the process lifetime | Yes, as SigV4 to the backend — that is its purpose |
 | Client credentials (`s3_clients[].secret_key`) | Config or `${VAR}`, minimum 16 characters | In a lookup map built at startup ([s3auth_robust.go:74-79](internal/proxy/middleware/s3auth_robust.go#L74)) | **Never** |
 
 An expansion failure is fatal at load: a `${VAR}` that is unset or empty makes
@@ -523,9 +523,10 @@ first.
 - **No per-client keys.** The active provider is global
   (`encryption.encryption_method_alias`). All clients write objects under the
   same KEK, so a client that can read an object can always decrypt it.
-- **No isolation from the backend credential.** The proxy holds one static
-  credential pair for the backend ([server.go:106-109](internal/proxy/server.go#L106))
-  and uses it for every request from every client. Whatever that credential can
+- **No isolation from the backend credential.** `s3_backends` is a list whose
+  second entry is refused at startup, so the proxy holds one static credential
+  pair for the backend ([server.go:108-112](internal/proxy/server.go#L108)) and
+  uses it for every request from every client. Whatever that credential can
   reach, any authenticated client can reach through the proxy.
 - **No rate limit and no blocking**, by decision rather than by omission
   (ADR 0014). An authenticated client may issue as many requests as it likes, and
@@ -706,7 +707,12 @@ default rather than something tighter.
   unsigned and with no query string (ADR 0014 D14). A signed request to either
   path, or one carrying S3 parameters, is an S3 request for a bucket of that name
   and goes through authentication like any other, so the exemption covers the
-  probe and not the two names.
+  probe and not the two names. Since 5.0.0 `/version` answers the build the
+  binary was stamped with — `version`, `commit`, `build_time` and `service` —
+  where it answered a constant `dev` before, so an unauthenticated probe learns
+  the exact release. Those are the three labels `s3ep_server_info` already
+  carried, and the control is the same one the metrics port has: who can reach
+  the listener.
 - **Anything on the monitoring listener.** `monitoring.bind_address`
   (`:9090` # default) serves `/metrics`, `/health` and `/info` with **no
   authentication at all** ([monitoring/server.go:34](internal/monitoring/server.go#L34)).
@@ -897,7 +903,7 @@ them the backend refuses the delete, so they fail closed.
 | Leg | Control | Reality |
 |---|---|---|
 | Client to proxy | `tls.enabled`, `tls.cert_file`, `tls.key_file` ([config.go:18-22](internal/config/config.go#L18)); in Kubernetes, `serviceTLS` in the chart | Works. The integration suite runs against both the HTTP and the TLS endpoint, and the Velero e2e runs the whole suite over the chart's own `serviceTLS` listener |
-| Proxy to backend | `s3_backend.target_endpoint`, `s3_backend.insecure_skip_verify` | **The scheme in `target_endpoint` decides.** Those two are the only backend values that reach the SDK options ([server.go:162-212](internal/proxy/server.go#L162)). `s3_backend.use_tls` is gone: it was read only to assign itself, and a key that describes a transport it does not select is exactly what rule 2 refuses ([H-7](#h-7-dead-security-configuration-knobs--closed)) |
+| Proxy to backend | `s3_backends[0].target_endpoint`, `s3_backends[0].insecure_skip_verify` | **The scheme in `target_endpoint` decides.** Those two are the only backend values that reach the SDK options ([server.go:173-222](internal/proxy/server.go#L173)). `s3_backend.use_tls` is gone with the mapping it sat in: it was read only to assign itself, and a key that describes a transport it does not select is exactly what rule 2 refuses ([H-7](#h-7-dead-security-configuration-knobs--closed)) |
 
 `insecure_skip_verify: true` disables backend certificate verification and logs a
 warning. Under this threat model that is a smaller loss than it looks — the

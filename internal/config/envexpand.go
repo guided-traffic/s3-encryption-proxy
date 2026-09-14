@@ -43,39 +43,36 @@ func expandEnvVars(value string) (string, error) {
 
 // expandConfigEnvVars expands ${VAR} references in all supported config fields.
 func expandConfigEnvVars(cfg *Config) error {
-	// s3_backend endpoint and region. Expanded, unlike every other non-secret
+	// s3_backends endpoint and region. Expanded, unlike every other non-secret
 	// field, because the container's default configuration is written against
 	// them: they are what a deployment must supply and what has no useful
 	// default. The list is per field on purpose — expanding every string would
 	// reach values where a $ is legitimate.
-	val, err := expandEnvVars(cfg.S3Backend.TargetEndpoint)
-	if err != nil {
-		return fmt.Errorf("s3_backend.target_endpoint: %w", err)
+	//
+	// Every entry is expanded, not only the one this release serves from, so a
+	// configuration that is ready for a second backend fails on an unset variable
+	// at startup rather than at the moment the second entry is first read.
+	for i := range cfg.S3Backends {
+		for _, f := range []struct {
+			key   string
+			field *string
+		}{
+			{"target_endpoint", &cfg.S3Backends[i].TargetEndpoint},
+			{"region", &cfg.S3Backends[i].Region},
+			{"access_key_id", &cfg.S3Backends[i].AccessKeyID},
+			{"secret_key", &cfg.S3Backends[i].SecretKey},
+		} {
+			val, err := expandEnvVars(*f.field)
+			if err != nil {
+				return fmt.Errorf("s3_backends[%d].%s: %w", i, f.key, err)
+			}
+			*f.field = val
+		}
 	}
-	cfg.S3Backend.TargetEndpoint = val
-
-	val, err = expandEnvVars(cfg.S3Backend.Region)
-	if err != nil {
-		return fmt.Errorf("s3_backend.region: %w", err)
-	}
-	cfg.S3Backend.Region = val
-
-	// s3_backend credentials
-	val, err = expandEnvVars(cfg.S3Backend.AccessKeyID)
-	if err != nil {
-		return fmt.Errorf("s3_backend.access_key_id: %w", err)
-	}
-	cfg.S3Backend.AccessKeyID = val
-
-	val, err = expandEnvVars(cfg.S3Backend.SecretKey)
-	if err != nil {
-		return fmt.Errorf("s3_backend.secret_key: %w", err)
-	}
-	cfg.S3Backend.SecretKey = val
 
 	// s3_clients credentials
 	for i := range cfg.S3Clients {
-		val, err = expandEnvVars(cfg.S3Clients[i].AccessKeyID)
+		val, err := expandEnvVars(cfg.S3Clients[i].AccessKeyID)
 		if err != nil {
 			return fmt.Errorf("s3_clients[%d].access_key_id: %w", i, err)
 		}

@@ -2,7 +2,8 @@
 # Copy this file to values-monitoring.yaml and customize as needed
 
 # Basic configuration
-replicaCount: 2
+# One instance: see values-production.yaml and the chart README.
+replicaCount: 1
 
 image:
   repository: guidedtraffic/s3-encryption-proxy
@@ -90,12 +91,12 @@ config: |
   log_format: "json"
   log_health_requests: false
 
-  s3_backend:
-    target_endpoint: "https://minio:9000"
-    region: "us-east-1"
-    access_key_id: "${S3_ACCESS_KEY_ID}"
-    secret_key: "${S3_SECRET_KEY}"
-    insecure_skip_verify: false
+  s3_backends:
+    - target_endpoint: "https://minio:9000"
+      region: "us-east-1"
+      access_key_id: "${S3_ACCESS_KEY_ID}"
+      secret_key: "${S3_SECRET_KEY}"
+      insecure_skip_verify: false
 
   s3_clients:
     - type: "static"

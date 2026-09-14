@@ -18,6 +18,7 @@ import (
 	"github.com/gorilla/mux"
 	proxyconfig "github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/health"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/middleware"
 	"github.com/sirupsen/logrus"
 )
@@ -29,6 +30,9 @@ type Server struct {
 	encryptionMgr *orchestration.Manager
 	config        *proxyconfig.Config
 	logger        *logrus.Entry
+
+	// build is what the binary was stamped with. /version answers it.
+	build health.BuildInfo
 
 	// Graceful shutdown tracking
 	shutdownStateHandler func() (bool, time.Time)
@@ -52,7 +56,7 @@ type Server struct {
 }
 
 // NewServer creates a new proxy server instance
-func NewServer(cfg *proxyconfig.Config) (*Server, error) {
+func NewServer(cfg *proxyconfig.Config, build health.BuildInfo) (*Server, error) {
 	logger := logrus.WithField("component", "proxy-server")
 
 	// Create encryption manager directly from the config
@@ -101,7 +105,7 @@ func NewServer(cfg *proxyconfig.Config) (*Server, error) {
 	}).Info("🏷️  Metadata prefix for encryption fields")
 
 	// Create AWS SDK S3 client from the s3_backend configuration structure
-	s3Config := cfg.S3Backend
+	s3Config := cfg.Backend()
 
 	awsConfig := aws.Config{
 		Region:      s3Config.Region,
@@ -118,6 +122,7 @@ func NewServer(cfg *proxyconfig.Config) (*Server, error) {
 		encryptionMgr: encryptionMgr,
 		config:        cfg,
 		logger:        logger,
+		build:         build,
 	}
 
 	// The sweeper has to be able to tell the backend that an upload it is about to

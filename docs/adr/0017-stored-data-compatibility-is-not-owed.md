@@ -25,20 +25,20 @@ it stood before that removal.
 examples and in the production deployment values alike: `encryption.integrity_verification`
 with its four modes `off`, `lax`, `strict` and `hybrid`, `optimizations.streaming_threshold`,
 `optimizations.streaming_buffer_size`, `optimizations.enable_adaptive_buffering`,
-`s3_backend.use_tls`, every `s3_security` key except `max_clock_skew_seconds` (a second key,
-`max_presign_expiry_seconds`, arrived on 2026-09-11 and is not part of this removal), the
+the backend block's `use_tls`, every `s3_security` key except `max_clock_skew_seconds` (a second
+key, `max_presign_expiry_seconds`, arrived on 2026-09-11 and is not part of this removal), the
 never-read `encryption.algorithm` and `encryption.key_rotation_days`, and the legacy top-level
 backend block — `target_endpoint`, `region`, `access_key_id`, `secret_key`, `use_tls`,
-`skip_ssl_verification` — together with its migration into `s3_backend`.
+`skip_ssl_verification` — together with its migration into the backend block.
 
 **Corrected 2026-09-12: nothing removed is ignored in silence.** ADR 0013 D11 ships in the same
 release, so the loader refuses a key this version does not define and the error lists it. A file
 still carrying the legacy top-level block, or `encryption.integrity_verification`, is stopped at
-startup with those keys named — not dropped, and not with `s3_backend.target_endpoint is
-required`, which the start never reaches. D7's reasoning, that the loader has no way to complain
-about a key that is no longer declared, no longer holds; its decision — no alias, no deprecation
-window, no shim — is untouched. One place still accepts a key in silence: an entry under
-`encryption.providers`, which collects its own parameters.
+startup with those keys named — not dropped, and not with `s3_backends is required`, which the
+start never reaches. D7's reasoning, that the loader has no way to complain about a key that is
+no longer declared, no longer holds; its decision — no alias, no deprecation window, no shim — is
+untouched. One place still accepts a key in silence: an entry under `encryption.providers`, which
+collects its own parameters.
 
 **Amended 2026-09-10, both refusals D8 names are now built.**
 `encryption.providers[].config.aes_key` is admitted only as base64 of exactly 32 bytes that are

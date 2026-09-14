@@ -4,14 +4,16 @@ This Helm chart deploys the S3 Encryption Proxy to a Kubernetes cluster.
 
 The chart renders one Deployment, one Service, one ConfigMap, one Secret and one
 ServiceAccount, plus optional Ingress, cert-manager Certificates (one for the
-Ingress, one for the proxy's own Service), HPA, PodDisruptionBudget,
-monitoring Service, ServiceMonitor and Grafana dashboard ConfigMap. It renders
-no NetworkPolicy: the network boundary belongs to the administrator
-(ADR 0030).
+Ingress, one for the proxy's own Service), PodDisruptionBudget, monitoring
+Service, ServiceMonitor and Grafana dashboard ConfigMap. It renders no
+NetworkPolicy: the network boundary belongs to the administrator (ADR 0030),
+and no HorizontalPodAutoscaler: **this chart installs one instance and refuses
+to render a second** (ADR 0033) — see
+[One instance, and the chart refuses a second](#one-instance-and-the-chart-refuses-a-second).
 
 ## Prerequisites
 
-- Kubernetes 1.23+ (the chart renders `autoscaling/v2` and `policy/v1`)
+- Kubernetes 1.23+ (the chart renders `policy/v1`)
 - Helm 3.2.0+
 - cert-manager, only if `certificate.enabled` is set, or `serviceTLS.enabled`
   without `serviceTLS.existingSecret`
@@ -58,10 +60,26 @@ helm delete my-s3-proxy
 
 ## Upgrading to 5.0.0
 
-Two value keys are gone, and Helm ignores a value key a chart no longer
-declares — so an upgrade that carries them makes no error and no warning. Check
-your values file for both before you upgrade.
+Four things changed shape. Two of them refuse — the render fails, or the pod
+does — and two are value keys the chart no longer declares, which Helm carries
+into an upgrade with no error and no warning. Check your values file for all
+four before you upgrade.
 
+- **The backend block inside `config` is now the list `s3_backends`.** The
+  entry's fields are unchanged: move the block under a single `- ` entry. A
+  configuration still carrying the singular `s3_backend` refuses the start with
+  a message saying so
+  ([ADR 0013](../../../docs/adr/0013-a-configuration-key-exists-only-if-code-reads-it.md) D11),
+  so this one is caught by the pod rather than by Helm. The release reads
+  exactly one entry and refuses a second: the list is the shape, not yet the
+  feature.
+- **`replicaCount` above 1 and `autoscaling.enabled: true` now fail the
+  render.** The shipped production profile asked for three replicas and
+  autoscaling to twenty until this release, so a values file carrying either
+  stops at `helm upgrade` with a message naming the value. A deployment that
+  followed that profile goes from three pods to one — a capacity change to plan
+  for, and one that was never serving client-driven multipart uploads correctly:
+  see [One instance, and the chart refuses a second](#one-instance-and-the-chart-refuses-a-second).
 - **`networkPolicy.*`**. The chart renders no NetworkPolicy any more (ADR 0030).
   If you set `networkPolicy.enabled: true`, **the upgrade removes the policy your
   release owns** and the pod is left with whatever the cluster's other policies
@@ -89,8 +107,10 @@ Helm at a file:
 helm install my-s3-proxy . --set-file config=./my-config.yaml
 ```
 
-The proxy refuses to start without `s3_backend.target_endpoint` and without at
-least one entry under `s3_clients`. The full configuration reference is in the
+The proxy refuses to start without an `s3_backends` entry carrying a
+`target_endpoint`, and without at least one entry under `s3_clients`. The
+backend block is a list this release reads exactly one entry from; a second
+entry refuses the start. The full configuration reference is in the
 [project README](../../../README.md#configuration).
 
 **2. A license.** The startup gate ([ADR 0016](../../../docs/adr/0016-the-license-is-a-startup-gate.md))
@@ -129,20 +149,23 @@ env:
         key: aes-key                     # example
 ```
 
-`${VAR}` expansion is not general: it is applied to `s3_backend.target_endpoint`,
-`s3_backend.region`, `s3_backend.access_key_id`, `s3_backend.secret_key`,
+`${VAR}` expansion is not general: it is applied to
+`s3_backends[].target_endpoint`, `s3_backends[].region`,
+`s3_backends[].access_key_id`, `s3_backends[].secret_key`,
 `s3_clients[].access_key_id`, `s3_clients[].secret_key` and the values under
 `encryption.providers[].config`. Anywhere else — a bind address, a TLS path —
 the reference stays a literal.
 
 ## Configuration
 
-> **Defaults are tuned for trying the proxy out**, not for production: a single
-> replica, no PodDisruptionBudget, no autoscaling and no TLS.
-> For production deployments start from `values-production.yaml`, which runs
-> multiple replicas behind a PodDisruptionBudget and enables autoscaling,
-> monitoring and cert-manager TLS. See
+> **Defaults are tuned for trying the proxy out**, not for production: modest
+> resource limits, no monitoring and no TLS.
+> For production deployments start from `values-production.yaml`, which raises
+> the limits and enables monitoring and cert-manager TLS at an Ingress. See
 > [Production Installation with cert-manager](#production-installation-with-cert-manager).
+> The replica count is not one of the differences: **this chart installs one
+> instance** and every profile it ships runs one — see
+> [One instance, and the chart refuses a second](#one-instance-and-the-chart-refuses-a-second).
 
 Defaults below are the values in `values.yaml`.
 
@@ -150,7 +173,7 @@ Defaults below are the values in `values.yaml`.
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `replicaCount` | Number of replicas; ignored when `autoscaling.enabled` | `1` |
+| `replicaCount` | Number of replicas. May only be 1; a higher value fails the render | `1` |
 | `nameOverride` | Overrides the chart name in the resource names and labels | `""` |
 | `fullnameOverride` | Replaces the generated resource name | `""` |
 | `image.registry` | Container image registry | `docker.io` |
@@ -235,21 +258,55 @@ every open upload holds there together.
 To remove the default anti-affinity, set `affinity: null`. Helm coalesces maps,
 so `affinity: {}` leaves the chart default in place.
 
+### One instance, and the chart refuses a second
+
+**This chart installs one proxy instance.** `replicaCount` above 1 and
+`autoscaling.enabled: true` each fail the render with a message naming the value
+and the reason
+([ADR 0033](../../../docs/adr/0033-a-proxy-instance-holds-its-uploads.md)).
+
+The reason is a property of the product, not a preference of the chart. A
+client-driven multipart upload is not stateless: its part table and the object's
+data key live in the process that answered `CreateMultipartUpload` and nowhere
+else, so an `UploadPart` that lands on another pod names an upload that pod has
+never heard of and is answered `404 NoSuchUpload` — `CompleteMultipartUpload`
+and `ListParts` answer the same way. Nothing here makes a client reach the same
+pod twice: the Service sets no `sessionAffinity` and the default Ingress
+annotations carry none. A second replica therefore does not take a share of the
+work, it takes requests belonging to an upload the first pod is holding.
+
+**Several cooperating proxies are a different product**: the
+`s3-encryption-operator`, with a chart of its own. It needs a session table the
+instances share, which this chart has no way to supply, so the two are installed
+separately and neither is a mode of the other.
+
+One instance is a single point of failure, and a rollout is a gap rather than a
+handover. While the pod drains, a new request is answered
+`503 ServiceUnavailable` with `Retry-After` instead of a refused connection and
+the transfers already running are finished inside `shutdown_timeout`
+([ADR 0029](../../../docs/adr/0029-the-shutdown-budget-finishes-work-and-sweeps-what-cannot-be-finished.md)) —
+but with one pod there is no second one for an SDK to retry against, so the
+client waits out the restart.
+
 ### Autoscaling Configuration
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `autoscaling.enabled` | Enable horizontal pod autoscaler | `false` |
-| `autoscaling.minReplicas` | Minimum number of replicas | `2` |
-| `autoscaling.maxReplicas` | Maximum number of replicas | `10` |
-| `autoscaling.targetCPUUtilizationPercentage` | Target CPU utilization | `80` |
-| `autoscaling.targetMemoryUtilizationPercentage` | Target memory utilization; the metric is omitted when unset | unset |
+| `autoscaling.enabled` | Refused: `true` fails the render, see above | `false` |
+| `autoscaling.minReplicas` | Minimum number of replicas; inert | `2` |
+| `autoscaling.maxReplicas` | Maximum number of replicas; inert | `10` |
+| `autoscaling.targetCPUUtilizationPercentage` | Target CPU utilization; inert | `80` |
+| `autoscaling.targetMemoryUtilizationPercentage` | Target memory utilization; inert, and the metric is omitted when unset | unset |
+
+The four keys under `enabled` are kept for the release that can use them. No
+HorizontalPodAutoscaler renders today: `autoscaling.enabled: true` fails the
+render before it, and `false` renders nothing.
 
 ### Availability Configuration
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `podDisruptionBudget.enabled` | Enable PodDisruptionBudget | `false` |
+| `podDisruptionBudget.enabled` | Enable PodDisruptionBudget. Over a single pod it cannot protect the service | `false` |
 | `podDisruptionBudget.maxUnavailable` | Maximum unavailable pods during voluntary disruptions | `1` |
 | `podDisruptionBudget.minAvailable` | Minimum available pods (alternative to `maxUnavailable`) | unset |
 | `terminationGracePeriodSeconds` | Pod termination grace period | `""`, derived |
@@ -258,6 +315,12 @@ Set either `minAvailable` or `maxUnavailable`, never both - the chart fails the
 render if both or neither are set. `maxUnavailable` is the default because it
 stays drainable at any replica count, while `minAvailable` equal to the replica
 count blocks node drains indefinitely.
+
+At one replica there is nothing in between: `maxUnavailable: 1` lets a drain
+take the only pod, and `minAvailable: 1` blocks every drain for as long as the
+release exists. A single instance cannot be drained without downtime, which is
+why `values-production.yaml` ships `podDisruptionBudget.enabled: false` — an
+honest gap rather than a drain that never finishes.
 
 Left empty, `terminationGracePeriodSeconds` is `shutdown_timeout` from `config`
 plus five seconds ([ADR 0015](../../../docs/adr/0015-a-transfer-is-bounded-by-the-client-and-by-shutdown.md)):
@@ -291,7 +354,7 @@ control. Write the policy for your own topology, or run without one knowingly.
 The pod is an ordinary `NetworkPolicy` target: it carries the chart's standard
 selector labels, serves the S3 API on `service.targetPort` and, with
 `monitoring.enabled`, metrics on `monitoring.port`. Its egress goes to the
-backend named by `s3_backend.target_endpoint` and to DNS.
+backend named by `s3_backends[0].target_endpoint` and to DNS.
 
 ### Certificate Configuration (cert-manager)
 
@@ -549,19 +612,19 @@ renders all three override files plus the Velero e2e values on every run.
    secret manager.
 
 3. **The default `config` reuses one key pair for two roles.** It hands the same
-   `${S3_ACCESS_KEY_ID}` / `${S3_SECRET_KEY}` to `s3_backend` (the proxy's
-   credentials against the backend) and to `s3_clients` (what clients present to
-   the proxy). Give them separate credentials: a client holding the backend key
-   reaches the bucket directly, where it can write unencrypted objects and
-   delete stored ones without the proxy ever seeing the request. A client secret
-   must be at least 16 characters, an access key at least 8.
+   `${S3_ACCESS_KEY_ID}` / `${S3_SECRET_KEY}` to the `s3_backends` entry (the
+   proxy's credentials against the backend) and to `s3_clients` (what clients
+   present to the proxy). Give them separate credentials: a client holding the
+   backend key reaches the bucket directly, where it can write unencrypted
+   objects and delete stored ones without the proxy ever seeing the request. A
+   client secret must be at least 16 characters, an access key at least 8.
 
 4. **Backend TLS follows the endpoint scheme.** There is no toggle. An
-   `s3_backend.target_endpoint` beginning `http://` refuses the start under
+   `s3_backends[0].target_endpoint` beginning `http://` refuses the start under
    every provider, `exit` included: the backend credential would travel in a
    SigV4 header over plaintext, a listener on that leg would learn every bucket
    name, object key and object size, and under `exit` the object bytes would
-   cross it in the clear as well. `s3_backend.insecure_skip_verify` disables
+   cross it in the clear as well. `s3_backends[0].insecure_skip_verify` disables
    certificate verification and belongs in test clusters only.
 
 5. **Profiling has no chart surface, and should keep none.** A heap profile of
@@ -578,10 +641,12 @@ renders all three override files plus the Velero e2e values on every run.
    all capabilities dropped, `RuntimeDefault` seccomp and no mounted service
    account token.
 
-8. **Availability**: the defaults run a single replica without a
-   PodDisruptionBudget so that node drains never block. In production run at
-   least 2 replicas and enable `podDisruptionBudget` so voluntary disruptions
-   never take down more than one pod at a time.
+8. **Availability**: every shipped profile runs a single replica without a
+   PodDisruptionBudget, and the chart refuses a second (ADR 0033): a
+   client-driven multipart upload is held by the process that created it. A node
+   drain and a rollout are each an outage for the length of a restart. Running
+   several cooperating proxies is the `s3-encryption-operator`'s job, with a
+   chart of its own.
 
 The threat model behind these points is in
 [SECURITY_ARCHITECTURE.md](../../../SECURITY_ARCHITECTURE.md).
@@ -610,15 +675,23 @@ The threat model behind these points is in
 2. **Pod not starting, `environment variable ${...} is not set or empty`**: the
    config references a variable that no `env` entry or `secrets.s3` value
    provides.
-3. **Pod not starting, `s3_backend.target_endpoint is required`**: the mounted
-   config did not parse as expected, or the key is missing. The legacy top-level
-   backend block is gone; the endpoint has to sit under `s3_backend`.
+3. **Pod not starting, `s3_backends[0].target_endpoint is required`** or
+   **`s3_backends is required: name exactly one backend`**: the mounted config
+   did not parse as expected, or the backend block is missing. A config still
+   carrying the singular `s3_backend` is refused by a message of its own that
+   says to move the block under a single `- ` entry; the legacy top-level
+   backend keys are gone as well.
 4. **Never becomes ready, probes fail**: the chart derives the probe scheme from
    `tls.enabled` in `config`. It cannot do that under
    `configMap.useExistingConfigMap: true` — set `probes.scheme: HTTPS` there.
 5. **`helm template` fails with `values.config is not parseable YAML`**: `config`
    is one literal string (`config: |`), not a map, and it has to parse.
-6. **Certificate issues**: ensure cert-manager is installed and the issuer is
+6. **`helm upgrade` fails with `replicaCount is 2 and this chart installs one
+   instance`**, or with the same message for `autoscaling.enabled`: a values
+   file from before this release. Set `replicaCount: 1` and
+   `autoscaling.enabled: false` — see
+   [One instance, and the chart refuses a second](#one-instance-and-the-chart-refuses-a-second).
+7. **Certificate issues**: ensure cert-manager is installed and the issuer is
    configured correctly.
 
 ### Debugging Commands

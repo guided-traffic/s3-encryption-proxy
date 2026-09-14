@@ -371,6 +371,25 @@ standing for a deployment that passes the pair. Removing a flag is a breaking ch
 kind as removing a key (D10): it is announced in the release notes of the major release that
 carries it (ADR 0018), never softened by a shim or a deprecation period.
 
+**Amended 2026-09-14: the backend block is a list.** `s3_backend` is now `s3_backends`, a list,
+and the entry's fields are unchanged — `target_endpoint`, `region`, `access_key_id`, `secret_key`,
+`insecure_skip_verify`. Every earlier decision here that names `s3_backend.<field>` names that
+field of the single entry from now on. The old singular key is refused by a message of its own
+rather than by D11's generic one: the shape changed and the meaning did not, so the generic
+refusal would read as *this setting is gone* to every deployment in the field, and every
+deployment writes this key. The message says to move the block under a single `- ` entry. A second
+entry is refused too, naming how many were written — reading the first and discarding the rest is
+the silent drop ADR 0007 refuses, and here it would leave an operator who listed two backends
+believing both were written to with one of them silently empty.
+
+Two points, because D1 does not obviously cover either. **A list this release serves one entry
+from is not a key with no reader:** the length is read and a second entry stops the start, which
+is a behaviour an operator can observe, and D1 asks for a read that changes what the product does
+rather than for a read of every value. **The shape landed before the feature that needs it, and
+deliberately so.** Keeping several backends in sync is a later release; turning a mapping into a
+list then would refuse every configuration in the field under D11 — so the shape is the only part
+of that feature that breaks anything, and a major release is where a break is paid for (ADR 0018).
+
 ## Consequences
 
 - **An upgrade rejects configurations that "worked" before.** **Updated 2026-09-12:** all four
@@ -570,6 +589,7 @@ carries it (ADR 0018), never softened by a shim or a deprecation period.
 - ADR 0001 — The S3 backend is hostile, and only the proxy's own verification counts
 - ADR 0003 — Objects are stored as an authenticated segment chain
 - ADR 0006 — The proxy serves any S3 client
+- ADR 0007 — Forward it or refuse it, never silently drop it
 - ADR 0009 — The metadata prefix is the proxy's namespace
 - ADR 0011 — The proxy owns the part layout it writes, and refuses copies it cannot re-encrypt
 - ADR 0012 — Client checksums are verified against the plaintext, never forwarded and never stored

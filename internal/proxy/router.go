@@ -38,7 +38,7 @@ func (s *Server) setupRoutes(router *mux.Router) {
 	}
 
 	// Initialize handlers
-	healthHandler := health.NewHandler(s.logger, s.config.LogHealthRequests)
+	healthHandler := health.NewHandler(s.logger, s.config.LogHealthRequests, s.build)
 	// Late binding on purpose: main creates the server first and installs these
 	// handlers afterwards, so the values are still nil here. Copying them would
 	// freeze that nil and /health would keep answering 200 while the server

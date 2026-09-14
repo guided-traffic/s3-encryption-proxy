@@ -20,12 +20,12 @@ log_format: "text"   # default; "text" or "json"
 log_health_requests: false  # default
 
 # S3 backend configuration (unified structure)
-s3_backend:
-  target_endpoint: "https://minio:9000"  # example
-  region: "us-east-1"                    # default
-  access_key_id: "minioadmin"            # example
-  secret_key: "minioadmin123"            # example
-  insecure_skip_verify: true             # example; default false
+s3_backends:
+  - target_endpoint: "https://minio:9000"  # example
+    region: "us-east-1"                    # default
+    access_key_id: "minioadmin"            # example
+    secret_key: "minioadmin123"            # example
+    insecure_skip_verify: true             # example; default false
 
 # S3 Client Authentication Configuration (Enterprise Security)
 # This enables strict authentication for all S3 API calls

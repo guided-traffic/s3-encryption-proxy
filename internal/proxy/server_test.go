@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/health"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -31,12 +32,12 @@ func createTestConfigExit() *config.Config {
 	return &config.Config{
 		BindAddress: "localhost:8080",
 		LogLevel:    "info",
-		S3Backend: config.S3BackendConfig{
+		S3Backends: []config.S3BackendConfig{{
 			TargetEndpoint: "https://s3.amazonaws.com",
 			Region:         "us-east-1",
 			AccessKeyID:    "test-access-key",
 			SecretKey:      "test-secret-key",
-		},
+		}},
 		S3Clients: []config.S3ClientCredentials{
 			{
 				Type:        "static",
@@ -72,7 +73,7 @@ func TestServer_NewServer_WithExitProvider(t *testing.T) {
 
 	// This will fail because we don't have real S3 credentials
 	// But we can test that the server structure is created correctly
-	server, err := NewServer(cfg)
+	server, err := NewServer(cfg, health.BuildInfo{})
 	if err != nil {
 		// Expected to fail due to invalid S3 credentials in test
 		// Check that it's the expected error type
@@ -91,7 +92,7 @@ func TestServer_HealthEndpoint(t *testing.T) {
 
 	// Create a properly initialized test server
 	config := createTestConfigExit()
-	server, err := NewServer(config)
+	server, err := NewServer(config, health.BuildInfo{})
 	require.NoError(t, err)
 
 	// Create test request
@@ -428,7 +429,7 @@ func TestServer_WriteS3Error_KEK_MISSING(t *testing.T) {
 	logrus.SetLevel(logrus.ErrorLevel)
 
 	cfg := createTestConfigExit()
-	server, err := NewServer(cfg)
+	server, err := NewServer(cfg, health.BuildInfo{})
 	require.NoError(t, err)
 	require.NotNil(t, server)
 
@@ -479,7 +480,7 @@ func TestServer_handleS3Error_KEK_MISSING(t *testing.T) {
 	logrus.SetLevel(logrus.ErrorLevel)
 
 	cfg := createTestConfigExit()
-	server, err := NewServer(cfg)
+	server, err := NewServer(cfg, health.BuildInfo{})
 	require.NoError(t, err)
 	require.NotNil(t, server)
 
@@ -589,7 +590,7 @@ func TestServer_UploadPartCopyIsNotShadowedByUploadPart(t *testing.T) {
 func TestServer_AuthErrorDoesNotReflectAttackerText(t *testing.T) {
 	logrus.SetLevel(logrus.ErrorLevel)
 
-	server, err := NewServer(createTestConfigExit())
+	server, err := NewServer(createTestConfigExit(), health.BuildInfo{})
 	require.NoError(t, err)
 
 	// No "/" in the key: the credential scope is split on it.

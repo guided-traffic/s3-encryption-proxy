@@ -16,21 +16,21 @@ func TestCfgExpandConfigEnvVarsErrorPerField(t *testing.T) {
 		expectError string
 	}{
 		{
-			name: "s3_backend access key id",
+			name: "s3_backends access key id",
 			build: func() *Config {
-				return &Config{S3Backend: S3BackendConfig{AccessKeyID: "${CFG_MISSING_BACKEND_AK}"}}
+				return &Config{S3Backends: []S3BackendConfig{{AccessKeyID: "${CFG_MISSING_BACKEND_AK}"}}}
 			},
-			expectError: "s3_backend.access_key_id: environment variable ${CFG_MISSING_BACKEND_AK} is not set or empty",
+			expectError: "s3_backends[0].access_key_id: environment variable ${CFG_MISSING_BACKEND_AK} is not set or empty",
 		},
 		{
-			name: "s3_backend secret key",
+			name: "s3_backends secret key",
 			build: func() *Config {
-				return &Config{S3Backend: S3BackendConfig{
+				return &Config{S3Backends: []S3BackendConfig{{
 					AccessKeyID: "${CFG_PRESENT}",
 					SecretKey:   "${CFG_MISSING_BACKEND_SK}",
-				}}
+				}}}
 			},
-			expectError: "s3_backend.secret_key: environment variable ${CFG_MISSING_BACKEND_SK} is not set or empty",
+			expectError: "s3_backends[0].secret_key: environment variable ${CFG_MISSING_BACKEND_SK} is not set or empty",
 		},
 		{
 			name: "s3_clients access key id reports its index",
@@ -81,10 +81,10 @@ func TestCfgExpandConfigEnvVarsExpandsEveryField(t *testing.T) {
 	t.Setenv("CFG_PEM", "-----BEGIN KEY-----")
 
 	cfg := &Config{
-		S3Backend: S3BackendConfig{
+		S3Backends: []S3BackendConfig{{
 			AccessKeyID: "prefix-${CFG_AK}-suffix",
 			SecretKey:   "${CFG_SK}",
-		},
+		}},
 		S3Clients: []S3ClientCredentials{
 			{AccessKeyID: "${CFG_CLIENT_AK}", SecretKey: "${CFG_CLIENT_SK}"},
 			{AccessKeyID: "plain", SecretKey: "plain-secret"},
@@ -100,8 +100,8 @@ func TestCfgExpandConfigEnvVarsExpandsEveryField(t *testing.T) {
 
 	require.NoError(t, expandConfigEnvVars(cfg))
 
-	assert.Equal(t, "prefix-ak-value-suffix", cfg.S3Backend.AccessKeyID)
-	assert.Equal(t, "sk-value", cfg.S3Backend.SecretKey)
+	assert.Equal(t, "prefix-ak-value-suffix", cfg.Backend().AccessKeyID)
+	assert.Equal(t, "sk-value", cfg.Backend().SecretKey)
 	assert.Equal(t, "client-ak", cfg.S3Clients[0].AccessKeyID)
 	assert.Equal(t, "client-sk", cfg.S3Clients[0].SecretKey)
 	assert.Equal(t, "plain", cfg.S3Clients[1].AccessKeyID)

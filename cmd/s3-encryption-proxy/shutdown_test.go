@@ -157,7 +157,7 @@ func TestMainMonitoringPlanKeepsPprofIndependent(t *testing.T) {
 func TestMainStartupWarnings(t *testing.T) {
 	exitCfg := func(endpoint string) *config.Config {
 		return &config.Config{
-			S3Backend: config.S3BackendConfig{TargetEndpoint: endpoint},
+			S3Backends: []config.S3BackendConfig{{TargetEndpoint: endpoint}},
 			Encryption: config.EncryptionConfig{
 				EncryptionMethodAlias: "way-out",
 				Providers:             []config.EncryptionProvider{{Alias: "way-out", Type: "exit"}},
@@ -167,7 +167,7 @@ func TestMainStartupWarnings(t *testing.T) {
 
 	t.Run("an encrypting provider warns about nothing", func(t *testing.T) {
 		cfg := &config.Config{
-			S3Backend: config.S3BackendConfig{TargetEndpoint: "https://backend:9000"},
+			S3Backends: []config.S3BackendConfig{{TargetEndpoint: "https://backend:9000"}},
 			Encryption: config.EncryptionConfig{
 				EncryptionMethodAlias: "aes",
 				Providers: []config.EncryptionProvider{{
