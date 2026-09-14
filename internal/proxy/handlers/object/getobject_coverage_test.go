@@ -828,7 +828,7 @@ func TestObjGetHeadHonoursResponseOverrides(t *testing.T) {
 	// The object carries stored values for all six, so the assertions below fail
 	// on an override that is dropped AND on one applied before the stored headers
 	// are written - the ordering is what decides which of the two wins.
-	stored := func(body []byte, metadata map[string]string) s3.GetObjectOutput {
+	stored := func(metadata map[string]string) s3.GetObjectOutput {
 		return s3.GetObjectOutput{
 			ContentType:        aws.String("application/octet-stream"),
 			ContentDisposition: aws.String(`attachment; filename="a3f9c2.bin"`),
@@ -860,7 +860,7 @@ func TestObjGetHeadHonoursResponseOverrides(t *testing.T) {
 
 		plaintext := ObjGetpayload(2048)
 		ciphertext, metadata := ObjGetstore(t, h, "k", plaintext)
-		ObjServeStored(backend, ciphertext, stored(ciphertext, metadata))
+		ObjServeStored(backend, ciphertext, stored(metadata))
 
 		head := ObjGetdo(h, httptest.NewRequest(http.MethodHead, "/b/k"+overrides, nil), "b", "k")
 		require.Equal(t, http.StatusOK, head.Code, head.Body.String())
@@ -880,7 +880,7 @@ func TestObjGetHeadHonoursResponseOverrides(t *testing.T) {
 		h := ObjGetnewExitHandler(t, backend)
 
 		body := ObjGetpayload(2048)
-		out := stored(body, nil)
+		out := stored(nil)
 		backend.On("HeadObject", mock.Anything, mock.Anything).Return(&s3.HeadObjectOutput{
 			ContentType:        out.ContentType,
 			ContentDisposition: out.ContentDisposition,
