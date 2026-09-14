@@ -87,4 +87,9 @@ COPY --from=builder --chown=65532:65532 /coverage /coverage
 # Expose port
 EXPOSE 8080
 
-CMD ["./s3-encryption-proxy"]
+# The image starts on its own configuration, which takes every value it needs
+# from an environment variable (config/default.yaml, README "Running the
+# container"). Mount over /app/config/default.yaml, or pass --config, to use one
+# of your own; the Helm chart points the pod at its own rendered ConfigMap.
+ENTRYPOINT ["./s3-encryption-proxy"]
+CMD ["--config", "config/default.yaml"]

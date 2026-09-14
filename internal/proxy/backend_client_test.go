@@ -1,9 +1,11 @@
 package proxy
 
 import (
+	"crypto/tls"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	proxyconfig "github.com/guided-traffic/s3-encryption-proxy/internal/config"
 	"github.com/sirupsen/logrus"
@@ -62,6 +64,25 @@ func TestBackendClientOptions_InsecureSkipVerify(t *testing.T) {
 			InsecureSkipVerify: true,
 		})
 		require.NotNil(t, o.HTTPClient, "a custom transport is required to skip verification")
+
+		// The client is built from the SDK's own, with nothing but the TLS
+		// configuration mutated. A bare http.Transport here used to discard
+		// every SDK default at once, and assigning a fresh tls.Config would
+		// drop the SDK's TLS 1.2 minimum back to Go's.
+		buildable, ok := o.HTTPClient.(*awshttp.BuildableClient)
+		require.True(t, ok, "the client must be the SDK's buildable client, got %T", o.HTTPClient)
+
+		transport := buildable.GetTransport()
+		require.NotNil(t, transport)
+		require.NotNil(t, transport.TLSClientConfig)
+		assert.True(t, transport.TLSClientConfig.InsecureSkipVerify,
+			"the transport must actually skip verification when it is configured to")
+		assert.Equal(t, uint16(tls.VersionTLS12), transport.TLSClientConfig.MinVersion,
+			"skipping certificate verification must not also lower the TLS floor")
+		assert.NotZero(t, transport.TLSHandshakeTimeout,
+			"the SDK's handshake budget must survive; a bare transport has none")
+		assert.NotZero(t, transport.IdleConnTimeout,
+			"the SDK's connection pool tuning must survive")
 	})
 
 	t.Run("disabled", func(t *testing.T) {

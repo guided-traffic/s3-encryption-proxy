@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/object"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/middleware"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
 )
@@ -54,8 +55,71 @@ func (s *Server) s3AuthMiddleware(next http.Handler) http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Perform comprehensive authentication using the robust service
-		if err := s.s3AuthService.AuthenticateRequest(r); err != nil {
-			s.writeS3Error(w, s.determineErrorCode(err), http.StatusForbidden)
+		accessKeyID, err := s.s3AuthService.AuthenticateRequest(r)
+		if err != nil {
+			code := s.determineErrorCode(err)
+			s.writeS3Error(w, code, authErrorStatus(code))
+			return
+		}
+		// The handlers describe the caller, never the backend account (ADR 0008).
+		next.ServeHTTP(w, middleware.WithClientIdentity(r, accessKeyID))
+	})
+}
+
+// drainGuardMiddleware refuses new S3 work once the proxy has been asked to
+// stop, without taking the listener down (ADR 0029 D1). A closed listener
+// answers a request that arrives while a load balancer still has this instance
+// in rotation with a connection refusal, which an SDK cannot tell apart from a
+// broken backend; an open listener answering `503 ServiceUnavailable` with
+// `Retry-After` is a retry the SDK makes against another replica on its own.
+//
+// It sits in front of authentication, so a request that will not be served
+// costs no signature verification, and in front of the request tracker, so a
+// refusal is not counted as work the drain has to wait for. The health and
+// version routes are on their own subrouter and are not affected: a readiness
+// probe has to keep getting an answer while this is in force.
+func (s *Server) drainGuardMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.shutdownStateHandler != nil {
+			if draining, _ := s.shutdownStateHandler(); draining {
+				w.Header().Set("Retry-After", "1")
+				response.NewErrorWriter(s.logger).WriteGenericError(w, http.StatusServiceUnavailable,
+					"ServiceUnavailable", "The proxy is shutting down and is not accepting new requests")
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// rawQueryGuardMiddleware refuses a raw query string containing a ';' with
+// 400 InvalidArgument (ADR 0007 D13). net/url discards every &-separated
+// segment that contains one and swallows the error, while the router splits on
+// both characters: such a request is routed by one reading of its query and
+// handled by another. A PUT whose query carried a ';' therefore fell through to
+// the plain object PUT with an empty parsed query and overwrote the object.
+// A percent-encoded %3B is a value byte, not a separator, and is not affected.
+func (s *Server) rawQueryGuardMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.RawQuery, ";") {
+			response.NewErrorWriter(s.logger).WriteGenericError(w, http.StatusBadRequest,
+				"InvalidArgument", "The query string must not contain a semicolon")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// sseCustomerGuardMiddleware refuses the three customer-key headers with
+// 501 NotImplemented, naming the header (ADR 0007 D6). No read path carries the
+// customer key, so accepting one on upload would write an object this proxy
+// could never read back - a silent time bomb rather than a silent drop. The
+// refusal sits in front of every S3 route because the decision lifts only when
+// every verb that touches an object carries the key.
+func (s *Server) sseCustomerGuardMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if header := object.SSECustomerHeader(r.Header); header != "" {
+			response.NewErrorWriter(s.logger).WriteNotImplemented(w, header)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -73,10 +137,19 @@ func (s *Server) determineErrorCode(err error) string {
 		return "SignatureDoesNotMatch"
 	case strings.Contains(errMsg, "timestamp"), strings.Contains(errMsg, "clock skew"), strings.Contains(errMsg, "replay"):
 		return "RequestTimeTooSkewed"
-	case strings.Contains(errMsg, "authorization header"):
+	// No header at all is an anonymous request, which S3 answers with
+	// AccessDenied rather than a parse error. A scheme this proxy does not
+	// implement is InvalidRequest. Both arrive wrapped in "malformed
+	// authorization header", so they are matched before it.
+	case strings.Contains(errMsg, "missing authorization header"):
+		return "AccessDenied"
+	case strings.Contains(errMsg, "unsupported authorization algorithm"):
 		return "InvalidRequest"
+	// S3 answers AuthorizationHeaderMalformed for a header it cannot parse.
 	case strings.Contains(errMsg, "malformed"):
 		return "AuthorizationHeaderMalformed"
+	case strings.Contains(errMsg, "authorization header"):
+		return "InvalidRequest"
 	default:
 		return "AccessDenied"
 	}
@@ -94,6 +167,18 @@ var authErrorMessage = map[string]string{
 	"InvalidRequest":               "The authorization mechanism you provided is not supported",
 	"AuthorizationHeaderMalformed": "The authorization header you provided is invalid",
 	"AccessDenied":                 "Access Denied",
+}
+
+// authErrorStatus is the HTTP status S3 answers per authentication error code:
+// 400 for the two that say the request itself is unusable, 403 for a request
+// that was understood and refused (ADR 0006 D2).
+func authErrorStatus(code string) int {
+	switch code {
+	case "InvalidRequest", "AuthorizationHeaderMalformed":
+		return http.StatusBadRequest
+	default:
+		return http.StatusForbidden
+	}
 }
 
 // writeS3Error writes an S3-compatible error response with security headers

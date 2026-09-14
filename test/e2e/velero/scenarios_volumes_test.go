@@ -22,10 +22,11 @@ const (
 // mover, so the volume contents travel to the object store through kopia.
 //
 // Coverage: kopia writes pack files of a few MiB up to the repository blob
-// size, which lands on PutObject above streaming_threshold (AES-CTR) and on
-// multipart for the larger blobs. Note that kopia uses minio-go rather than
-// aws-sdk-go-v2, so it does not emit checksum trailers; this scenario covers
-// the size-based routing and the streaming paths, not the aws-chunked framing.
+// size, so the blobs land on both PUT paths - a single segmented PutObject for
+// anything within one part, the multipart producer above it. Note that kopia
+// uses minio-go rather than aws-sdk-go-v2, so it does not emit checksum
+// trailers; this scenario covers the size-based routing and the streaming
+// paths, not the aws-chunked framing.
 func TestV2_CSISnapshotDataMover(t *testing.T) {
 	ctx := preflight(t)
 	guard := beginScenario(t, ctx)
@@ -137,7 +138,7 @@ func TestV4_CSISnapshotWithoutDataMover(t *testing.T) {
 }
 
 // setupDataVolume creates a namespace with a PVC and a pod, fills it with files
-// that straddle the proxy's size thresholds, and returns their hashes.
+// that straddle the proxy's part-size threshold, and returns their hashes.
 func setupDataVolume(t *testing.T, ctx context.Context, ns string) map[string]string {
 	t.Helper()
 	const pvc, pod = "data", "data-pod"

@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
 	"github.com/sirupsen/logrus"
 )
 
@@ -48,7 +49,8 @@ func (h *PolicyHandler) handleGetPolicy(w http.ResponseWriter, r *http.Request, 
 	h.Logger.WithField("bucket", bucket).Debug("Getting bucket policy")
 
 	input := &s3.GetBucketPolicyInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 	}
 
 	output, err := h.S3Backend.GetBucketPolicy(r.Context(), input)
@@ -57,12 +59,18 @@ func (h *PolicyHandler) handleGetPolicy(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
+	// A bucket with no policy is a refusal, not an empty success: answering 200
+	// with no body reports a policy the bucket does not have (ADR 0007 D1).
+	if aws.ToString(output.Policy) == "" {
+		h.ErrorWriter.WriteGenericError(w, http.StatusNotFound, "NoSuchBucketPolicy",
+			"The bucket policy does not exist")
+		return
+	}
+
 	// Policy response should be JSON
 	w.Header().Set("Content-Type", "application/json")
-	if output.Policy != nil {
-		if _, err := w.Write([]byte(*output.Policy)); err != nil {
-			h.Logger.WithError(err).Error("Failed to write bucket policy response")
-		}
+	if _, err := w.Write([]byte(*output.Policy)); err != nil {
+		h.Logger.WithError(err).Error("Failed to write bucket policy response")
 	}
 }
 
@@ -70,10 +78,8 @@ func (h *PolicyHandler) handleGetPolicy(w http.ResponseWriter, r *http.Request, 
 func (h *PolicyHandler) handlePutPolicy(w http.ResponseWriter, r *http.Request, bucket string) {
 	h.Logger.WithField("bucket", bucket).Debug("Setting bucket policy")
 
-	// Read the request body (JSON policy)
-	body, err := h.RequestParser.ReadBody(r)
-	if err != nil {
-		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
+	body, ok := h.readDocument(w, r, bucket)
+	if !ok {
 		return
 	}
 
@@ -97,12 +103,12 @@ func (h *PolicyHandler) handlePutPolicy(w http.ResponseWriter, r *http.Request, 
 	}
 
 	input := &s3.PutBucketPolicyInput{
-		Bucket: aws.String(bucket),
-		Policy: aws.String(policyStr),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
+		Policy:              aws.String(policyStr),
 	}
 
-	_, err = h.S3Backend.PutBucketPolicy(r.Context(), input)
-	if err != nil {
+	if _, err := h.S3Backend.PutBucketPolicy(r.Context(), input); err != nil {
 		h.ErrorWriter.WriteS3Error(w, err, bucket, "")
 		return
 	}
@@ -115,7 +121,8 @@ func (h *PolicyHandler) handleDeletePolicy(w http.ResponseWriter, r *http.Reques
 	h.Logger.WithField("bucket", bucket).Debug("Deleting bucket policy")
 
 	input := &s3.DeleteBucketPolicyInput{
-		Bucket: aws.String(bucket),
+		Bucket:              aws.String(bucket),
+		ExpectedBucketOwner: request.ExpectedBucketOwner(r),
 	}
 
 	_, err := h.S3Backend.DeleteBucketPolicy(r.Context(), input)

@@ -2,7 +2,7 @@ name: Assign on Renovate Pipeline Failure
 
 on:
   workflow_run:
-    workflows: ["Test and Release"]
+    workflows: ["Test"]
     types:
       - completed
 

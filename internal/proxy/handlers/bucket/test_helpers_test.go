@@ -633,10 +633,8 @@ func testHandler() *Handler {
 
 	// Create a default test config
 	testConfig := &config.Config{}
-	testConfig.Optimizations.CleanAWSSignatureV4Chunked = true
-	testConfig.Optimizations.CleanHTTPTransferChunked = true
 
-	return NewHandler(mockS3Client, testLogger(), "s3ep-", testConfig)
+	return NewHandler(mockS3Client, nil, testLogger(), testConfig)
 }
 
 // isValidJSON checks if a string is valid JSON

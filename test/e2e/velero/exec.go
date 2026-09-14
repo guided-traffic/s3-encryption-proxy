@@ -88,6 +88,7 @@ func binary(envKey, fallback string) string {
 
 func kubectlBin() string { return binary("KUBECTL_BIN", "kubectl") }
 func veleroBin() string  { return binary("VELERO_BIN", "velero") }
+func helmBin() string    { return binary("HELM_BIN", "helm") }
 
 // run executes a command and fails the test with the combined output attached.
 // Every helper funnels through here so a failure always carries the real stderr
@@ -118,6 +119,13 @@ func tryKubectl(t *testing.T, ctx context.Context, args ...string) (string, erro
 	return tryRun(ctx, kubectlBin(), append([]string{"--context", kubeContext(t)}, args...)...)
 }
 
+// helm runs the helm CLI against the e2e cluster context. e2e-up.sh already
+// requires helm, so this adds no dependency the suite did not have.
+func helm(t *testing.T, ctx context.Context, args ...string) string {
+	t.Helper()
+	return run(t, ctx, helmBin(), append([]string{"--kube-context", kubeContext(t)}, args...)...)
+}
+
 // velero runs the velero CLI against the e2e cluster, namespace pre-applied.
 func velero(t *testing.T, ctx context.Context, args ...string) string {
 	t.Helper()
@@ -144,6 +152,14 @@ func kubectlJSON(t *testing.T, ctx context.Context, out interface{}, args ...str
 	raw := kubectl(t, ctx, append(args, "-o", "json")...)
 	require.NoErrorf(t, json.Unmarshal([]byte(raw), out), "kubectl %s returned unparseable JSON:\n%s",
 		strings.Join(args, " "), raw)
+}
+
+// jsonUnmarshal decodes a raw kubectl -o json payload. Callers that poll use it
+// instead of kubectlJSON, which fails the test on an unparseable body: while a
+// resource is still being created, kubectl legitimately returns something that
+// does not decode yet.
+func jsonUnmarshal(raw string, out interface{}) error {
+	return json.Unmarshal([]byte(raw), out)
 }
 
 // eventually polls fn until it returns true, failing with msg on timeout. It is

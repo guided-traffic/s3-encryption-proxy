@@ -12,3 +12,6 @@ graphify-out/wiki/*
 graphify-out/obsidian/*
 graphify-out/cache/*
 graphify-out/converted/*
+
+# Archived tickets - finished work lists, kept readable but never a current rule (ADR 0022)
+docs/tickets/archive

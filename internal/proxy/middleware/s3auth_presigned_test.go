@@ -97,8 +97,8 @@ func TestAuthenticateRequest_SDKPresignedURL(t *testing.T) {
 			signed := presignWithSDK(t, "velero", key, 10*time.Minute)
 			r := requestFromPresignedURL(t, http.MethodGet, signed)
 
-			require.NoError(t, service.AuthenticateRequest(r),
-				"a URL signed by the AWS SDK must validate")
+			_, err := service.AuthenticateRequest(r)
+			require.NoError(t, err, "a URL signed by the AWS SDK must validate")
 		})
 	}
 }
@@ -110,18 +110,18 @@ func TestAuthenticateRequest_PresignedTampering(t *testing.T) {
 
 	t.Run("different_key", func(t *testing.T) {
 		tampered := strings.Replace(signed, "velero-backup.json", "velero-secret.json", 1)
-		require.Error(t, service.AuthenticateRequest(requestFromPresignedURL(t, http.MethodGet, tampered)),
+		requireAuthErr(t, service, requestFromPresignedURL(t, http.MethodGet, tampered),
 			"repointing a signed URL at another object must fail")
 	})
 
 	t.Run("different_bucket", func(t *testing.T) {
 		tampered := strings.Replace(signed, "/velero/", "/other-bucket/", 1)
-		require.Error(t, service.AuthenticateRequest(requestFromPresignedURL(t, http.MethodGet, tampered)),
+		requireAuthErr(t, service, requestFromPresignedURL(t, http.MethodGet, tampered),
 			"repointing a signed URL at another bucket must fail")
 	})
 
 	t.Run("different_method", func(t *testing.T) {
-		require.Error(t, service.AuthenticateRequest(requestFromPresignedURL(t, http.MethodDelete, signed)),
+		requireAuthErr(t, service, requestFromPresignedURL(t, http.MethodDelete, signed),
 			"a GET URL must not authorise a DELETE")
 	})
 
@@ -132,12 +132,12 @@ func TestAuthenticateRequest_PresignedTampering(t *testing.T) {
 		sig := q.Get(QuerySignature)
 		q.Set(QuerySignature, flipLastHexDigit(sig))
 		parsed.RawQuery = q.Encode()
-		require.Error(t, service.AuthenticateRequest(requestFromPresignedURL(t, http.MethodGet, parsed.String())))
+		requireAuthErr(t, service, requestFromPresignedURL(t, http.MethodGet, parsed.String()))
 	})
 
 	t.Run("extra_query_parameter", func(t *testing.T) {
 		tampered := signed + "&versionId=deadbeef"
-		require.Error(t, service.AuthenticateRequest(requestFromPresignedURL(t, http.MethodGet, tampered)),
+		requireAuthErr(t, service, requestFromPresignedURL(t, http.MethodGet, tampered),
 			"adding an unsigned query parameter must invalidate the signature")
 	})
 
@@ -147,17 +147,17 @@ func TestAuthenticateRequest_PresignedTampering(t *testing.T) {
 		q := parsed.Query()
 		q.Set(QueryCredential, strings.Replace(q.Get(QueryCredential), testAccessKey, "someone-else", 1))
 		parsed.RawQuery = q.Encode()
-		err = service.AuthenticateRequest(requestFromPresignedURL(t, http.MethodGet, parsed.String()))
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "access key not found")
+		_, authErr := service.AuthenticateRequest(requestFromPresignedURL(t, http.MethodGet, parsed.String()))
+		require.Error(t, authErr)
+		assert.Contains(t, authErr.Error(), "access key not found")
 	})
 
 	t.Run("different_host", func(t *testing.T) {
 		r := requestFromPresignedURL(t, http.MethodGet, signed)
 		r.Host = "attacker.example.com"
 		r.Header.Set("Host", "attacker.example.com")
-		require.Error(t, service.AuthenticateRequest(r),
-			"host is a signed header, so replaying against another host must fail")
+		_, err := service.AuthenticateRequest(r)
+		require.Error(t, err, "host is a signed header, so replaying against another host must fail")
 	})
 }
 
@@ -172,7 +172,7 @@ func TestAuthenticateRequest_PresignedExpiry(t *testing.T) {
 		// tolerance cannot keep the URL alive.
 		rewindSigningTime(t, r, 2*time.Hour)
 
-		err := service.AuthenticateRequest(r)
+		_, err := service.AuthenticateRequest(r)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "expired")
 	})
@@ -185,7 +185,7 @@ func TestAuthenticateRequest_PresignedExpiry(t *testing.T) {
 		q.Del(QueryExpires)
 		parsed.RawQuery = q.Encode()
 
-		err = service.AuthenticateRequest(requestFromPresignedURL(t, http.MethodGet, parsed.String()))
+		_, err = service.AuthenticateRequest(requestFromPresignedURL(t, http.MethodGet, parsed.String()))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), QueryExpires)
 	})
@@ -195,10 +195,10 @@ func TestAuthenticateRequest_PresignedExpiry(t *testing.T) {
 		parsed, err := url.Parse(signed)
 		require.NoError(t, err)
 		q := parsed.Query()
-		q.Set(QueryExpires, strconv.Itoa(maxPresignExpirySeconds+1))
+		q.Set(QueryExpires, strconv.Itoa(defaultPresignExpirySeconds+1))
 		parsed.RawQuery = q.Encode()
 
-		err = service.AuthenticateRequest(requestFromPresignedURL(t, http.MethodGet, parsed.String()))
+		_, err = service.AuthenticateRequest(requestFromPresignedURL(t, http.MethodGet, parsed.String()))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "maximum")
 	})
@@ -208,7 +208,7 @@ func TestAuthenticateRequest_PresignedExpiry(t *testing.T) {
 		r := requestFromPresignedURL(t, http.MethodGet, signed)
 		rewindSigningTime(t, r, -48*time.Hour) // 2 days into the future
 
-		err := service.AuthenticateRequest(r)
+		_, err := service.AuthenticateRequest(r)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "future")
 	})
@@ -229,7 +229,7 @@ func TestAuthenticateRequest_PresignedMalformed(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			r := httptest.NewRequest(http.MethodGet, target, nil)
 			r.Host = testHost
-			require.Error(t, service.AuthenticateRequest(r))
+			requireAuthErr(t, service, r)
 		})
 	}
 }
@@ -240,7 +240,7 @@ func TestAuthenticateRequest_HeaderPathUnaffected(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/velero/k", nil)
 	r.Host = testHost
 
-	err := service.AuthenticateRequest(r)
+	_, err := service.AuthenticateRequest(r)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "authorization header",
 		"a request with neither form must fail on the header path, not the presigned one")
@@ -315,4 +315,60 @@ func rewindSigningTime(t *testing.T, r *http.Request, d time.Duration) {
 	require.NoError(t, err)
 	q.Set(QueryDate, signedAt.Add(-d).UTC().Format(ISO8601BasicFormat))
 	r.URL.RawQuery = q.Encode()
+}
+
+// The canonical query string is sorted by parameter name, never by the joined
+// "name=value" string. The two orders differ whenever one name is a prefix of
+// another and the character after the prefix sorts below "=" - which is every
+// S3 verb that pairs a flag with a qualified form of the same word.
+//
+// It was found by SelectObjectContent: the SDK sends ?select=&select-type=2, the
+// proxy signed "select-type=2&select=", and every such request was answered
+// SignatureDoesNotMatch while the backend verified the very same signature.
+func TestAuthCanonicalQueryIsSortedByName(t *testing.T) {
+	const rule = "SigV4 sorts the parameter names; joining first and sorting the pairs reverses any " +
+		"name that is a prefix of another (ADR 0014 D3)"
+
+	cases := map[string]struct {
+		query string
+		want  string
+	}{
+		"a name that is a prefix of another": {
+			query: "select=&select-type=2",
+			want:  "select=&select-type=2",
+		},
+		"whatever order it arrives in": {
+			query: "select-type=2&select=",
+			want:  "select=&select-type=2",
+		},
+		"an empty value renders as name=": {
+			query: "acl=",
+			want:  "acl=",
+		},
+		"a flag with no equals sign at all": {
+			query: "acl",
+			want:  "acl=",
+		},
+		"ordinary names sort as they always did": {
+			query: "max-keys=10&delimiter=%2F&prefix=a",
+			want:  "delimiter=%2F&max-keys=10&prefix=a",
+		},
+		"repeated names sort by value": {
+			query: "x=b&x=a",
+			want:  "x=a&x=b",
+		},
+		"uppercase sorts before lowercase, by code point": {
+			query: "b=1&A=2",
+			want:  "A=2&b=1",
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			values, err := url.ParseQuery(tc.query)
+			require.NoError(t, err)
+
+			assert.Equal(t, tc.want, canonicalQueryString(values), rule)
+		})
+	}
 }

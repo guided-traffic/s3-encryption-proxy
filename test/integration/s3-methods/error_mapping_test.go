@@ -92,9 +92,11 @@ func TestBackendErrorsKeepTheirStatusAndCode(t *testing.T) {
 				})
 				return err
 			},
-			// The proxy rejects an unknown upload id before it reaches the
-			// backend, so this asserts only that it is a client error.
-			wantStatus: http.StatusBadRequest,
+			// The proxy holds the upload's encryption state, so it knows the id
+			// is unknown before the backend does — and it says so with the code
+			// S3 uses for it rather than a generic client error.
+			wantStatus: http.StatusNotFound,
+			wantCode:   "NoSuchUpload",
 		},
 		{
 			name: "ListObjectsV2_in_a_missing_bucket",

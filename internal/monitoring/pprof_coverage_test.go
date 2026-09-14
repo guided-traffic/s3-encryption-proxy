@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -91,30 +90,6 @@ func TestPprofServerStartServesAndShutsDownOnContextCancel(t *testing.T) {
 	assert.Error(t, err, "the listener must be gone once Start returned")
 }
 
-func TestPprofServerStopClosesTheListener(t *testing.T) {
-	addr := MonfreeAddr(t)
-	s := NewPprofServer(addr)
-
-	go func() { _ = s.httpServer.ListenAndServe() }()
-
-	client := &http.Client{Timeout: 2 * time.Second}
-	require.Eventually(t, func() bool {
-		resp, err := client.Get("http://" + addr + "/debug/pprof/")
-		if err != nil {
-			return false
-		}
-		if err := resp.Body.Close(); err != nil {
-			t.Logf("failed to close response body: %v", err)
-		}
-		return true
-	}, 5*time.Second, 5*time.Millisecond)
-
-	require.NoError(t, s.Stop())
-
-	_, err := client.Get("http://" + addr + "/debug/pprof/")
-	assert.Error(t, err)
-}
-
 // The two failure paths. 127.0.0.1:6060 is a shipped default now rather than an
 // opt-in port, so a second proxy on the same host hits the bind error, and a
 // profile in flight holds its connection open past the shutdown budget.
@@ -153,49 +128,49 @@ func TestPprofServerReportsItsFailures(t *testing.T) {
 		}
 	})
 
-	// A profile in flight holds its connection for the full requested duration,
-	// so Shutdown hits its 10s budget. Start must then force the listener closed
-	// and report the failure rather than delay the process exit further.
-	t.Run("a shutdown that times out is forced and reported", func(t *testing.T) {
-		s := NewPprofServer("127.0.0.1:0")
+	// A shutdown that cannot complete - a profile in flight holds its connection
+	// for the full requested duration, and a listener can refuse to close. Start
+	// must then force the listener closed and report the failure rather than delay
+	// the process exit further.
+	t.Run("a shutdown that fails is forced and reported", func(t *testing.T) {
+		// The bind itself fails immediately, so the only listener the server
+		// tracks is the one handed to Serve below - and that one refuses to close.
+		s := NewPprofServer("mon-invalid-pprof-address")
 
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		base, err := net.Listen("tcp", "127.0.0.1:0")
 		require.NoError(t, err)
-		s.httpServer.Addr = listener.Addr().String()
+		failing := &MonfailingListener{Listener: base}
 
-		// entered closes when the handler is actually running, which is the only
-		// state in which Shutdown has something it cannot drain. Waiting for the
-		// port to accept a connection is not enough and made this flaky.
-		entered := make(chan struct{})
-		release := make(chan struct{})
-		var once sync.Once
-		s.httpServer.Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			once.Do(func() { close(entered) })
-			<-release
-		})
-		go func() { _ = s.httpServer.Serve(listener) }()
-		defer close(release)
-
+		serveDone := make(chan struct{})
 		go func() {
-			resp, reqErr := (&http.Client{Timeout: 30 * time.Second}).Get("http://" + s.httpServer.Addr + "/debug/pprof/")
-			if reqErr == nil {
-				_ = resp.Body.Close()
-			}
+			defer close(serveDone)
+			_ = s.httpServer.Serve(failing)
 		}()
 
+		// Accept having been entered guarantees the listener is tracked by the
+		// server and will therefore be closed during shutdown.
+		require.Eventually(t, failing.accepted.Load, 5*time.Second, 5*time.Millisecond,
+			"the server must have started accepting on the failing listener")
+
+		ctx, cancel := context.WithCancel(context.Background())
+		errCh := make(chan error, 1)
+		go func() { errCh <- s.Start(ctx) }()
+		cancel()
+
 		select {
-		case <-entered:
-		case <-time.After(10 * time.Second):
-			t.Fatal("the handler was never entered, so there is no in-flight request to strand")
+		case err := <-errCh:
+			require.Error(t, err, "a failing shutdown must be reported to the caller")
+			assert.Contains(t, err.Error(), "pprof server shutdown failed")
+			assert.Contains(t, err.Error(), "listener close failed",
+				"the underlying cause must be wrapped, not swallowed")
+		case <-time.After(15 * time.Second):
+			t.Fatal("Start did not return after the context was cancelled")
 		}
 
-		expired, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
-		defer cancel()
-		<-expired.Done()
-
-		require.Error(t, s.httpServer.Shutdown(expired),
-			"precondition: a request in flight plus an expired context must make Shutdown fail")
-		assert.NoError(t, s.Stop(), "Stop force-closes what Shutdown could not drain")
+		select {
+		case <-serveDone:
+		case <-time.After(5 * time.Second):
+			t.Fatal("Serve did not return after shutdown")
+		}
 	})
 }

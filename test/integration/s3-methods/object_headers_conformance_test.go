@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"net/http"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	"github.com/aws/smithy-go/middleware"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/guided-traffic/s3-encryption-proxy/test/integration"
@@ -30,8 +32,12 @@ import (
 // The differences that are legitimate and therefore encoded rather than flagged:
 //   - the proxy filters the s3ep-* metadata namespace out of client responses
 //   - the bytes and the length the BACKEND reports are ciphertext
-//   - the ETag is the digest of the ciphertext, so it does not equal the digest
-//     MinIO reports for the same plaintext
+//
+// The ETag is not one of them. It is an MD5 of the stored bytes in the bare
+// 32-hex shape a client reads as a digest of the content it was served, and its
+// form is an open question (ADR 0010 D12, residual risks in ADR 0008 and
+// ADR 0012). This file asserts the target - a value no client mistakes for a
+// content digest - and is red until the product answers it.
 //
 // Everything else that differs is named as a deviation in the comment above the
 // assertion that encodes it.
@@ -190,6 +196,19 @@ func HdrObjectHeaderNames(h http.Header) []string {
 	return names
 }
 
+// HdrIsContentDigestShape reports whether an entity tag carries, inside its
+// quotes, the bare 32 hex digits every S3 client reads as an MD5 of the object
+// content. A multipart tag (<hex>-N) and any marked value are not that shape.
+func HdrIsContentDigestShape(etag string) bool {
+	value := strings.Trim(etag, `"`)
+	if len(value) != 32 {
+		return false
+	}
+	return strings.IndexFunc(value, func(r rune) bool {
+		return !strings.ContainsRune("0123456789abcdefABCDEF", r)
+	}) < 0
+}
+
 // HdrNewDirectBucket creates a bucket that exists only for the direct-MinIO half
 // of a differential test, and registers its cleanup.
 func HdrNewDirectBucket(t *testing.T, ctx context.Context, client *s3.Client, lockEnabled bool) string {
@@ -202,52 +221,17 @@ func HdrNewDirectBucket(t *testing.T, ctx context.Context, client *s3.Client, lo
 	}
 	_, err := client.CreateBucket(ctx, input)
 	require.NoError(t, err, "create direct MinIO bucket %s", name)
-	t.Cleanup(func() { HdrCleanupBucket(client, name) })
+	t.Cleanup(func() { HdrCleanupBucket(t, client, name) })
 	return name
 }
 
-// HdrCleanupBucket removes a bucket created by this file, including the versions,
-// delete markers, legal holds and governance retention an object-lock bucket
-// carries. Best effort by design: it runs from t.Cleanup on failing tests too.
-func HdrCleanupBucket(client *s3.Client, bucket string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	if versions, err := client.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{
-		Bucket: aws.String(bucket),
-	}); err == nil {
-		for _, v := range versions.Versions {
-			_, _ = client.PutObjectLegalHold(ctx, &s3.PutObjectLegalHoldInput{
-				Bucket:    aws.String(bucket),
-				Key:       v.Key,
-				VersionId: v.VersionId,
-				LegalHold: &types.ObjectLockLegalHold{Status: types.ObjectLockLegalHoldStatusOff},
-			})
-			_, _ = client.DeleteObject(ctx, &s3.DeleteObjectInput{
-				Bucket:                    aws.String(bucket),
-				Key:                       v.Key,
-				VersionId:                 v.VersionId,
-				BypassGovernanceRetention: aws.Bool(true),
-			})
-		}
-		for _, m := range versions.DeleteMarkers {
-			_, _ = client.DeleteObject(ctx, &s3.DeleteObjectInput{
-				Bucket: aws.String(bucket), Key: m.Key, VersionId: m.VersionId,
-			})
-		}
-	}
-
-	if objects, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-		Bucket: aws.String(bucket),
-	}); err == nil {
-		for _, o := range objects.Contents {
-			_, _ = client.DeleteObject(ctx, &s3.DeleteObjectInput{
-				Bucket: aws.String(bucket), Key: o.Key,
-			})
-		}
-	}
-
-	_, _ = client.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(bucket)})
+// HdrCleanupBucket removes a bucket created by this file. It used to be the only
+// teardown in the tree that could remove a versioned or object-locked bucket;
+// that walk lives in the shared helper now, so this is one call rather than a
+// second copy of it.
+func HdrCleanupBucket(t *testing.T, client *s3.Client, bucket string) {
+	t.Helper()
+	integration.PurgeBucket(t, client, bucket)
 }
 
 // ----------------------------------------------------------------------------
@@ -305,23 +289,19 @@ func TestHdrEntityHeadersSurvivePutGetAndHead(t *testing.T) {
 		}
 	})
 
-	// DEVIATION (confirmed defect). AWS documents Expires as an entity header
-	// that PutObject stores and GET/HEAD return. The backend does exactly that.
-	// The proxy parses no Expires on PUT — "Skip Expires header as it requires
-	// time parsing", internal/proxy/handlers/object/operations.go:673, and
-	// addRequestHeaders in helpers.go:150-169 has no branch for it either — so
-	// the value never reaches storage and no read can return it. The PUT still
-	// answers 200. This asserts the actual behaviour so the suite stays honest;
-	// it is reported as a finding.
-	t.Run("expires_is_dropped_by_the_proxy_but_kept_by_the_backend", func(t *testing.T) {
+	// Expires is an entity header PutObject stores and GET and HEAD return. The
+	// proxy used to skip it on PUT because it needs parsing, so the value never
+	// reached storage and no read could return it — while the PUT still answered
+	// 200. It is forwarded now, under ADR 0007 D2 rather than D3, which does not
+	// name it: it describes the plaintext, like Cache-Control.
+	t.Run("expires_survives_the_round_trip", func(t *testing.T) {
 		require.NotEmpty(t, minioGet.Get("Expires"),
 			"the backend is expected to round-trip Expires; without that there is no oracle here")
 		assert.Equal(t, minioGet.Get("Expires"), minioHead.Get("Expires"),
 			"the backend must return the same Expires on GET and HEAD")
-		assert.Empty(t, proxyGet.Get("Expires"),
-			"DEVIATION: the proxy drops Expires on PUT, so GET cannot return it")
-		assert.Empty(t, proxyHead.Get("Expires"),
-			"DEVIATION: the proxy drops Expires on PUT, so HEAD cannot return it")
+		assert.Equal(t, minioGet.Get("Expires"), proxyGet.Get("Expires"))
+		assert.Equal(t, minioHead.Get("Expires"), proxyHead.Get("Expires"),
+			"GET and HEAD have to agree about it through the proxy too")
 	})
 
 	t.Run("content_length_is_the_plaintext_length_on_get_and_head", func(t *testing.T) {
@@ -382,21 +362,17 @@ func TestHdrHeadReturnsTheSameHeaderSetAsGet(t *testing.T) {
 	assert.ElementsMatch(t, HdrObjectHeaderNames(minioGet), HdrObjectHeaderNames(minioHead),
 		"the backend returns a different set of object headers on HEAD than on GET")
 
-	// The two implementations must also agree with each other, with Expires as
-	// the single documented exception (see the Expires sub-test above).
+	// The two implementations must also agree with each other. Expires used to be
+	// the single documented exception; it is forwarded now, so there is none.
 	proxyNames := HdrObjectHeaderNames(proxyGet)
-	backendNames := make([]string, 0, len(minioGet))
-	for _, name := range HdrObjectHeaderNames(minioGet) {
-		if name == "expires" {
-			continue
-		}
-		backendNames = append(backendNames, name)
-	}
+	backendNames := HdrObjectHeaderNames(minioGet)
 	assert.ElementsMatch(t, backendNames, proxyNames,
 		"the proxy and the backend expose different object headers for the same upload")
 
-	// Every value the two do share must be identical, the ETag excluded: the
-	// proxy's ETag is the digest of the ciphertext.
+	// Every value the two do share must be identical. The ETag is compared on its
+	// own below rather than against the backend's - it is a digest of the stored
+	// bytes and cannot equal MinIO's digest of the same plaintext - which leaves
+	// last-modified as the only silent exclusion: two uploads, two instants.
 	for _, name := range proxyNames {
 		if name == "etag" || name == "last-modified" {
 			continue
@@ -404,6 +380,15 @@ func TestHdrHeadReturnsTheSameHeaderSetAsGet(t *testing.T) {
 		assert.Equalf(t, minioGet.Get(name), proxyGet.Get(name), "GET: value of %s differs", name)
 		assert.Equalf(t, minioHead.Get(name), proxyHead.Get(name), "HEAD: value of %s differs", name)
 	}
+
+	// ADR 0010 D12 leaves the entity-tag form open, ADR 0008 and ADR 0012 carry it
+	// as a residual risk: under an encrypting provider the value must not be the
+	// bare 32-hex shape a client reads as a digest of the body it was served.
+	// The exact marker ("-0" inside the quotes) is still the owner's decision.
+	assert.Falsef(t, HdrIsContentDigestShape(proxyGet.Get("ETag")),
+		"GET: the ETag %q is bare 32 hex over ciphertext", proxyGet.Get("ETag"))
+	assert.Falsef(t, HdrIsContentDigestShape(proxyHead.Get("ETag")),
+		"HEAD: the ETag %q is bare 32 hex over ciphertext", proxyHead.Get("ETag"))
 }
 
 // ----------------------------------------------------------------------------
@@ -463,19 +448,17 @@ func TestHdrUserMetadataRoundTripsLikeTheBackend(t *testing.T) {
 		"the metadata key with an empty value vanished from the HEAD response")
 }
 
-// DEVIATION (confirmed defect, security relevant). SigV4 canonicalisation
-// requires sequential whitespace inside a header value to be collapsed to a
-// single space before signing ("Trim excess white space before and after values,
-// and convert sequential spaces to a single space"). The proxy only trims the
-// ends — strings.TrimSpace at
-// internal/proxy/middleware/s3auth_robust.go:382 — so every request whose signed
-// headers contain sequential spaces is rejected as SignatureDoesNotMatch,
-// although the client signed it exactly as AWS prescribes. The backend accepts
-// the identical request. (A TAB inside a value is left out on purpose: the
-// backend rejects that one too, so there is no oracle for it here.)
+// SigV4 canonicalisation collapses every run of spaces inside a header value
+// before signing. The proxy only trimmed the ends, so every correctly signed
+// request whose headers carried sequential spaces was answered
+// SignatureDoesNotMatch while the backend accepted the identical request.
 //
-// This is not exotic: "Cache-Control: max-age=3600,  public" is enough.
-func TestHdrSequentialWhitespaceInASignedHeaderBreaksTheProxySignature(t *testing.T) {
+// It is not exotic: "Cache-Control: max-age=3600,  public" is enough, and a
+// Content-Disposition carrying a filename — which is what a pre-signed download
+// URL is for — has spaces by nature. (A TAB inside a value is left out on
+// purpose: the backend rejects that one too, so there is no oracle for it here,
+// and neither the proxy nor aws-sdk-go-v2 collapses tabs.)
+func TestHdrSequentialWhitespaceInASignedHeaderIsAccepted(t *testing.T) {
 	integration.EnsureMinIOAndProxyAvailable(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -513,6 +496,17 @@ func TestHdrSequentialWhitespaceInASignedHeaderBreaksTheProxySignature(t *testin
 				}
 			},
 		},
+		{
+			name: "content_disposition_filename_with_spaces",
+			build: func(bucket, key string) *s3.PutObjectInput {
+				return &s3.PutObjectInput{
+					Bucket: aws.String(bucket), Key: aws.String(key),
+					Body:               bytes.NewReader(payload),
+					ContentLength:      aws.Int64(int64(len(payload))),
+					ContentDisposition: aws.String(`attachment; filename="quarterly  report.txt"`),
+				}
+			},
+		},
 	}
 
 	for _, c := range cases {
@@ -524,12 +518,9 @@ func TestHdrSequentialWhitespaceInASignedHeaderBreaksTheProxySignature(t *testin
 				"the backend is expected to accept this request; without that there is no oracle here")
 
 			_, proxyErr := tc.ProxyClient.PutObject(ctx, c.build(tc.TestBucket, key))
-			require.Error(t, proxyErr,
-				"DEVIATION EXPECTED: the proxy is known to reject sequential whitespace in a signed header")
-			assert.Equal(t, http.StatusForbidden, httpStatusOf(proxyErr),
-				"the proxy rejects the request, but not as a signature failure")
-			assert.Equal(t, "SignatureDoesNotMatch", apiCodeOf(proxyErr),
-				"DEVIATION: the proxy answers SignatureDoesNotMatch to a correctly signed request")
+			assert.NoError(t, proxyErr,
+				"a correctly signed request must not be answered SignatureDoesNotMatch (%q)",
+				apiCodeOf(proxyErr))
 		})
 	}
 }
@@ -562,11 +553,7 @@ func TestHdrEncryptionMetadataIsNeverVisibleToTheClient(t *testing.T) {
 	// Two decoys that only LOOK like the reserved prefix, one lower case and one
 	// upper case: S3 metadata keys are case-insensitive, so a case variant that
 	// slipped through the filter would be a genuine leak.
-	metadata := map[string]string{
-		"harmless":     "user-value",
-		"s3ep-notreal": "user-owned",
-		"S3EP-Upper":   "user-upper",
-	}
+	metadata := map[string]string{"harmless": "user-value"}
 	_, err := HdrPutWithEntityHeaders(ctx, tc.ProxyClient, tc.TestBucket, key, payload, metadata)
 	require.NoError(t, err, "PUT through the proxy")
 
@@ -619,32 +606,35 @@ func TestHdrEncryptionMetadataIsNeverVisibleToTheClient(t *testing.T) {
 	})
 
 	// The reserved namespace is not client-writable: a key that merely starts
-	// with the prefix is dropped at PUT, in either spelling, and never reaches
-	// the backend. It used to be stored, because the PUT-side filter compared
-	// the prefix case-sensitively against a key Go had already canonicalised to
-	// "S3ep-Notreal" - which is what let a client-supplied
-	// x-amz-meta-s3ep-encrypted-dek overwrite the real one.
-	//
-	// One deviation remains, deliberately: the key is dropped silently rather
-	// than refused. AWS returns x-amz-meta-s3ep-notreal unchanged, and the
-	// honest answer is InvalidArgument at PUT, which is ADR 0009 and ships with
-	// the next major.
-	t.Run("user_metadata_that_looks_like_the_prefix_is_swallowed", func(t *testing.T) {
-		assert.Empty(t, proxyGet.Get("x-amz-meta-s3ep-notreal"),
-			"DEVIATION: the proxy hides a user's own s3ep-prefixed metadata instead of refusing it at PUT")
-		assert.Empty(t, proxyGet.Get("x-amz-meta-s3ep-upper"),
-			"DEVIATION: same for the upper-case variant")
-		assert.Empty(t, proxyHead.Get("x-amz-meta-s3ep-notreal"))
-		assert.Empty(t, proxyHead.Get("x-amz-meta-s3ep-upper"))
+	// with the prefix is refused at PUT, in either spelling, and nothing is
+	// stored (ADR 0009 D6). It used to be *stored*, because the PUT-side filter
+	// compared the prefix case-sensitively against a key Go had already
+	// canonicalised to "S3ep-Notreal" — which is what let a client-supplied
+	// x-amz-meta-s3ep-encrypted-dek overwrite the real one — and then, until
+	// 5.0.0, silently dropped. AWS itself would return x-amz-meta-s3ep-notreal
+	// unchanged; a proxy that owns this namespace cannot, and says so rather than
+	// discarding the key behind a 200.
+	t.Run("user_metadata_that_looks_like_the_prefix_is_refused", func(t *testing.T) {
+		for name, spelling := range map[string]string{
+			"lower case": "s3ep-notreal",
+			"upper case": "S3EP-Upper",
+		} {
+			t.Run(name, func(t *testing.T) {
+				refusedKey := key + "-refused-" + integration.RandomString(6)
+				_, putErr := HdrPutWithEntityHeaders(ctx, tc.ProxyClient, tc.TestBucket, refusedKey, payload,
+					map[string]string{"harmless": "user-value", spelling: "user-owned"})
+				require.Error(t, putErr, "a write into the reserved namespace must be refused")
 
-		lowered := make(map[string]string, len(backend.Metadata))
-		for k, v := range backend.Metadata {
-			lowered[strings.ToLower(k)] = v
+				var apiErr smithy.APIError
+				require.ErrorAs(t, putErr, &apiErr)
+				assert.Equal(t, "InvalidArgument", apiErr.ErrorCode())
+
+				_, headErr := tc.MinIOClient.HeadObject(ctx, &s3.HeadObjectInput{
+					Bucket: aws.String(tc.TestBucket), Key: aws.String(refusedKey),
+				})
+				assert.Error(t, headErr, "the refused write left an object behind")
+			})
 		}
-		assert.NotContains(t, lowered, "s3ep-notreal",
-			"the reserved namespace must not be writable by a client")
-		assert.NotContains(t, lowered, "s3ep-upper",
-			"the upper-case spelling canonicalises to the same key and must be dropped too")
 	})
 }
 
@@ -687,23 +677,42 @@ func TestHdrETagIsPresentAndStableAcrossRepeatedHeads(t *testing.T) {
 	assert.Equal(t, first, getHeaders.Get("ETag"), "GET and HEAD report different ETags")
 	assert.Equal(t, aws.ToString(proxyPut.ETag), first, "PUT returned an ETag that HEAD does not confirm")
 
-	// The proxy's ETag is the digest of the stored ciphertext, so it does not
-	// match the backend's digest of the same plaintext. That is the product
-	// working; it is recorded here because a client that verifies an upload by
-	// comparing the ETag against its own MD5 will not succeed through the proxy.
-	assert.NotEqual(t, aws.ToString(minioPut.ETag), aws.ToString(proxyPut.ETag),
-		"the proxy's ETag equals the plaintext digest: is the object stored unencrypted?")
+	// ADR 0010 D12 leaves the entity-tag form open, ADR 0008 and ADR 0012 carry it
+	// as a residual risk: a bare 32-hex MD5 of the ciphertext is what rclone and
+	// s3cmd read as a digest of the content and refuse. The exact marker ("-0"
+	// inside the quotes) is still the owner's decision.
+	assert.Falsef(t, HdrIsContentDigestShape(aws.ToString(proxyPut.ETag)),
+		"the ETag %q is bare 32 hex over ciphertext", aws.ToString(proxyPut.ETag))
+
+	// Whatever shape it takes, the value the proxy hands out has to revalidate
+	// when the client sends it back.
+	_, err = tc.ProxyClient.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(tc.TestBucket), Key: aws.String(key), IfMatch: proxyPut.ETag,
+	})
+	assert.NoError(t, err, "If-Match carrying the proxy's own ETag does not revalidate")
+
+	// Encryption at rest is asserted on the stored bytes. It used to be inferred
+	// from the ETag differing from the backend's, which a correct plaintext digest
+	// over correctly sealed ciphertext would have tripped.
+	stored, err := tc.MinIOClient.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
+	})
+	require.NoError(t, err)
+	storedBytes, err := io.ReadAll(stored.Body)
+	_ = stored.Body.Close()
+	require.NoError(t, err)
+	integration.AssertDataIsEncryptedBasic(t, storedBytes, "the object the proxy wrote is stored in the clear")
 }
 
 // ----------------------------------------------------------------------------
-// 6. The storage headers a PUT silently drops
+// 6. The storage headers a PUT forwards (ADR 0007 D3), and the three it refuses
 // ----------------------------------------------------------------------------
 
-// A PUT today accepts and then discards the storage-control headers, answering
-// 200; ADR 0007 forwards them to the backend instead. This confirms it end to
-// end: each header is sent, the 200 is asserted, and the backend is asked
-// whether the setting took effect. It did not, in every case.
-func TestHdrStorageHeadersAreAcceptedAndSilentlyDropped(t *testing.T) {
+// Every storage-control header reaches the backend and takes effect there. This
+// test used to assert the opposite, header by header: accepted, dropped,
+// answered 200. The oracle is the same in both directions - the same request is
+// sent straight to MinIO and the two outcomes are compared.
+func TestHdrStorageHeadersReachTheBackend(t *testing.T) {
 	integration.EnsureMinIOAndProxyAvailable(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -712,50 +721,43 @@ func TestHdrStorageHeadersAreAcceptedAndSilentlyDropped(t *testing.T) {
 	tc := integration.NewTestContextWithTimeout(t, ctx)
 	defer tc.CleanupTestBucket()
 
-	payload := []byte("storage headers are dropped")
+	payload := []byte("storage headers reach the backend")
 
 	t.Run("x_amz_server_side_encryption", func(t *testing.T) {
-		key := "sse-" + integration.RandomString(10)
-		put := func(bucket string) (*s3.PutObjectOutput, error) {
-			return tc.ProxyClient.PutObject(ctx, &s3.PutObjectInput{
-				Bucket: aws.String(bucket), Key: aws.String(key),
-				Body:                 bytes.NewReader(payload),
-				ContentLength:        aws.Int64(int64(len(payload))),
-				ServerSideEncryption: types.ServerSideEncryptionAes256,
-			})
-		}
-		out, err := put(tc.TestBucket)
-		require.NoError(t, err, "DEVIATION EXPECTED: the proxy accepts SSE and does nothing with it")
-		assert.Empty(t, string(out.ServerSideEncryption),
-			"the proxy echoes an SSE mode it did not apply")
-
-		backend, err := tc.MinIOClient.HeadObject(ctx, &s3.HeadObjectInput{
-			Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
-		})
-		require.NoError(t, err)
-		assert.Empty(t, string(backend.ServerSideEncryption),
-			"DEVIATION CONFIRMED: the request was answered 200 and no SSE marker was stored")
-
-		// The backend answers the identical request honestly: this MinIO has no
-		// KMS, so it refuses with NotImplemented. The proxy answers 200 to a
-		// request its own backend would reject.
+		// This MinIO has no KMS, so it may refuse SSE outright. Forwarding means
+		// the proxy gives the client the backend's own answer either way, which
+		// is what this compares - not a fixed expectation about MinIO.
 		directBucket := HdrNewDirectBucket(t, ctx, tc.MinIOClient, false)
-		_, backendErr := tc.MinIOClient.PutObject(ctx, &s3.PutObjectInput{
-			Bucket: aws.String(directBucket), Key: aws.String(key),
+		directKey := "sse-direct-" + integration.RandomString(10)
+		_, directErr := tc.MinIOClient.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(directBucket), Key: aws.String(directKey),
 			Body:                 bytes.NewReader(payload),
 			ContentLength:        aws.Int64(int64(len(payload))),
 			ServerSideEncryption: types.ServerSideEncryptionAes256,
 		})
-		if backendErr != nil {
-			t.Logf("the backend refuses the same request: %s (%d)", apiCodeOf(backendErr), httpStatusOf(backendErr))
-		} else {
-			direct, headErr := tc.MinIOClient.HeadObject(ctx, &s3.HeadObjectInput{
-				Bucket: aws.String(directBucket), Key: aws.String(key),
-			})
-			require.NoError(t, headErr)
-			assert.NotEmpty(t, string(direct.ServerSideEncryption),
-				"the backend accepted SSE but recorded nothing either")
+
+		proxyKey := "sse-proxy-" + integration.RandomString(10)
+		_, proxyErr := tc.ProxyClient.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(tc.TestBucket), Key: aws.String(proxyKey),
+			Body:                 bytes.NewReader(payload),
+			ContentLength:        aws.Int64(int64(len(payload))),
+			ServerSideEncryption: types.ServerSideEncryptionAes256,
+		})
+
+		if directErr != nil {
+			require.Error(t, proxyErr,
+				"the backend refuses this request; forwarding means the client is told so")
+			assert.Equal(t, apiCodeOf(directErr), apiCodeOf(proxyErr))
+			return
 		}
+
+		require.NoError(t, proxyErr)
+		backend, err := tc.MinIOClient.HeadObject(ctx, &s3.HeadObjectInput{
+			Bucket: aws.String(tc.TestBucket), Key: aws.String(proxyKey),
+		})
+		require.NoError(t, err)
+		assert.Equal(t, types.ServerSideEncryptionAes256, backend.ServerSideEncryption,
+			"the SSE mode the client asked for is the one the backend recorded")
 	})
 
 	t.Run("x_amz_storage_class", func(t *testing.T) {
@@ -766,32 +768,15 @@ func TestHdrStorageHeadersAreAcceptedAndSilentlyDropped(t *testing.T) {
 			ContentLength: aws.Int64(int64(len(payload))),
 			StorageClass:  types.StorageClassReducedRedundancy,
 		})
-		require.NoError(t, err, "DEVIATION EXPECTED: the proxy accepts a storage class and drops it")
+		require.NoError(t, err)
 
 		listing, err := tc.MinIOClient.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
 			Bucket: aws.String(tc.TestBucket), Prefix: aws.String(key),
 		})
 		require.NoError(t, err)
 		require.Len(t, listing.Contents, 1)
-		assert.Equal(t, types.ObjectStorageClassStandard, listing.Contents[0].StorageClass,
-			"DEVIATION CONFIRMED: the requested storage class was not applied")
-
-		// The backend does honour it, which is what makes the drop a loss.
-		directBucket := HdrNewDirectBucket(t, ctx, tc.MinIOClient, false)
-		_, err = tc.MinIOClient.PutObject(ctx, &s3.PutObjectInput{
-			Bucket: aws.String(directBucket), Key: aws.String(key),
-			Body:          bytes.NewReader(payload),
-			ContentLength: aws.Int64(int64(len(payload))),
-			StorageClass:  types.StorageClassReducedRedundancy,
-		})
-		require.NoError(t, err)
-		directListing, err := tc.MinIOClient.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-			Bucket: aws.String(directBucket), Prefix: aws.String(key),
-		})
-		require.NoError(t, err)
-		require.Len(t, directListing.Contents, 1)
-		assert.Equal(t, types.ObjectStorageClassReducedRedundancy, directListing.Contents[0].StorageClass,
-			"the backend was expected to honour the storage class; without that there is no oracle here")
+		assert.Equal(t, types.ObjectStorageClassReducedRedundancy, listing.Contents[0].StorageClass,
+			"the requested storage class reached the backend")
 	})
 
 	t.Run("x_amz_tagging", func(t *testing.T) {
@@ -802,71 +787,77 @@ func TestHdrStorageHeadersAreAcceptedAndSilentlyDropped(t *testing.T) {
 			ContentLength: aws.Int64(int64(len(payload))),
 			Tagging:       aws.String("project=conformance&stage=test"),
 		})
-		require.NoError(t, err, "DEVIATION EXPECTED: the proxy accepts tags and drops them")
+		require.NoError(t, err)
 
 		tags, err := tc.MinIOClient.GetObjectTagging(ctx, &s3.GetObjectTaggingInput{
 			Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
 		})
 		require.NoError(t, err)
-		assert.Empty(t, tags.TagSet,
-			"DEVIATION CONFIRMED: the tags were accepted with 200 and never stored")
-
-		directBucket := HdrNewDirectBucket(t, ctx, tc.MinIOClient, false)
-		_, err = tc.MinIOClient.PutObject(ctx, &s3.PutObjectInput{
-			Bucket: aws.String(directBucket), Key: aws.String(key),
-			Body:          bytes.NewReader(payload),
-			ContentLength: aws.Int64(int64(len(payload))),
-			Tagging:       aws.String("project=conformance&stage=test"),
-		})
-		require.NoError(t, err)
-		directTags, err := tc.MinIOClient.GetObjectTagging(ctx, &s3.GetObjectTaggingInput{
-			Bucket: aws.String(directBucket), Key: aws.String(key),
-		})
-		require.NoError(t, err)
-		assert.Len(t, directTags.TagSet, 2,
-			"the backend was expected to store the tags; without that there is no oracle here")
+		assert.Len(t, tags.TagSet, 2,
+			"the tags reached the backend - in the clear, on a ciphertext object (ADR 0007 D12)")
 	})
 
 	t.Run("x_amz_acl", func(t *testing.T) {
-		key := "acl-" + integration.RandomString(10)
-		_, err := tc.ProxyClient.PutObject(ctx, &s3.PutObjectInput{
-			Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
+		// This MinIO answers GetObjectAcl with a fixed owner-only policy whatever
+		// was asked for, so the oracle is agreement with the direct request
+		// rather than the grant itself.
+		directBucket := HdrNewDirectBucket(t, ctx, tc.MinIOClient, false)
+		directKey := "acl-direct-" + integration.RandomString(10)
+		_, err := tc.MinIOClient.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(directBucket), Key: aws.String(directKey),
 			Body:          bytes.NewReader(payload),
 			ContentLength: aws.Int64(int64(len(payload))),
 			ACL:           types.ObjectCannedACLPublicRead,
 		})
-		require.NoError(t, err, "DEVIATION EXPECTED: the proxy accepts a canned ACL and drops it")
+		require.NoError(t, err)
 
-		acl, err := tc.MinIOClient.GetObjectAcl(ctx, &s3.GetObjectAclInput{
-			Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
+		proxyKey := "acl-proxy-" + integration.RandomString(10)
+		_, err = tc.ProxyClient.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(tc.TestBucket), Key: aws.String(proxyKey),
+			Body:          bytes.NewReader(payload),
+			ContentLength: aws.Int64(int64(len(payload))),
+			ACL:           types.ObjectCannedACLPublicRead,
+		})
+		require.NoError(t, err, "a canned ACL is carried to the backend, not refused")
+
+		directACL, err := tc.MinIOClient.GetObjectAcl(ctx, &s3.GetObjectAclInput{
+			Bucket: aws.String(directBucket), Key: aws.String(directKey),
 		})
 		require.NoError(t, err)
-		for _, grant := range acl.Grants {
-			assert.NotContains(t, aws.ToString(grant.Grantee.URI), "AllUsers",
-				"DEVIATION CONFIRMED: public-read must not have taken effect through the proxy")
-		}
-		// This backend answers GetObjectAcl with a fixed owner-only policy, so
-		// it cannot show the header taking effect either. The proxy's drop is
-		// still a drop: nothing in the request reaches the backend at all.
-		t.Logf("backend ACL grants for the proxy-written object: %d", len(acl.Grants))
+		proxyACL, err := tc.MinIOClient.GetObjectAcl(ctx, &s3.GetObjectAclInput{
+			Bucket: aws.String(tc.TestBucket), Key: aws.String(proxyKey),
+		})
+		require.NoError(t, err)
+		assert.Len(t, proxyACL.Grants, len(directACL.Grants),
+			"the object written through the proxy carries the ACL the direct one does")
 	})
 
 	t.Run("x_amz_website_redirect_location", func(t *testing.T) {
-		key := "redirect-" + integration.RandomString(10)
-		_, err := tc.ProxyClient.PutObject(ctx, &s3.PutObjectInput{
-			Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
-			Body:                    bytes.NewReader(payload),
-			ContentLength:           aws.Int64(int64(len(payload))),
-			WebsiteRedirectLocation: aws.String("/somewhere-else"),
-		})
-		require.NoError(t, err, "DEVIATION EXPECTED: the proxy accepts a redirect location and drops it")
+		// Verified against this MinIO: it discards the header on a direct PUT
+		// too, so the only oracle available is that the proxy and the backend
+		// end up in the same place. The forwarding itself is pinned by the unit
+		// test over the shared header reader.
+		redirect := func(client *s3.Client, bucket, key string) *string {
+			_, err := client.PutObject(ctx, &s3.PutObjectInput{
+				Bucket: aws.String(bucket), Key: aws.String(key),
+				Body:                    bytes.NewReader(payload),
+				ContentLength:           aws.Int64(int64(len(payload))),
+				WebsiteRedirectLocation: aws.String("/somewhere-else"),
+			})
+			require.NoError(t, err)
+			head, err := tc.MinIOClient.HeadObject(ctx, &s3.HeadObjectInput{
+				Bucket: aws.String(bucket), Key: aws.String(key),
+			})
+			require.NoError(t, err)
+			return head.WebsiteRedirectLocation
+		}
 
-		backend, err := tc.MinIOClient.HeadObject(ctx, &s3.HeadObjectInput{
-			Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
-		})
-		require.NoError(t, err)
-		assert.Empty(t, aws.ToString(backend.WebsiteRedirectLocation),
-			"DEVIATION CONFIRMED: the redirect location was accepted with 200 and never stored")
+		directBucket := HdrNewDirectBucket(t, ctx, tc.MinIOClient, false)
+		direct := redirect(tc.MinIOClient, directBucket, "redirect-direct-"+integration.RandomString(10))
+		through := redirect(tc.ProxyClient, tc.TestBucket, "redirect-proxy-"+integration.RandomString(10))
+
+		assert.Equal(t, aws.ToString(direct), aws.ToString(through),
+			"the proxy leaves the backend to decide what it does with the header")
 	})
 
 	t.Run("object_lock_headers", func(t *testing.T) {
@@ -896,20 +887,82 @@ func TestHdrStorageHeadersAreAcceptedAndSilentlyDropped(t *testing.T) {
 			"the backend was expected to apply the lock; without that there is no oracle here")
 		require.Equal(t, types.ObjectLockLegalHoldStatusOn, direct.ObjectLockLegalHoldStatus)
 
-		// The proxy answers 200 and applies none of it.
+		// And so does an object written through the proxy. WORM on the ciphertext
+		// defends against a compromised credential, not against the backend
+		// itself (ADR 0007 D12).
 		proxyKey := "lock-proxy-" + integration.RandomString(10)
 		_, err = tc.ProxyClient.PutObject(ctx, lockInput(proxyKey))
-		require.NoError(t, err, "DEVIATION EXPECTED: the proxy accepts the object-lock headers and drops them")
+		require.NoError(t, err)
 
 		locked, err := tc.MinIOClient.HeadObject(ctx, &s3.HeadObjectInput{
 			Bucket: aws.String(lockBucket), Key: aws.String(proxyKey),
 		})
 		require.NoError(t, err)
-		assert.Empty(t, string(locked.ObjectLockMode),
-			"DEVIATION CONFIRMED: the retention mode was accepted with 200 and never applied")
-		assert.Nil(t, locked.ObjectLockRetainUntilDate,
-			"DEVIATION CONFIRMED: the retain-until date was accepted with 200 and never applied")
-		assert.Empty(t, string(locked.ObjectLockLegalHoldStatus),
-			"DEVIATION CONFIRMED: the legal hold was accepted with 200 and never applied")
+		assert.Equal(t, types.ObjectLockModeGovernance, locked.ObjectLockMode)
+		require.NotNil(t, locked.ObjectLockRetainUntilDate)
+		assert.Equal(t, retain, locked.ObjectLockRetainUntilDate.UTC().Truncate(time.Second))
+		assert.Equal(t, types.ObjectLockLegalHoldStatusOn, locked.ObjectLockLegalHoldStatus)
+
+		// HdrCleanupBucket releases the hold and bypasses the retention on the
+		// way out, so both objects are removable.
 	})
+
+	t.Run("sse_c_headers_are_refused", func(t *testing.T) {
+		// The SDK will not send a customer key without computing its MD5, so the
+		// three headers go over a raw request. No read path carries the key, so
+		// accepting one on upload would write an object nobody could read back
+		// (ADR 0007 D6).
+		for _, header := range []string{
+			"x-amz-server-side-encryption-customer-algorithm",
+			"x-amz-server-side-encryption-customer-key",
+			"x-amz-server-side-encryption-customer-key-MD5",
+		} {
+			key := "ssec-" + integration.RandomString(10)
+			status, body := hdrSignedPut(t, "/"+tc.TestBucket+"/"+key, payload,
+				map[string]string{header: "AES256"})
+			assert.Equal(t, http.StatusNotImplemented, status, "refused: %s", header)
+			assert.Contains(t, string(body), "NotImplemented")
+			assert.Contains(t, strings.ToLower(string(body)), strings.ToLower(header),
+				"the refusal names the header so the client learns what to remove")
+
+			_, err := tc.MinIOClient.HeadObject(ctx, &s3.HeadObjectInput{
+				Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
+			})
+			assert.Error(t, err, "a refused upload stores nothing")
+		}
+	})
+}
+
+// hdrSignedPut issues a signed PUT without the SDK, so a header the SDK refuses
+// to send on its own can still be put on the wire.
+func hdrSignedPut(t *testing.T, path string, body []byte, headers map[string]string) (int, []byte) {
+	t.Helper()
+	return hdrSignedPutQuery(t, path, "", body, headers)
+}
+
+// hdrSignedPutQuery is the same with a sub-resource query parameter, for a
+// request document the SDK would refuse to build.
+func hdrSignedPutQuery(t *testing.T, path, rawQuery string, body []byte, headers map[string]string) (int, []byte) {
+	t.Helper()
+
+	target := integration.ProxyEndpoint + path
+	if rawQuery != "" {
+		target += "?" + rawQuery
+	}
+	sum := sha256.Sum256(body)
+	req, err := http.NewRequest(http.MethodPut, target, bytes.NewReader(body))
+	require.NoError(t, err)
+	req.ContentLength = int64(len(body))
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
+	require.NoError(t, integration.SignHTTPRequestForS3WithCredentials(req, hex.EncodeToString(sum[:])))
+
+	resp, err := integration.TLSHTTPClient().Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	answer, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	return resp.StatusCode, answer
 }

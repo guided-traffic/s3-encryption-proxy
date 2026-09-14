@@ -82,16 +82,16 @@ func TestExpandConfigEnvVars_S3Backend(t *testing.T) {
 	t.Setenv("TEST_S3_SECRET_KEY", "my-secret-key")
 
 	cfg := &Config{
-		S3Backend: S3BackendConfig{
+		S3Backends: []S3BackendConfig{{
 			AccessKeyID: "${TEST_S3_ACCESS_KEY}",
 			SecretKey:   "${TEST_S3_SECRET_KEY}",
-		},
+		}},
 	}
 
 	err := expandConfigEnvVars(cfg)
 	require.NoError(t, err)
-	assert.Equal(t, "my-access-key", cfg.S3Backend.AccessKeyID)
-	assert.Equal(t, "my-secret-key", cfg.S3Backend.SecretKey)
+	assert.Equal(t, "my-access-key", cfg.Backend().AccessKeyID)
+	assert.Equal(t, "my-secret-key", cfg.Backend().SecretKey)
 }
 
 func TestExpandConfigEnvVars_S3Clients(t *testing.T) {
@@ -114,7 +114,7 @@ func TestExpandConfigEnvVars_S3Clients(t *testing.T) {
 }
 
 func TestExpandConfigEnvVars_ProviderConfig(t *testing.T) {
-	t.Setenv("TEST_AES_KEY", "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4=")
+	t.Setenv("TEST_AES_KEY", "env-expansion-fixture-not-a-key")
 
 	cfg := &Config{
 		Encryption: EncryptionConfig{
@@ -132,7 +132,7 @@ func TestExpandConfigEnvVars_ProviderConfig(t *testing.T) {
 
 	err := expandConfigEnvVars(cfg)
 	require.NoError(t, err)
-	assert.Equal(t, "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4=", cfg.Encryption.Providers[0].Config["aes_key"])
+	assert.Equal(t, "env-expansion-fixture-not-a-key", cfg.Encryption.Providers[0].Config["aes_key"])
 }
 
 func TestExpandConfigEnvVars_RSAProviderConfig(t *testing.T) {
@@ -167,14 +167,14 @@ func TestExpandConfigEnvVars_MissingVarReturnsError(t *testing.T) {
 	os.Unsetenv("TEST_MISSING_VAR")
 
 	cfg := &Config{
-		S3Backend: S3BackendConfig{
+		S3Backends: []S3BackendConfig{{
 			SecretKey: "${TEST_MISSING_VAR}",
-		},
+		}},
 	}
 
 	err := expandConfigEnvVars(cfg)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "s3_backend.secret_key")
+	assert.Contains(t, err.Error(), "s3_backends[0].secret_key")
 	assert.Contains(t, err.Error(), "TEST_MISSING_VAR")
 }
 
@@ -203,10 +203,10 @@ func TestExpandConfigEnvVars_MissingProviderVarReturnsError(t *testing.T) {
 
 func TestExpandConfigEnvVars_PlainValuesUnchanged(t *testing.T) {
 	cfg := &Config{
-		S3Backend: S3BackendConfig{
+		S3Backends: []S3BackendConfig{{
 			AccessKeyID: "plainuser",
 			SecretKey:   "plainpassword",
-		},
+		}},
 		S3Clients: []S3ClientCredentials{
 			{
 				AccessKeyID: "client1",
@@ -219,7 +219,7 @@ func TestExpandConfigEnvVars_PlainValuesUnchanged(t *testing.T) {
 					Alias: "aes",
 					Type:  "aes",
 					Config: map[string]interface{}{
-						"aes_key": "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4=",
+						"aes_key": "env-expansion-fixture-not-a-key",
 					},
 				},
 			},
@@ -228,11 +228,11 @@ func TestExpandConfigEnvVars_PlainValuesUnchanged(t *testing.T) {
 
 	err := expandConfigEnvVars(cfg)
 	require.NoError(t, err)
-	assert.Equal(t, "plainuser", cfg.S3Backend.AccessKeyID)
-	assert.Equal(t, "plainpassword", cfg.S3Backend.SecretKey)
+	assert.Equal(t, "plainuser", cfg.Backend().AccessKeyID)
+	assert.Equal(t, "plainpassword", cfg.Backend().SecretKey)
 	assert.Equal(t, "client1", cfg.S3Clients[0].AccessKeyID)
 	assert.Equal(t, "clientsecret1", cfg.S3Clients[0].SecretKey)
-	assert.Equal(t, "XZmcGLpObUuGV8CFOmfLKs7rggrX2TwIk5/Lbt9Azl4=", cfg.Encryption.Providers[0].Config["aes_key"])
+	assert.Equal(t, "env-expansion-fixture-not-a-key", cfg.Encryption.Providers[0].Config["aes_key"])
 }
 
 func TestExpandConfigEnvVars_NonStringProviderConfigSkipped(t *testing.T) {

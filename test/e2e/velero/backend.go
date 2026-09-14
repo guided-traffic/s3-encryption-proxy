@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -20,6 +19,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/stretchr/testify/require"
+
+	"github.com/guided-traffic/s3-encryption-proxy/test/e2e/harness"
 )
 
 // backendClient talks to MinIO directly, bypassing the proxy. It is how the
@@ -84,59 +85,30 @@ func caTrustingHTTPClient(t *testing.T) *http.Client {
 	}
 }
 
-// backendObject is one stored object as the backend sees it.
-type backendObject struct {
-	Key      string
-	Size     int64
-	Metadata map[string]string
-}
+// backendObject is one stored object as the backend sees it. The listing and the
+// at-rest assertion are shared with the client end-to-end suites, so the type is
+// theirs; this suite supplies its own client and bucket, which live in a kind
+// cluster rather than on the demo compose stack.
+type backendObject = harness.StoredObject
 
 // listBackendObjects returns every object under prefix, with the user metadata
 // the proxy attached.
 func listBackendObjects(t *testing.T, ctx context.Context, prefix string) []backendObject {
 	t.Helper()
-	client := backendClient(t)
-	bucket := loadVersionsEnv(t).get(t, "VELERO_BUCKET")
+	return harness.ListStored(t, ctx, backendClient(t), veleroBucket(t), prefix)
+}
 
-	var objects []backendObject
-	paginator := s3.NewListObjectsV2Paginator(client, &s3.ListObjectsV2Input{
-		Bucket: aws.String(bucket),
-		Prefix: aws.String(prefix),
-	})
-	for paginator.HasMorePages() {
-		page, err := paginator.NextPage(ctx)
-		require.NoError(t, err, "listing %s/%s on the backend", bucket, prefix)
-		for _, obj := range page.Contents {
-			head, err := client.HeadObject(ctx, &s3.HeadObjectInput{
-				Bucket: aws.String(bucket),
-				Key:    obj.Key,
-			})
-			require.NoErrorf(t, err, "HeadObject %s", aws.ToString(obj.Key))
-			objects = append(objects, backendObject{
-				Key:      aws.ToString(obj.Key),
-				Size:     aws.ToInt64(obj.Size),
-				Metadata: head.Metadata,
-			})
-		}
-	}
-	return objects
+// veleroBucket is the bucket this suite's Velero writes into.
+func veleroBucket(t *testing.T) string {
+	t.Helper()
+	return loadVersionsEnv(t).get(t, "VELERO_BUCKET")
 }
 
 // readBackendObject returns the raw stored bytes of an object, ciphertext
 // included.
 func readBackendObject(t *testing.T, ctx context.Context, key string) []byte {
 	t.Helper()
-	bucket := loadVersionsEnv(t).get(t, "VELERO_BUCKET")
-	out, err := backendClient(t).GetObject(ctx, &s3.GetObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-	})
-	require.NoErrorf(t, err, "GetObject %s from the backend", key)
-	defer func() { _ = out.Body.Close() }()
-
-	data, err := io.ReadAll(out.Body)
-	require.NoError(t, err)
-	return data
+	return harness.ReadStored(t, ctx, backendClient(t), veleroBucket(t), key)
 }
 
 // readViaProxy returns the plaintext of an object as a client sees it.
@@ -153,27 +125,4 @@ func readViaProxy(t *testing.T, ctx context.Context, key string) []byte {
 	data, err := io.ReadAll(out.Body)
 	require.NoError(t, err)
 	return data
-}
-
-// hasEncryptionMetadata reports whether the proxy recorded envelope-encryption
-// metadata on the object. AWS lower-cases metadata keys, so the comparison is
-// case-insensitive.
-func hasEncryptionMetadata(meta map[string]string, prefix string) bool {
-	for k := range meta {
-		if strings.HasPrefix(strings.ToLower(k), prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-// metadataValue returns a metadata value by suffix, ignoring case.
-func metadataValue(meta map[string]string, prefix, suffix string) (string, bool) {
-	want := strings.ToLower(prefix + suffix)
-	for k, v := range meta {
-		if strings.ToLower(k) == want {
-			return v, true
-		}
-	}
-	return "", false
 }

@@ -50,6 +50,9 @@ func (l *Logger) Middleware(next http.Handler) http.Handler {
 			"duration":    duration,
 			"remote_addr": r.RemoteAddr,
 			"user_agent":  r.UserAgent(),
+			// The same value the response stated, which is what makes a failure
+			// a client reports findable here (ADR 0008 D12).
+			"request_id": RequestID(r.Context()),
 		}).Debug("HTTP request processed")
 	})
 }

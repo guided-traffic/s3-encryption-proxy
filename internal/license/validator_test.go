@@ -38,9 +38,14 @@ func TestValidateLicense_InvalidToken(t *testing.T) {
 func TestValidateProviderType_NoLicense(t *testing.T) {
 	validator := NewValidator()
 
-	// None provider should be allowed
-	err := validator.ValidateProviderType("none")
+	// The exit provider needs no license - it is how an operator gets their data
+	// out again.
+	err := validator.ValidateProviderType("exit")
 	assert.NoError(t, err)
+
+	// The old name is not a synonym.
+	err = validator.ValidateProviderType("none")
+	assert.Error(t, err)
 
 	// AES provider should be rejected
 	err = validator.ValidateProviderType("aes")
@@ -61,8 +66,8 @@ func TestValidateProviderType_WithLicense(t *testing.T) {
 		},
 	}
 
-	// Both none and encryption providers should be allowed
-	err := validator.ValidateProviderType("none")
+	// Both the exit provider and encryption providers should be allowed
+	err := validator.ValidateProviderType("exit")
 	assert.NoError(t, err)
 
 	err = validator.ValidateProviderType("aes")

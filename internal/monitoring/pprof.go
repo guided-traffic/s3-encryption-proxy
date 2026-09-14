@@ -73,8 +73,3 @@ func (s *PprofServer) Start(ctx context.Context) error {
 	s.logger.Info("pprof server stopped")
 	return nil
 }
-
-// Stop closes the listener immediately.
-func (s *PprofServer) Stop() error {
-	return s.httpServer.Close()
-}
