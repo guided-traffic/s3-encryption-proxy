@@ -164,6 +164,27 @@ in the release itself rather than in an external document. They are assembled fr
 footers of the commits the release contains, which is why those footers are written for an
 operator to read.
 
+**Amended 2026-09-14, after rendering the 5.0.0 notes before cutting them.** D10 holds only
+while a footer means what it says, and twice it did not. A note keyword matches
+case-insensitively and its colon is optional, so a commit whose body opened *"Breaking Change
+Guard and Version Dry Run had become..."* was read as a breaking note and injected into the
+release headless, mid-sentence. And a breaking marker on a commit that releases nothing —
+`test`, `ci`, `docs`, `chore`, `style`, `build` — was rendered as a product break: two of them
+announced that the test suites were failing and that `main` could not be merged into, which was
+true on the day they were written and false at the cut. Both are now filtered when the notes are
+generated: a note counts when its keyword is a real footer, written with its colon, and when it
+sits on a commit type that releases something. D5's definition is what makes the second rule
+safe — a break is stored data, an existing configuration or a client-visible answer, and none of
+those is what a test or a pipeline change moves. The marker stays on the commit either way, so
+D3's guard on the pull request sees it as before; what changes is only what reaches an operator.
+
+**Amended 2026-09-14: a major's notes open with the compatibility statement.** This project's
+majors break the stored format by policy (ADR 0017), so the sentence an operator has to read
+first is that objects written by an earlier release cannot be read. Assembled from footers it
+landed where the sort put it — in the 5.0.0 render, 350 lines into the breaking-change list. It
+is now a banner at the top of the notes for any `x.0.0`, above the metrics and above every
+section.
+
 **D11** (added 2026-09-09). The release line before a major receives no further releases of any
 kind once the major is out — no security patches, no fixes, no backports. 4.0.x and everything
 before it are end-of-life at the 5.0.0 release; there is one supported line, the newest. No

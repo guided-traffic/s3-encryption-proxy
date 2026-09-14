@@ -1,5 +1,20 @@
 {{> header}}
 
+{{#if isMajor}}
+> ## ⚠️ Not compatible with 4.x or anything before it
+>
+> The stored object format was refactored. **Objects written by an earlier
+> release cannot be read by this one**, and there is no migration: an object
+> written by 3.x or 4.0.x answers `403 InvalidObjectState` on `GET`, `HEAD` and a
+> ranged `GET` alike. Copy the data out with the old version before upgrading,
+> or upload it again from its source afterwards.
+>
+> Run one version at a time. An object a 4.0.x replica writes during a mixed
+> rollout is refused afterwards like any other. A configuration written for an
+> earlier release is refused at startup by name — read **Breaking Changes**
+> below before you upgrade, not after.
+{{/if}}
+
 ## 📊 Quality Metrics
 
 {{#if coverage}}
