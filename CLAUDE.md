@@ -219,6 +219,7 @@ make build-keygen && ./build/s3ep-keygen
 - You are not allowed to disable, skip or remove integration or e2e tests — Velero, rclone or s3cmd — they represent the end-user experience (ADR 0019)
 - Don't call your work done until the suites tell the truth about your change: every test that was green before it is green after, and any test that is red is red for a target the product has not met yet, not for something your change broke (ADR 0031 D2)
 - Integration Test need to be prepared with ./start-demo.sh (it takes 30 seconds to start)
+- **A change to the shape of a configuration key has to run `make test-conformance`.** `scripts/conformance-run.sh` writes its own proxy configuration, so it is the one configuration in the repository that `TestCfgShippedExamplesCarryNoUnknownKeys` cannot see — that test globs `config/*.yaml`. It cost a red CI job on 2026-09-14; the MinIO run is about a minute
 - If you want to get the recent logs from s3-encryption-proxy container use: docker logs proxy | tail -50 (the TLS listener is a second container, `proxy-tls`)
 - Try integrate new unit-tests into existing files if it makes sense
 

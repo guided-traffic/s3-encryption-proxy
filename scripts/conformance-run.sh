@@ -192,12 +192,12 @@ cat > "$WORK_DIR/config.yaml" <<YAML
 bind_address: "127.0.0.1:${PROXY_PORT}"
 log_level: "info"
 log_format: "text"
-s3_backend:
-  target_endpoint: "${S3EP_CONFORMANCE_BACKEND_ENDPOINT}"
-  region: "${S3EP_CONFORMANCE_BACKEND_REGION}"
-  access_key_id: "\${S3EP_CONFORMANCE_BACKEND_ACCESS_KEY}"
-  secret_key: "\${S3EP_CONFORMANCE_BACKEND_SECRET_KEY}"
-  insecure_skip_verify: ${INSECURE}
+s3_backends:
+  - target_endpoint: "${S3EP_CONFORMANCE_BACKEND_ENDPOINT}"
+    region: "${S3EP_CONFORMANCE_BACKEND_REGION}"
+    access_key_id: "\${S3EP_CONFORMANCE_BACKEND_ACCESS_KEY}"
+    secret_key: "\${S3EP_CONFORMANCE_BACKEND_SECRET_KEY}"
+    insecure_skip_verify: ${INSECURE}
 s3_clients:
   - type: "static"
     access_key_id: "username0"

@@ -70,6 +70,17 @@ make test-conformance-parallel   # both at once, which is what CI does
 make test-conformance-wasabi     # read only against the paid backend
 ```
 
+**The script writes its own proxy configuration**, which makes it the one place
+in this repository where a configuration change is not covered by
+`TestCfgShippedExamplesCarryNoUnknownKeys` — that test globs `config/*.yaml` and
+cannot see a file generated at run time. **A change to the shape of a
+configuration key has to run `make test-conformance` before it is pushed.** This
+was learned the direct way on 2026-09-14: `s3_backend` became the list
+`s3_backends`, every shipped example and every chart values file was converted,
+the unit round and the chart tests were green, and the conformance job failed in
+CI on a generated config nobody had looked at. The run costs about a minute
+against MinIO on a warm machine.
+
 **They run in parallel, one runner per backend.** `fail-fast` is off on purpose:
 when one backend disagrees, what the others did is the interesting half, and
 cancelling them throws it away.
