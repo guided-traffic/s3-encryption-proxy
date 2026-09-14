@@ -212,9 +212,10 @@ func TestMonSetLicenseInfo(t *testing.T) {
 	}
 }
 
-// The licensee's name and company were labels of s3ep_license_info until
-// 5.0.0. The listener is unauthenticated by design, so they left a customer
-// name on an endpoint built to be scraped widely and retained for a long time.
+// ADR 0030 D4: the scrape names no licensee, and that is the premise the
+// unauthenticated listener rests on (D2). The licensee's name and company were
+// labels of s3ep_license_info until 5.0.0, leaving a customer name on an
+// endpoint built to be scraped widely and retained for a long time.
 func TestMonLicenseInfoCarriesNoLicenseeIdentity(t *testing.T) {
 	expiry := time.Now().Add(24 * time.Hour)
 	SetLicenseInfo(expiry.Format(time.RFC3339), true, float64(expiry.Unix()))
@@ -231,19 +232,22 @@ func TestMonLicenseInfoCarriesNoLicenseeIdentity(t *testing.T) {
 		for _, metric := range family.GetMetric() {
 			for _, label := range metric.GetLabel() {
 				assert.NotContains(t, []string{"licensed_to", "company"}, label.GetName(),
-					"the licensee's identity must not be a metric label")
+					"the licensee's identity must not be a metric label (ADR 0030 D4)")
 			}
 		}
 	}
 	require.True(t, seen, "s3ep_license_info must still be exported")
 }
 
-// Removed in 5.0.0: it was written once at startup and never refreshed, so a
-// dashboard threshold on it sat on a value that could not fall.
+// ADR 0030 D4. Removed in 5.0.0: it was written once at startup and never
+// refreshed, so a dashboard threshold on it sat on a value that could not fall.
+// s3ep_license_expiry_timestamp is the honest primitive and the remaining days
+// are a query.
 func TestMonLicenseDaysRemainingIsGone(t *testing.T) {
 	families, err := Gatherer().Gather()
 	require.NoError(t, err)
 	for _, family := range families {
-		assert.NotEqual(t, "s3ep_license_days_remaining", family.GetName())
+		assert.NotEqual(t, "s3ep_license_days_remaining", family.GetName(),
+			"the license countdown is not a series (ADR 0030 D4)")
 	}
 }

@@ -8,6 +8,12 @@ decision list of the documentation audit. The monitoring decision was taken and 
 so the repository has been holding both positions at once — a decision that no network policy
 ships, and a chart that still ships one. This record is where the decision is written down.
 
+**Amended 2026-09-14: D4 added.** The same review of 2026-09-12 also decided what the scrape may
+carry, and that half was likewise never written up — it lived only in the release's work list,
+where a rule does not belong (ADR 0022), while the code was held to it by a unit test nobody could
+trace to a decision. It is the premise D2 rests on, so it is recorded here beside it. Built: the
+scrape carries no identifying label and no license countdown.
+
 **Built 2026-09-13.** The template is deleted, the `networkPolicy` values are gone from
 `values.yaml` and from both profiles, and the chart README carries the upgrade note D3 asks for:
 Helm ignores a value key a chart no longer declares, so an operator who had set
@@ -65,6 +71,16 @@ note names the key, says the policy is gone, and says it is now theirs to write 
 release is a major, which is where a removal like this belongs (ADR 0018) — the note is not
 optional on top of that, it is the only signal that reaches the operator at all.
 
+**D4, added 2026-09-14. What the scrape may carry is the other half of D2, and it is a decision
+rather than a detail.** The listener stays unauthenticated because there is nothing on it worth
+authenticating, and that is a property somebody has to keep true. The scrape names no licensee:
+`s3ep_license_info` carries neither `licensed_to` nor `company`, and `s3ep_license_days_remaining`
+is gone — it was written once at process start and never refreshed, so it was a countdown that
+could not fall. What stays is `s3ep_license_expiry_timestamp` and the validity gauge beside it:
+the honest primitives, from which the remaining days are a query. Adding a label that identifies
+the deployment, its licensee or its operator is a change to this decision and not a metrics
+change, because it removes the reason the listener may be left open.
+
 ## Consequences
 
 * **An operator who had enabled the shipped policy loses it on upgrade with no error.** That is the
@@ -103,7 +119,9 @@ would keep offering the word while the object grants everything.
 
 * **The monitoring listener has no network-level protection and none is planned.** Anything that
   can route to the pod can scrape it. The exposure is bounded by what the listener exports rather
-  than by who can reach it, and that is the accepted position, not an oversight.
+  than by who can reach it (D4), and that is the accepted position, not an oversight. It follows
+  that the bound is only as good as D4 is kept: a future series carrying an identifying label
+  would widen the exposure silently, with no network control anywhere to catch it.
 * **Whether administrators actually write a policy is unverified**, and it is outside what this
   project can assert. Nothing renders, nothing checks, and no test or end-to-end run can observe a
   cluster's policy from here. The claim this record makes is about ownership, not about outcome.
