@@ -4,23 +4,21 @@
 
 **Accepted.** Date: 2026-09-13.
 
-Built today: the two client end-to-end suites were rewritten to this rule and are red; a sweep of
-the whole test tree against it found twenty-seven further tests that asserted the answer the
-product gives rather than the answer it owes, and those now state the target and are red too. The
-unit round, the integration suites and two of the end-to-end suites therefore do not pass on the
-unreleased 5.0.0 branch, and the release is blocked behind them, which is D8 working rather than
-failing.
+Built the same day: the two client end-to-end suites were rewritten to this rule and went red; a
+sweep of the whole test tree against it found twenty-seven further tests that asserted the answer
+the product gives rather than the answer it owes, and those went red too. **The product was then
+fixed to meet them, rather than the tests edited to meet the product.** As of 2026-09-13 every
+round on the unreleased 5.0.0 branch is green — the unit round, the integration suites, the
+conformance round and all three end-to-end suites — and nothing is held behind a red gate. The red
+lasted exactly as long as the defects did, which is D8 working rather than failing.
 
-**Decided and not built: D7 and D9, for everything except the two client suites.** Those two name
-the rule and the record in the failure itself and report what is still broken in their own output.
-The twenty-seven tests the sweep rewrote do not: their citation sits in a source comment beside the
-assertion, and the failure a reader sees is bare tool output. The integration suites produce no
-summary of what is open. This matters more than bookkeeping — D7 and D9 are named below as the
-whole mitigation for the largest risk this record accepts, so until they are built that risk is
-accepted unmitigated.
-
-What is **open** is the product work the red tests are waiting for — it is tracked as a work list,
-not here, because a defect is not a decision.
+**Decided and not built: D9, for everything except the two client suites.** Those two report what
+is still broken in their own output and in the summary their continuous integration check shows;
+the unit round and the integration suites produce no such summary, so the day one of them goes red
+a reader gets a count and bare tool output. D7 is built: every assertion the sweep touched now
+names the rule it wants and the record that rule belongs to in the failure message itself, rather
+than in a source comment beside it. D9 is named below as half the mitigation for the largest risk
+this record accepts, so that half of the risk is still accepted unmitigated.
 
 This record generalises a rule that ADR 0019 states for the integration and end-to-end suites
 alone. It binds every layer, the unit round included.
@@ -131,11 +129,12 @@ last one is green. It is not a decision and does not live here.
 
 ## Consequences
 
-**The branch cannot be merged, and that is the point.** The unit round, the integration suites and
-two end-to-end suites are red, so the release is blocked. Before this record the same defects
-existed and the pipeline was green; the only thing that changed is that the pipeline now says so.
-An owner who wants to ship anyway has one honest route — decide the behaviour differently and
-record that decision — and one dishonest one, which D8 forecloses.
+**The branch could not be merged until the product met the tests, and that is the point.** The
+unit round, the integration suites and two end-to-end suites went red, so the release stayed
+blocked until the fixes landed. Before this record the same defects existed and the pipeline was
+green; the only thing that changed is that the pipeline said so. An owner who wants to ship past a
+red gate has one honest route — decide the behaviour differently and record that decision — and
+one dishonest one, which D8 forecloses.
 
 **Red becomes normal, and that is the cost.** A permanently red check is a check people stop
 reading, and the project has now taken on that risk deliberately. D7 and D9 are the mitigation:
@@ -188,12 +187,13 @@ refused for now because the project has just been burned by the softer form of i
 revisited once the red is small enough to be about regressions rather than about a backlog.
 
 **Revisited 2026-09-13, and rejected for good.** The condition was met: the backlog is gone — every
-suite met every target it states — and the one red test that remains is a regression in the exact
-sense, a defect a test now holds. That is the state a manifest was meant for, and it is the state
-in which a manifest earns least: with a single failure there is nothing for it to organise, and the
-one thing it would add is the ability to admit the next defect by editing a list. The argument
-above stands unchanged, so the decision stands. If a permanently red set ever forms again this is
-still the first alternative to reach for; a single red test is not that set.
+suite met every target it states — and the one red test left at that point was a regression in the
+exact sense, a defect a test held rather than a backlog. That is the state a manifest was meant
+for, and it is the state in which a manifest earns least: with a single failure there is nothing
+for it to organise, and the one thing it would add is the ability to admit the next defect by
+editing a list. The argument above stands unchanged, so the decision stands. If a permanently red
+set ever forms again this is still the first alternative to reach for; a single red test is not
+that set.
 
 **Land the test with the fix**, which is what most reviewers propose first and which D3 refuses.
 It is right whenever the fix is at hand. It fails for a defect nobody is fixing this month: the

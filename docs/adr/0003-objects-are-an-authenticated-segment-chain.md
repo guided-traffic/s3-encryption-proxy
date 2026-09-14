@@ -86,11 +86,14 @@ ranged read therefore paid a new connection, and under TLS a new handshake. Meas
 ranged read ran at 155 MiB/s against a backend serving the same range at 220, where before this
 format it was 207 against 217. The remainder is now drained before the close, bounded by one
 segment with its framing plus a trailer, which is the most the provisional window can over-ask,
-and the same read then measured 193 against the same 220. Corrected 2026-09-12: that is most of
-the loss recovered, not parity. Nothing about D9's request count changed; what changed is that the
-request no longer costs a connection.
+and the same read then measured 207 against 225: the proxy leg is where it was before this format,
+207.2 then and 207.0 after, and the ratio moved only because the direct leg got faster — inside the
+15 % between-run spread the record itself declares. Corrected 2026-09-14: the 193 written here on
+2026-09-12 is an intermediate reading from the run's narrative and stands in no recorded run.
+Nothing about D9's request count changed; what changed is that the request no longer costs a
+connection.
 
-**Both rules this format needs are enforced.** `optimizations.streaming_segment_size` has to be a
+**Both rules this format needs are enforced.** `optimizations.multipart_part_size` has to be a
 whole number of segments, because every part but the last covers whole segments; **since
 2026-09-10 startup refuses an unaligned value** instead of accepting it and failing the first
 upload larger than one part. And **since 2026-09-11 the trailer's part number is reserved**: a
@@ -366,7 +369,7 @@ already gives.
   exact mode, so a key this version does not define refuses the start and the error names it
   (ADR 0013 D11), and an operator carrying a 4.x file forward is told which of its keys mean
   nothing rather than left to assume the mode they wrote is in force.
-- **`optimizations.streaming_segment_size` must be a multiple of 64 KiB, and startup refuses a
+- **`optimizations.multipart_part_size` must be a multiple of 64 KiB, and startup refuses a
   value that is not.** Every part but the last covers whole segments, so a part size that is not a
   whole number of them cannot be sealed. The check sits beside the 5 MiB — 5 GiB bound, so an
   unaligned deployment fails to start rather than failing its first upload larger than one part

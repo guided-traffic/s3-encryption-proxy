@@ -294,18 +294,24 @@ tracked, and `RCLONE_BIN` / `S3CMD_BIN` override the installed binary. Measured
 2026-09-13 against a warm stack: rclone 5.4s, s3cmd 8.3s.
 
 **A client suite asserts the behaviour the product is supposed to have, never
-the behaviour it has** ([ADR 0031](../adr/0031-a-test-states-the-target-and-stays-red-until-the-product-meets-it.md))**.** Both suites are red today, and that is them working: 13 of
-28 rclone cases and 10 of 19 s3cmd cases fail on the entity-tag question of
-ADR 0010 D12 and on two routing gaps. They are committed red and stay red until
-the product is fixed. Encoding the current answer as the expectation — which is
-how they first shipped, on 2026-09-13 — makes a broken product report a green
-pipeline, and a green pipeline says "this may be merged".
+the behaviour it has** ([ADR 0031](../adr/0031-a-test-states-the-target-and-stays-red-until-the-product-meets-it.md))**.** Both suites are green today — rclone 28 of
+28, s3cmd 19 of 19 — and the order that got them there is the point: they first
+shipped on 2026-09-13 with every open defect recorded as an *expected* refusal,
+were swept the same day to assert the target instead and went red at 13 of 28
+rclone cases and 10 of 19 s3cmd cases, and the product was then fixed to meet
+them — the entity-tag answer of
+[ADR 0032](../adr/0032-the-entity-tag-is-a-change-token-never-a-content-digest.md)
+and the bucket routing that sweep uncovered. A case the product does not meet is
+committed red and stays red until it does. Encoding the current answer as the
+expectation makes a broken product report a green pipeline, and a green pipeline
+says "this may be merged".
 
-Each run writes `test-results/e2e-<client>-verdicts.md`, which opens with a
-**Still broken** section: one entry per failing case with what the product is
-supposed to do and the client's own sentence about what it does instead. The CI
-job writes the same list into its step summary, so a red check names the defects
-on the pull request itself.
+Each run writes `test-results/e2e-<client>-verdicts.md`. When a case is not met
+it opens with a **Still broken** section — one entry per failing case with what
+the product is supposed to do and the client's own sentence about what it does
+instead — and otherwise with *All N cases met their target*, which is what both
+write today. The CI job writes the same list into its step summary, so a red
+check names the defects on the pull request itself.
 
 ## Coverage
 
