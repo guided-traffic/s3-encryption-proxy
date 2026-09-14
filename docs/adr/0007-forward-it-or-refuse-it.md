@@ -71,14 +71,20 @@ is the request the client actually made.
 The differential conditional-request suite, which existed to pin seven deviations from the
 backend, now has none to name.
 
+**D1's six response-header overrides implemented 2026-09-13, completed 2026-09-14.**
+`response-content-type`, `response-content-language`, `response-expires`,
+`response-cache-control`, `response-content-disposition` and `response-content-encoding` are
+applied to the answer of a `GET`, whole-object and ranged alike, and to a `HEAD` — S3 defines
+them on that verb too, and a `HEAD` is documented to answer the headers a `GET` answers. What
+the request asked for wins over what the object carries, on every read verb and under the exit
+provider as well. Before it they were admitted and then ignored, and the response carried the
+object's stored values; the `HEAD` half outlived the first fix by a day because the allowlist
+that admits them never looked at the verb. They are admitted rather than refused because they
+are legitimate S3.
+
 The `Decision` section is written in the present tense throughout, and is implemented except
 where this record says otherwise: D7 on the proxy's own multipart upload and D8's answer to
-`?restore`, both under Residual risks, and D1's six response-header overrides a client may put
-on a `GET` — `response-content-type`, `response-content-language`, `response-expires`,
-`response-cache-control`, `response-content-disposition` and `response-content-encoding` — which
-are admitted and then ignored, so the response carries the object's stored values instead of the
-ones the client asked for. They are admitted rather than refused because they are legitimate on
-a `GET`; honouring them is outstanding.
+`?restore`, both under Residual risks.
 
 **Amended 2026-09-09:** D13 adds a refusal for a query string that contains a `;`, closing the
 bypass that was recorded under Residual risks. It is a new client-visible refusal, so it lands
@@ -407,11 +413,14 @@ a silent drop. That asymmetry, not policy, is what earns the refusal.
   object therefore overwrites what it was written to protect and answers `200` — D7's own
   failure shape, one verb further on, and the write suite does not reach it because it uses
   small bodies. Open.
-- **Six accepted-and-discarded query parameters survive the rule.** The `response-*` header
-  overrides on a `GET` are admitted by the allowlist a base object request is checked against,
-  and applied by nothing, so a client that asks for a different `Content-Type` on one read is
-  answered `200` with the stored one. Refusing them would be wrong — they are legitimate S3 —
-  so the fix is to forward them. Open.
+- **Closed 2026-09-14: the six `response-*` header overrides are applied on every read verb
+  (D1).** They were admitted by the allowlist a base object request is checked against and
+  applied by nothing, so a client that asked for a different `Content-Type` was answered `200`
+  with the stored one. Refusing them would have been wrong — they are legitimate S3 — so they
+  are honoured: on the whole-object read, on the ranged read, and on a `HEAD`. The `HEAD` half
+  was missed by the first fix and is the reason this entry is worth reading twice: the allowlist
+  admits a parameter without looking at the verb, so admitting and honouring are decided in two
+  different places and a new read verb inherits only the first of them.
 - **One refusal still says something untrue.** `?restore` has no route of its own, so every
   verb carrying it is answered `405 MethodNotAllowed` — `POST` included, which is the verb S3
   defines for it. There the method is right and the operation is simply unimplemented, so D8

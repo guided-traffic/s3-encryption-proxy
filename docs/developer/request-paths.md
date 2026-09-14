@@ -59,7 +59,7 @@ PUT /{bucket}/{key}
   │     X-Amz-Decoded-Content-Length when present; else Content-Length, unless the
   │     body is aws-chunked or declares none — then the plaintext length is unknown
   │
-  ├─ not known, or plaintextLen > optimizations.streaming_segment_size (12582912 # default)
+  ├─ not known, or plaintextLen > optimizations.multipart_part_size (12582912 # default)
   │     → the internal multipart producer, see multipart.md
   └─ otherwise
         → one PutObject, sealing as the backend reads
@@ -205,8 +205,8 @@ the two together committed a truncated object sealed with its own trailer, which
 then verified on every later read. The declared-length guard after the loop is
 no help when no length was declared, and an aws-chunked body without
 `X-Amz-Decoded-Content-Length` declares none. (It does cover an upload on this
-path that declared one: a plaintext above the segment size lands here too.) Do
-not put `io.ReadFull` back.
+path that declared one: a plaintext above `multipart_part_size` lands here too.)
+Do not put `io.ReadFull` back.
 
 `DeleteObjects` is the one verb that *requires* a digest, as S3 does, and refuses
 a request without one; the digest is checked before the document is parsed, so a
@@ -284,10 +284,16 @@ way in.
 The six `response-*` query parameters are applied last, so what the request asked
 for wins over what the object carries: `response-content-type`,
 `-content-disposition`, `-content-encoding`, `-content-language`,
-`-cache-control` and `-expires`, on the whole-object read and the ranged one
-alike. A presigned download URL names a file that way, and admitting the
-parameter and answering with the stored value is the accept-and-discard
-[ADR 0007](../adr/0007-forward-it-or-refuse-it.md) D1 forbids.
+`-cache-control` and `-expires`, on the whole-object read, the ranged one and a
+`HEAD` alike, under the exit provider too. A presigned download URL names a file
+that way, and admitting the parameter and answering with the stored value is the
+accept-and-discard [ADR 0007](../adr/0007-forward-it-or-refuse-it.md) D1 forbids.
+
+`baseObjectParams` admits a parameter without looking at the verb, while
+`applyResponseOverrides` has to be called per response writer — so admitting and
+honouring are decided in two different places. That is how the `HEAD` half
+survived a day beyond the `GET` fix, and it is what a new read verb inherits only
+half of.
 
 The cleaning sits in the three response writers rather than in their callers, so
 the exit provider's pass-through is cleaned too. That branch is the one that

@@ -494,12 +494,27 @@ tree. What has to be in sits outside every ticket, and 034 carries it:
       was 3.5 times the part, not one part, because the collecting buffer doubles
       and copies. This was the last unbounded read in the tree.
 - [ ] **Six decisions that close with this release**, each recorded in 034 with a
-      recommendation and the cost of both answers: strict provider `config:`
-      blocks, one licence environment variable and no fallback path list, a
-      minimum of 1 for `multipart_session_cleanup_interval`, `description`
-      declared an annotation key in ADR 0013, the name of
-      `streaming_segment_size` (recommendation: leave it), and the chart's dead
-      `logging.*` values.
+      recommendation and the cost of both answers. **Four are taken and built; two
+      are left.**
+      - [x] **Strict provider `config:` blocks.** Built 2026-09-14. Each type
+            declares what it reads; anything else refuses the start naming the key
+            and the provider. ADR 0013 D11 amended, ADR 0017's residual closed.
+      - [x] **One licence environment variable and no fallback path list.** Built
+            2026-09-14: `S3EP_LICENSE_TOKEN` and `license_file`, nothing else. ADR
+            0013 D13 amended, ADR 0016's residual closed.
+      - [x] **A minimum of 1 for `multipart_session_cleanup_interval`.** Landed
+            earlier; the refusal names the key.
+      - [x] **The name of `streaming_segment_size`.** The recommendation was to
+            leave it; the owner overruled it on 2026-09-14 and the key is
+            `optimizations.multipart_part_size`. Value, default and checks
+            unchanged, the old name refused by a message naming the replacement,
+            recorded as an amendment to ADR 0011.
+      - [ ] **`description` declared an annotation key in ADR 0013.** One sentence,
+            no code: the tree is already in the recommended state. Not breaking, so
+            it can land in any 5.x.
+      - [ ] **The chart's dead `logging.*` values.** Not breaking either — the
+            chart ships no values schema, so a stray `logging.*` in an operator's
+            values file is ignored by Helm once the keys go.
 
 ## The minimum
 
@@ -2100,10 +2115,14 @@ from the source; there is no migration of any kind. `s3ep-aes-iv` and
 `optimizations.streaming_threshold`, `optimizations.clean_aws_signature_v4_chunked`,
 `optimizations.clean_http_transfer_chunked`,
 `optimizations.streaming_buffer_size`, `optimizations.enable_adaptive_buffering`,
-`s3_backend.use_tls`, the dead `s3_security` keys, the legacy top-level backend
-block, and the `rsa`, `tink` and `none` provider types. A configuration file
-still carrying any of them does not start: ADR 0013 D11 ships in the same
-release, so a removed key is refused by name rather than ignored.
+`optimizations.multipart_session_max_age`, `s3_backend.use_tls`, the dead
+`s3_security` keys, the legacy top-level backend block, and the `rsa`, `tink` and
+`none` provider types. A configuration file still carrying any of them does not
+start: ADR 0013 D11 ships in the same release, so a removed key is refused by
+name rather than ignored. `optimizations.multipart_session_max_age` is refused by
+a message of its own naming `optimizations.multipart_session_idle_timeout`, which
+counts from the last part an upload received rather than from when it was
+created: the same number means something else under the new key (ADR 0028).
 
 **Configuration — renamed.** The `none` provider is now `exit`
 ([ADR 0025](../adr/0025-leaving-is-a-supported-mode.md)) and it is a different
@@ -2114,6 +2133,14 @@ old key stays registered beside it, so an operator renaming the type must also
 add that provider. `type: "none"` is refused at startup with a message that says
 so.
 
+**`optimizations.streaming_segment_size` is now
+`optimizations.multipart_part_size`.** The value, the 12 MiB default and the
+checks — at least 5 MiB, at most 5 GiB, a whole multiple of 64 KiB — are
+unchanged: the key is the size of one backend part in the internal multipart
+producer, and the plaintext size above which a `PUT` becomes a multipart upload.
+A file still carrying the old name is refused at startup by a message of its own
+naming the replacement.
+
 **Metrics — removed.** Thirteen series that were registered and never observed:
 `s3ep_s3_operations_total`, `s3ep_s3_operation_duration_seconds`,
 `s3ep_encryption_operations_total`, `s3ep_encryption_duration_seconds`,
@@ -2122,17 +2149,24 @@ so.
 `s3ep_download_throughput_mbps`, `s3ep_encryption_providers_info`,
 `s3ep_hmac_operations_total`, `s3ep_hmac_performance_seconds` and
 `s3ep_hmac_throughput_mbps`. Each had always reported zero; a dashboard panel
-built on one was always empty. What remains is `s3ep_requests_total`,
-`s3ep_request_duration_seconds`, `s3ep_active_connections`, `s3ep_server_info`
-and the three license series — **and, restored in this release, the Go runtime
-and process collectors** (`go_*`, `process_*`): moving `/metrics` onto the
-proxy's own registry had silently taken heap, goroutine, resident-memory, CPU and
+built on one was always empty. `s3ep_license_days_remaining` goes with them for a
+different reason: it was written once at startup and could never fall, so the days
+that are left are a query against `s3ep_license_expiry_timestamp`. What remains is
+`s3ep_requests_total`, `s3ep_request_duration_seconds`, `s3ep_active_connections`,
+`s3ep_server_info`, the two license series `s3ep_license_info` and
+`s3ep_license_expiry_timestamp`, and `s3ep_object_integrity_failures_total`, which
+this release adds and which counts the reads refused or cut because an object did
+not authenticate — **and, restored in this release, the Go runtime and process
+collectors** (`go_*`, `process_*`): moving `/metrics` onto the proxy's own
+registry had silently taken heap, goroutine, resident-memory, CPU and
 file-descriptor series with it.
 
-**The chart's bundled Grafana dashboard predates all of this.** Four of its seven
-panels query three of the removed series and have nothing to draw. It is disabled
-by default (`monitoring.grafana.dashboard.enabled`), and the chart README says so;
-rebuilding it against the current metric set is not in this release.
+**The chart's bundled Grafana dashboard is rebuilt against that metric set.**
+Five of its seven panels queried removed series and had nothing to draw; the five
+it carries now — request rate, request latency, active connections, licence status
+and days to expiry — all draw, and a unit test fails if a panel names a series no
+scrape exports. It is still disabled by default
+(`monitoring.grafana.dashboard.enabled`), and the chart README says so.
 
 **Logging — changed.** The authentication security event no longer carries
 `client_ip` or `failed_count`. It carries `remote_addr`, the peer address, and
@@ -2142,12 +2176,12 @@ is gone with the per-IP counter behind it.
 
 **Configuration — refuses to start.** Any key the proxy does not define, named
 in the error — a key removed by this release, or one that is simply misspelled,
-now stops the start instead of being ignored (ADR 0013 D11); a segment size that
-is not a multiple of
-65536; a backend endpoint without a scheme, or `http://` under an encrypting
-provider; an `aes_key` that is not base64 of 32 random bytes; a provider of type
-`rsa`; a `metadata_key_prefix` shorter than four characters, not starting with a
-letter or digit, or not ending in `-`.
+now stops the start instead of being ignored (ADR 0013 D11); a multipart part
+size that is not a multiple of
+65536; a backend endpoint without a scheme, or `http://` under any provider, the
+exit provider included; an `aes_key` that is not base64 of 32 random bytes; a
+provider of type `rsa`; a `metadata_key_prefix` shorter than four characters, not
+starting with a letter or digit, or not ending in `-`.
 
 **Configuration — new.** `optimizations.multipart_short_part_buffer_size`, bytes,
 default 64 MiB, minimum 5 MiB: what **all** open client-driven uploads together
@@ -2155,6 +2189,14 @@ may hold for their short last parts (ADR 0011 D5) — one budget shared across t
 process, not one per upload. Over it a part is answered `503 SlowDown`; a single
 part above the whole budget is `400 EntityTooLarge`, before it is read. Size it against the container limit;
 the four terms are in `docs/developer/performance.md`. `s3_security.max_presign_expiry_seconds`, default 3600.
+
+**Behaviour — presigned download URLs on a `HEAD`.** The six `response-*` query
+parameters that name a downloaded file and set its type — `response-content-type`,
+`-content-disposition`, `-content-encoding`, `-content-language`, `-cache-control`
+and `-expires` — are now applied to a `HEAD` answer as well as to a `GET`. S3
+defines them on both verbs, and a `HEAD` used to admit them and answer the stored
+values, so a client that asked a `HEAD` what it was about to download was told
+something the `GET` then contradicted.
 
 **Behaviour.** Whole-object `GET` and `HEAD` answer with an
 `x-amz-checksum-crc32c` over the plaintext, recorded at upload, and both report
@@ -2172,9 +2214,11 @@ both listings answer a real
 `max-keys` outside its range clamped or refused, `<Owner>` naming the calling
 client, and `HeadBucket` answering `404` for a bucket that does not exist;
 `InvalidObjectState` for objects the proxy did not write;
-a client-driven multipart upload that is neither completed nor aborted is now
-released by `optimizations.multipart_session_cleanup_interval` — before, it held
-its buffered parts and its data key until the process ended;
+a client-driven multipart upload that is neither completed nor aborted expires on
+`optimizations.multipart_session_idle_timeout`, counted from the last part it
+received, and is aborted at the backend before it is forgotten — before, it
+expired an hour after it was created however fast it was still transferring, and
+the parts already stored were left behind (ADR 0028);
 `InvalidPart` for unaligned client multipart; `InvalidArgument` for client
 metadata inside the proxy prefix — refused now, not silently dropped — and for a
 query string containing `;`; `BadDigest`
@@ -2183,16 +2227,21 @@ or `InvalidDigest` for a wrong or malformed upload checksum of any algorithm,
 digest; pre-signed URLs above the configured ceiling refused; the configured clock skew applied to header authentication; storage
 headers forwarded; SSE-C refused; no wall clock on a transfer.
 
-**Behaviour — the entity tag** (*not decided: [034](034-etag-form-and-the-last-chance-sweep.md) item 1 waits for the rclone
-and s3cmd end-to-end suites; rewrite or drop this paragraph with that decision*). Under an encrypting provider an ETag that is 32 hex
-digits — the backend's MD5 of the stored ciphertext, in the shape S3 reserves
-for a content digest — is answered with a `-0` suffix inside the quotes, on
-`PUT`, `GET`, `HEAD`, ranged `GET` and in both listings; multipart ETags already
-carry `-N` and are unchanged. Send back what the proxy gave you and `If-Match`
-and `If-None-Match` work as before. No object's ETag is a digest of its
+**Behaviour — the entity tag**
+([ADR 0032](../adr/0032-the-entity-tag-is-a-change-token-never-a-content-digest.md),
+decided and built 2026-09-13; both client suites meet every target they state,
+rclone 28 of 28 and s3cmd 19 of 19). Under an encrypting provider an ETag that is
+32 hex digits — the backend's MD5 of the stored ciphertext, in the shape S3
+reserves for a content digest — is answered with a `-0` suffix inside the quotes, on
+`PUT`, `GET`, `HEAD`, ranged `GET`, in both listings and on every verb that states
+a part's tag — `UploadPart`, `ListParts` and the completion — because a client
+driving its own multipart upload never sees an object-level tag; a completed
+object's `-N` is not 32 hex digits and is unchanged. Send back what the proxy
+gave you and `If-Match` and `If-None-Match` work as before. No object's ETag is a digest of its
 plaintext, and none was: a client that verified uploads against it — rclone
 does — failed every single-part transfer with `corrupted on transfer`, and now
-falls back to size and modification time as it does for every multipart object.
+compares size and modification time instead; for a multipart object it reads back
+the plaintext MD5 it wrote itself into `X-Amz-Meta-Md5chksum`.
 Under the exit provider the ETag is the backend's, like the size. The
 plaintext's own digest is `x-amz-checksum-crc32c` on a whole-object `GET` and on
 `HEAD`. A multipart object's ETag is the backend's `-N` value and does not
@@ -2260,13 +2309,13 @@ mentioned in the notes at all, because nothing changes for an operator.
 took the pre-v2 column), so the claim this release has been holding may be made:
 
 - **Uploads are between 30 % and 120 % faster** above 1 MiB. Against the same client writing
-  to the backend directly, the proxy moved from 46-72 % of it to 78-125 %; above 4 MiB it is
+  to the backend directly, the proxy moved from 46-81 % of it to 78-125 %; above 4 MiB it is
   faster than the direct leg, because the backend refuses an aws-chunked chunk above 16 MiB
   while the proxy re-frames into a multipart upload it overlaps (ADR 0024).
 - **A single-request `PUT` is 0 to 8 % slower** — the segment chain plus the upload checksum
   verification this release adds. It is the write path that does not go through the producer.
 - **Downloads, ranged reads and the crypto floor are unchanged**, and peak resident memory
-  fell from 130 MB to 109 MB against an unchanged 512 MB container limit.
+  fell from 124 MiB to 102 MiB against an unchanged 512 MiB container limit.
 
 **Nothing below roughly 15 % end to end is a claim at all**: three full runs an hour apart on
 this machine, two of them on identical code, moved by that much. And no part of the gain can

@@ -552,7 +552,7 @@ func (h *Handler) handleHeadObject(w http.ResponseWriter, r *http.Request, bucke
 			h.writeReadError(w, err, bucket, key)
 			return
 		}
-		h.writeHeadResponse(w, tail.output.ContentType, tail.output.ETag, tail.output.LastModified,
+		h.writeHeadResponse(w, r, tail.output.ContentType, tail.output.ETag, tail.output.LastModified,
 			aws.Int64(tail.sum.Length), checksumHeader(tail.sum), tail.output.VersionId,
 			storedEntityHeaders{
 				ContentEncoding:    tail.output.ContentEncoding,
@@ -604,7 +604,7 @@ func (h *Handler) handleHeadObject(w http.ResponseWriter, r *http.Request, bucke
 		length = aws.Int64(plaintext)
 	}
 
-	h.writeHeadResponse(w, output.ContentType, output.ETag, output.LastModified, length, "",
+	h.writeHeadResponse(w, r, output.ContentType, output.ETag, output.LastModified, length, "",
 		output.VersionId, storedEntityHeaders{
 			ContentEncoding:    output.ContentEncoding,
 			ContentDisposition: output.ContentDisposition,
@@ -617,9 +617,11 @@ func (h *Handler) handleHeadObject(w http.ResponseWriter, r *http.Request, bucke
 // writeHeadResponse emits the headers of a HEAD answer. HEAD is documented to
 // return the headers a GET returns, and a client that decides how to handle a
 // body from a HEAD — Content-Encoding above all — is misled when they are
-// dropped.
+// dropped. That covers the six response-* overrides as well: S3 defines them on
+// this verb too, so a HEAD that admitted one and answered the stored value was
+// accepting a parameter and discarding it (ADR 0007 D1).
 func (h *Handler) writeHeadResponse(
-	w http.ResponseWriter, contentType, entityTag *string, lastModified *time.Time,
+	w http.ResponseWriter, r *http.Request, contentType, entityTag *string, lastModified *time.Time,
 	contentLength *int64, checksum string, versionID *string,
 	entity storedEntityHeaders, sseAlgorithm types.ServerSideEncryption, sseKMSKeyID *string,
 	metadata map[string]string,
@@ -649,6 +651,9 @@ func (h *Handler) writeHeadResponse(
 	for key, value := range h.cleanMetadata(metadata) {
 		w.Header().Set("x-amz-meta-"+key, value)
 	}
+
+	// Last, so what the request asked for wins over what the object carries.
+	applyResponseOverrides(w, r)
 
 	w.WriteHeader(http.StatusOK)
 }

@@ -805,6 +805,100 @@ func TestObjGetGetObjectRefusesPartNumberAndHonoursResponseOverrides(t *testing.
 	})
 }
 
+// S3 defines the six response-* overrides on HeadObject as well as on GetObject,
+// and HEAD is documented to answer the headers a GET answers. A HEAD that
+// admitted them and answered the stored values was accepting a parameter,
+// discarding it and reporting success - the shape ADR 0007 D1 exists to forbid -
+// and it made the proxy disagree with its own GET on the same object.
+func TestObjGetHeadHonoursResponseOverrides(t *testing.T) {
+	const (
+		wantType        = "text/plain"
+		wantDisposition = `attachment; filename="invoice.pdf"`
+		wantCacheCtl    = "no-store"
+		wantEncoding    = "identity"
+		wantLanguage    = "en-GB"
+		wantExpires     = "Wed, 21 Oct 2015 07:28:00 GMT"
+	)
+
+	overrides := "?response-content-type=text%2Fplain" +
+		"&response-content-disposition=attachment%3B+filename%3D%22invoice.pdf%22" +
+		"&response-cache-control=no-store&response-content-encoding=identity" +
+		"&response-content-language=en-GB&response-expires=Wed%2C+21+Oct+2015+07%3A28%3A00+GMT"
+
+	// The object carries stored values for all six, so the assertions below fail
+	// on an override that is dropped AND on one applied before the stored headers
+	// are written - the ordering is what decides which of the two wins.
+	stored := func(body []byte, metadata map[string]string) s3.GetObjectOutput {
+		return s3.GetObjectOutput{
+			ContentType:        aws.String("application/octet-stream"),
+			ContentDisposition: aws.String(`attachment; filename="a3f9c2.bin"`),
+			ContentEncoding:    aws.String("gzip"),
+			ContentLanguage:    aws.String("de-DE"),
+			CacheControl:       aws.String("max-age=31536000"),
+			ExpiresString:      aws.String("Thu, 01 Jan 1970 00:00:00 GMT"),
+			ETag:               aws.String(`"stored-etag"`),
+			LastModified:       aws.Time(time.Unix(1700000000, 0).UTC()),
+			Metadata:           metadata,
+		}
+	}
+
+	assertSix := func(t *testing.T, rr *httptest.ResponseRecorder, verb string) {
+		t.Helper()
+		rule := verb + " honours the six response-* overrides; they are legitimate on this verb, " +
+			"so admitting one and answering the stored value is the accept-and-discard ADR 0007 D1 forbids"
+		assert.Equal(t, wantType, rr.Header().Get("Content-Type"), rule)
+		assert.Equal(t, wantDisposition, rr.Header().Get("Content-Disposition"), rule)
+		assert.Equal(t, wantCacheCtl, rr.Header().Get("Cache-Control"), rule)
+		assert.Equal(t, wantEncoding, rr.Header().Get("Content-Encoding"), rule)
+		assert.Equal(t, wantLanguage, rr.Header().Get("Content-Language"), rule)
+		assert.Equal(t, wantExpires, rr.Header().Get("Expires"), rule)
+	}
+
+	t.Run("an object this proxy wrote", func(t *testing.T) {
+		backend := new(MockS3Backend)
+		h := ObjGetnewHandler(t, backend)
+
+		plaintext := ObjGetpayload(2048)
+		ciphertext, metadata := ObjGetstore(t, h, "k", plaintext)
+		ObjServeStored(backend, ciphertext, stored(ciphertext, metadata))
+
+		head := ObjGetdo(h, httptest.NewRequest(http.MethodHead, "/b/k"+overrides, nil), "b", "k")
+		require.Equal(t, http.StatusOK, head.Code, head.Body.String())
+		assertSix(t, head, "HEAD")
+
+		// HEAD is documented to answer the headers a GET answers, so the two must
+		// not disagree about the same object and the same request.
+		get := ObjGetdo(h, httptest.NewRequest(http.MethodGet, "/b/k"+overrides, nil), "b", "k")
+		require.Equal(t, http.StatusOK, get.Code, get.Body.String())
+		assertSix(t, get, "GET")
+	})
+
+	// The exit provider answers a HEAD from a plain forward, a different branch
+	// with its own response writer.
+	t.Run("under the exit provider", func(t *testing.T) {
+		backend := new(MockS3Backend)
+		h := ObjGetnewExitHandler(t, backend)
+
+		body := ObjGetpayload(2048)
+		out := stored(body, nil)
+		backend.On("HeadObject", mock.Anything, mock.Anything).Return(&s3.HeadObjectOutput{
+			ContentType:        out.ContentType,
+			ContentDisposition: out.ContentDisposition,
+			ContentEncoding:    out.ContentEncoding,
+			ContentLanguage:    out.ContentLanguage,
+			CacheControl:       out.CacheControl,
+			ExpiresString:      out.ExpiresString,
+			ETag:               out.ETag,
+			LastModified:       out.LastModified,
+			ContentLength:      aws.Int64(int64(len(body))),
+		}, nil)
+
+		head := ObjGetdo(h, httptest.NewRequest(http.MethodHead, "/b/k"+overrides, nil), "b", "k")
+		require.Equal(t, http.StatusOK, head.Code, head.Body.String())
+		assertSix(t, head, "HEAD under the exit provider")
+	})
+}
+
 // The checksum a read serves is the one sealed into the object's trailer at
 // upload, and it is the CRC32C of the plaintext the client gets back
 // (ADR 0003 D13/D14, ADR 0012 D10). HEAD and GET have to agree, and a ranged

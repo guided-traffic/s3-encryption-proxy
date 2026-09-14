@@ -94,8 +94,8 @@ var baseObjectParams = map[string]bool{
 	"versionId": true,
 	// Operation marker appended by aws-sdk-go-v2.
 	"x-id": true,
-	// GET response header overrides. Forwarding them is a separate gap, but they
-	// are legitimate on a base GET and must not be refused.
+	// Response header overrides. Legitimate on a base GET and a base HEAD, and
+	// applied on both (ADR 0007 D1).
 	"response-content-type": true, "response-content-language": true,
 	"response-expires": true, "response-cache-control": true,
 	"response-content-disposition": true, "response-content-encoding": true,

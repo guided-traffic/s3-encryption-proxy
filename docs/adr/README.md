@@ -84,7 +84,7 @@ this column is a reading aid.
 
 | ADR | Decision | State |
 |---|---|---|
-| [0007](0007-forward-it-or-refuse-it.md) | Forward it or refuse it with a named S3 error; never accept, discard and answer success | Implemented, except D1's six response-header overrides on a `GET`, D7 on the proxy's own multipart upload and D8's answer to `?restore` |
+| [0007](0007-forward-it-or-refuse-it.md) | Forward it or refuse it with a named S3 error; never accept, discard and answer success | Implemented, except D7 on the proxy's own multipart upload and D8's answer to `?restore` |
 | [0008](0008-every-response-describes-the-proxy.md) | Every response is composed by the proxy — status, code, headers and body — and never echoes the backend | Implemented, except D12's single timestamp renderer (one format in four places), D3's S3 namespace on five documents and D10 on the access-control documents |
 | [0010](0010-sizes-and-listings-describe-the-plaintext.md) | Every reported size and every listing describes the plaintext, computed without a per-object round trip | Implemented, except D7's refusal of an unknown `encoding-type` and a `KeyCount` still forwarded from the backend |
 | [0011](0011-the-proxy-owns-the-part-layout.md) | The proxy fixes the part layout it writes, refuses one it cannot verify, and refuses server-side copy | Implemented |
