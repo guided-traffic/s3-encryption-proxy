@@ -275,10 +275,11 @@ pod twice: the Service sets no `sessionAffinity` and the default Ingress
 annotations carry none. A second replica therefore does not take a share of the
 work, it takes requests belonging to an upload the first pod is holding.
 
-**Several cooperating proxies are a different product**: the
-`s3-encryption-operator`, with a chart of its own. It needs a session table the
-instances share, which this chart has no way to supply, so the two are installed
-separately and neither is a mode of the other.
+**Several cooperating proxies are a change to the proxy, not to this chart.**
+They need a session table the instances share, an owner for the sweeper and a
+short-part bound that means something across processes — none of which is a
+values key, because the state lives in the process. Until the proxy can hand an
+upload to another instance, a replica count above one has nothing to configure.
 
 One instance is a single point of failure, and a rollout is a gap rather than a
 handover. While the pod drains, a new request is answered
@@ -644,9 +645,9 @@ renders all three override files plus the Velero e2e values on every run.
 8. **Availability**: every shipped profile runs a single replica without a
    PodDisruptionBudget, and the chart refuses a second (ADR 0033): a
    client-driven multipart upload is held by the process that created it. A node
-   drain and a rollout are each an outage for the length of a restart. Running
-   several cooperating proxies is the `s3-encryption-operator`'s job, with a
-   chart of its own.
+   drain and a rollout are each an outage for the length of a restart. What would
+   answer that is a proxy able to hand an upload to another instance; no
+   deployment layer can.
 
 The threat model behind these points is in
 [SECURITY_ARCHITECTURE.md](../../../SECURITY_ARCHITECTURE.md).

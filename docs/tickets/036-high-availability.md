@@ -9,10 +9,18 @@ for three replicas and autoscaling to twenty, and it rendered, while a
 client-driven multipart upload that reached the wrong pod was answered
 `404 NoSuchUpload`.
 
-**Running several proxies that cooperate is a separate product**, the
-`s3-encryption-operator`, with a chart of its own. The two are installed
-separately and neither is a mode of the other, so this ticket is the operator's
-prerequisite rather than a switch on the existing chart.
+**This work is a change to the proxy, not to a chart.** Instances that cooperate
+need a session table they share, an owner for the sweeper and a short-part bound
+that means something across processes; none of that is a values key, because the
+state lives in the process. So the refusal above is lifted by this ticket landing,
+not by a deployment option.
+
+**It is independent of [038](038-s3-encryption-operator.md), and the two were
+briefly written down as one thing.** An operator that provisions *single*
+instances — one custom resource, one Deployment of the single-instance chart — is
+a complete product that needs nothing from here. This ticket is equally complete
+with no operator anywhere: once the proxy can hand an upload over, a chart could
+install such a set. Neither requires the other, and neither delivers the other.
 
 Two consequences for the work below. The coordination layer needs no
 configuration key reserved in 5.0.0: a block the proxy defines later refuses no

@@ -48,11 +48,11 @@ already worried; a render that fails is read by whoever set the value. The failu
 prevents is intermittent, blames the client, and reports an S3 error code that means something
 else — the worst kind to leave to a paragraph.
 
-**D3. Running several proxies that cooperate is a different product.** It needs a shared
-session table, an owner for the sweeper, and a bound on held short-part bytes that means
-something across processes — none of which this chart can supply. It is the
-`s3-encryption-operator`, with a chart of its own, and this chart stays the single-instance
-one. The two are installed separately and neither is a mode of the other.
+**D3. Making several proxies cooperate is a change to the proxy, not a deployment option.** It
+needs a session table the instances share, an owner for the sweeper, and a bound on held
+short-part bytes that means something across processes. None of that is a values key, and no
+chart can supply it: the state lives in the process. Until the proxy can hand an upload to
+another instance, a replica count above one has nothing to configure.
 
 **D4. Availability at one replica is what a rollout gives it, and no more.** A pod disruption
 budget over one pod blocks the drain instead of protecting the service, so the production
@@ -67,9 +67,18 @@ which the drain answers `503` with `Retry-After` rather than refusing connection
 * **Throughput is one process's.** The proxy is not the bottleneck at these rates — the link is
   — but a deployment that needs more than one process has no answer in this chart today.
 * **A single instance is a single point of failure**, and this record accepts that for this
-  chart. The operator is where that is answered.
+  chart. What answers it is a proxy that can hand an upload to another instance; nothing in a
+  deployment layer can.
 * **The refusal will have to be lifted, not loosened**, when instances can hand work over. It is
   a values check, so it moves with the chart rather than with the binary.
+* **A Kubernetes operator is not what lifts it, and this record said otherwise until it was
+  corrected on 2026-09-14.** The two are independent, and the mistake is easy enough to be
+  worth naming: an operator is a separate program with an entry point of its own that
+  provisions proxy instances through Custom Resources, and an operator that provisions
+  *single* instances — one resource, one Deployment of this chart — is a complete product that
+  needs nothing from D3. Equally, instances that share an upload are a complete product with
+  no operator anywhere: a chart could install such a set once the proxy supports it. Neither
+  requires the other, and neither delivers the other.
 
 ## Alternatives Considered
 

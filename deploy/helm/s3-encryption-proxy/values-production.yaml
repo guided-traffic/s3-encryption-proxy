@@ -10,8 +10,8 @@
 
 # One instance, and the chart refuses more: a client-driven multipart upload is
 # held in the process that created it, so a part reaching another pod is answered
-# 404 NoSuchUpload. Several cooperating proxies are the s3-encryption-operator's
-# job, not this chart's.
+# 404 NoSuchUpload. Sharing an upload between instances is a change to the proxy,
+# not a replica count.
 replicaCount: 1
 
 image:

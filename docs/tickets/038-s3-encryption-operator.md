@@ -2,13 +2,20 @@
 
 ## Decided 2026-09-14, before any of this is built
 
-**The operator ships its own Helm chart.** `s3-encryption-proxy` is the
-single-instance chart and stays one; it now refuses `replicaCount` above 1 and
-refuses autoscaling (ADR 0033). The operator's chart installs the operator, and
-the operator provisions proxy instances through its Custom Resources. The two
-charts are installed separately and neither is a mode of the other — so the
-question this ticket opened, whether operator and chart coexist or one replaces
-the other, is answered: they coexist and they do different jobs.
+**The operator is a separate program**, with an entry point of its own rather
+than a mode of the proxy binary, and it ships its own Helm chart. That chart
+installs the operator; the operator then provisions proxy instances through its
+Custom Resources. `s3-encryption-proxy` stays the single-instance chart and now
+refuses `replicaCount` above 1 and autoscaling (ADR 0033). So the question this
+ticket opened — whether operator and chart coexist or one replaces the other — is
+answered: they coexist and do different jobs.
+
+**It does not depend on [036](036-high-availability.md), and this was got wrong
+once.** An operator that provisions single instances is a complete product: one
+custom resource, one Deployment of the single-instance chart, as many of those as
+the cluster needs. Nothing here waits on proxies that share an upload between
+them. Whether the operator lives in this repository or its own is open; what is
+decided is that it is not this binary.
 
 **Configuration is read at start and only at start.** There is no `SIGHUP`, no
 configuration watch, and the only signals handled are `SIGINT` and `SIGTERM`. An

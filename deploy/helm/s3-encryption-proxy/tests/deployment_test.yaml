@@ -234,7 +234,7 @@ tests:
       replicaCount: 2
     asserts:
       - failedTemplate:
-          errorMessage: "replicaCount is 2 and this chart installs one instance. A client-driven multipart upload is held in the process that created it, so a part that reaches another pod is answered 404 NoSuchUpload - two replicas break uploads that one completes. Set replicaCount: 1; several cooperating proxies are the s3-encryption-operator's job."
+          errorMessage: "replicaCount is 2 and this chart installs one instance. A client-driven multipart upload is held in the process that created it, so a part that reaches another pod is answered 404 NoSuchUpload - two replicas break uploads that one completes. Set replicaCount: 1. Proxies that share an upload between them are a change to the proxy itself, not a replica count."
 
   - it: refuses autoscaling
     template: deployment.yaml
@@ -242,7 +242,7 @@ tests:
       autoscaling.enabled: true
     asserts:
       - failedTemplate:
-          errorMessage: "autoscaling.enabled is true and this chart installs one instance. Scaling out does not share the workload here: a client-driven multipart upload is held in the process that created it, so a part that reaches a new pod is answered 404 NoSuchUpload. Set autoscaling.enabled: false; scaling several cooperating proxies is the s3-encryption-operator's job."
+          errorMessage: "autoscaling.enabled is true and this chart installs one instance. Scaling out does not share the workload here: a client-driven multipart upload is held in the process that created it, so a part that reaches a new pod is answered 404 NoSuchUpload. Set autoscaling.enabled: false. Proxies that share an upload between them are a change to the proxy itself, not a replica count."
 
   - it: renders one replica
     template: deployment.yaml

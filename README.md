@@ -981,8 +981,8 @@ helm install s3-encryption-proxy . \
 > the chart makes a client stay on one pod: the Service sets no session affinity
 > and the default Ingress annotations carry none. A second replica does not take
 > a share of the work, it takes requests belonging to an upload the first one is
-> holding. Running several cooperating proxies is a separate product, the
-> `s3-encryption-operator`, with a chart of its own
+> holding. Proxies that share an upload between them are a change to the proxy
+> itself — a session table the instances read — and not a replica count
 > ([ADR 0033](./docs/adr/0033-a-proxy-instance-holds-its-uploads.md)).
 
 Example custom values (the shipped `values-production.yaml` sets different
