@@ -17,8 +17,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
 	proxyconfig "github.com/guided-traffic/s3-encryption-proxy/internal/config"
+	"github.com/guided-traffic/s3-encryption-proxy/internal/monitoring"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/health"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/middleware"
 	"github.com/sirupsen/logrus"
 )
@@ -30,9 +30,6 @@ type Server struct {
 	encryptionMgr *orchestration.Manager
 	config        *proxyconfig.Config
 	logger        *logrus.Entry
-
-	// build is what the binary was stamped with. /version answers it.
-	build health.BuildInfo
 
 	// Graceful shutdown tracking
 	shutdownStateHandler func() (bool, time.Time)
@@ -56,7 +53,7 @@ type Server struct {
 }
 
 // NewServer creates a new proxy server instance
-func NewServer(cfg *proxyconfig.Config, build health.BuildInfo) (*Server, error) {
+func NewServer(cfg *proxyconfig.Config) (*Server, error) {
 	logger := logrus.WithField("component", "proxy-server")
 
 	// Create encryption manager directly from the config
@@ -78,6 +75,10 @@ func NewServer(cfg *proxyconfig.Config, build health.BuildInfo) (*Server, error)
 
 		if provider.IsActive {
 			logger.WithFields(fields).Info("🔒🔑 Active KEK provider to encrypt and decrypt data")
+			// What writes go through is what /status and the provider gauge
+			// report; an exit provider means the backend holds plaintext
+			// (ADR 0025 D10, ADR 0034).
+			monitoring.SetActiveProvider(provider.Alias, provider.Type, provider.Fingerprint)
 		} else {
 			logger.WithFields(fields).Info("🔑 Available KEK provider to decrypt data")
 		}
@@ -122,7 +123,6 @@ func NewServer(cfg *proxyconfig.Config, build health.BuildInfo) (*Server, error)
 		encryptionMgr: encryptionMgr,
 		config:        cfg,
 		logger:        logger,
-		build:         build,
 	}
 
 	// The sweeper has to be able to tell the backend that an upload it is about to
@@ -190,37 +190,56 @@ func backendClientOptions(s3Config proxyconfig.S3BackendConfig, logger *logrus.E
 		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
 
-		if s3Config.TargetEndpoint == "" {
-			return
-		}
-		o.BaseEndpoint = aws.String(s3Config.TargetEndpoint)
+		skipVerify := false
+		if s3Config.TargetEndpoint != "" {
+			o.BaseEndpoint = aws.String(s3Config.TargetEndpoint)
 
-		logger.WithFields(logrus.Fields{
-			"target_endpoint":                 s3Config.TargetEndpoint,
-			"s3_backend_insecure_skip_verify": s3Config.InsecureSkipVerify,
-		}).Debug("TLS configuration for S3 client")
+			logger.WithFields(logrus.Fields{
+				"target_endpoint":                 s3Config.TargetEndpoint,
+				"s3_backend_insecure_skip_verify": s3Config.InsecureSkipVerify,
+			}).Debug("TLS configuration for S3 client")
 
-		if s3Config.InsecureSkipVerify {
-			logger.Warn("TLS certificate verification is disabled - this should only be used for development/testing")
-			// Build on the SDK's own client and override nothing but the TLS
-			// configuration. A bare http.Transport here replaced every SDK
-			// default at once — connection pool sizes, the dial, TLS handshake
-			// and expect-continue budgets, and HTTP/2 — so the deployments that
-			// skip certificate verification silently ran on a different
-			// transport from the ones that do not.
-			o.HTTPClient = awshttp.NewBuildableClient().WithTransportOptions(func(tr *http.Transport) {
-				// Mutate, never replace: the SDK's own config carries
-				// MinVersion TLS 1.2, and assigning a fresh tls.Config here
-				// would silently drop it back to Go's default minimum.
-				if tr.TLSClientConfig == nil {
-					tr.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
-				}
-				tr.TLSClientConfig.InsecureSkipVerify = true // #nosec G402 - configurable, and the user is warned
-			})
-			return
+			skipVerify = s3Config.InsecureSkipVerify
+			if skipVerify {
+				logger.Warn("TLS certificate verification is disabled - this should only be used for development/testing")
+			} else {
+				logger.Debug("TLS certificate verification is enabled")
+			}
 		}
-		logger.Debug("TLS certificate verification is enabled")
+
+		// Observed on every path, this one included: what /status and the
+		// backend gauges report is what the real traffic showed, so a client
+		// built past the wrapper would make them silently partial (ADR 0034).
+		// The wrapper is not a *awshttp.BuildableClient any more, so the SDK
+		// skips its own resolveHTTPClient tuning - empty under the legacy
+		// defaults mode this config runs in, and S3 is excluded from the SDK's
+		// read timeout. Setting aws.Config.DefaultsMode would change that.
+		o.HTTPClient = monitoring.ObserveBackendClient(backendHTTPClient(skipVerify))
 	}
+}
+
+// backendHTTPClient is the client the backend leg runs on, before observation.
+//
+// It builds on the SDK's own client and overrides nothing but the TLS
+// configuration. A bare http.Transport here replaced every SDK default at once
+// — connection pool sizes, the dial, TLS handshake and expect-continue budgets,
+// and HTTP/2 — so the deployments that skip certificate verification silently ran
+// on a different transport from the ones that do not.
+func backendHTTPClient(insecureSkipVerify bool) *awshttp.BuildableClient {
+	client := awshttp.NewBuildableClient()
+	if !insecureSkipVerify {
+		return client
+	}
+
+	return client.WithTransportOptions(func(tr *http.Transport) {
+		// Mutate, never replace: the SDK's own config carries MinVersion
+		// TLS 1.2, and assigning a fresh tls.Config here would silently drop it
+		// back to Go's default minimum.
+		if tr.TLSClientConfig == nil {
+			tr.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		}
+		tr.TLSClientConfig.InsecureSkipVerify = true // #nosec G402 - configurable, and the user is warned
+	})
 }
 
 // SetShutdownStateHandler sets the handler to check shutdown state for health endpoint.

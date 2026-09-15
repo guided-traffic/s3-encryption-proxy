@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/health"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -118,7 +117,7 @@ func TestRtPxNewServerRejectsUnusableConfig(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			server, err := NewServer(tc.cfg, health.BuildInfo{})
+			server, err := NewServer(tc.cfg)
 			require.Error(t, err)
 			assert.Nil(t, server, "a server must not be returned alongside an error")
 			assert.Contains(t, err.Error(), tc.wantMsg)
@@ -149,7 +148,7 @@ func TestRtPxMetadataPrefixResolution(t *testing.T) {
 			cfg := RtPxconfig()
 			cfg.Encryption.MetadataKeyPrefix = tc.prefix
 
-			server, err := NewServer(cfg, health.BuildInfo{})
+			server, err := NewServer(cfg)
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, server.encryptionMgr.GetMetadataKeyPrefix(),
 				"the prefix the handlers write and read is the manager's")
@@ -178,7 +177,7 @@ func TestRtPxNewServerLoadsAllProvidersButActivatesOne(t *testing.T) {
 		Config: map[string]interface{}{"aes_key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="},
 	})
 
-	server, err := NewServer(cfg, health.BuildInfo{})
+	server, err := NewServer(cfg)
 	require.NoError(t, err)
 
 	providers := server.encryptionMgr.GetLoadedProviders()
@@ -198,41 +197,48 @@ func TestRtPxNewServerLoadsAllProvidersButActivatesOne(t *testing.T) {
 	assert.NotContains(t, logged, RtPxaesKey, "key material must never be logged")
 }
 
-// SetShutdownStateHandler is what a readiness probe sees during a graceful
-// shutdown: /health has to flip to 503 so no new traffic is routed to a
-// draining instance. The handler is set after NewServer, which is exactly how
-// cmd/s3-encryption-proxy/main.go uses it.
-func TestRtPxHealthReportsShutdownState(t *testing.T) {
+// SetShutdownStateHandler is what the probes see during a graceful shutdown:
+// /readyz has to flip to 503 so no new traffic is routed to a draining
+// instance, and /livez must not, because the only reaction to a failing
+// liveness probe is a restart that would skip the multipart sweep entirely
+// (ADR 0028, ADR 0034). The handler is set after NewServer, which is exactly
+// how cmd/s3-encryption-proxy/main.go uses it.
+func TestRtPxProbesReportShutdownState(t *testing.T) {
 	logrus.SetLevel(logrus.ErrorLevel)
 
-	server, err := NewServer(RtPxconfig(), health.BuildInfo{})
+	server, err := NewServer(RtPxconfig())
 	require.NoError(t, err)
 
-	get := func() *httptest.ResponseRecorder {
+	get := func(path string) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
-		server.httpServer.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/health", nil))
+		server.httpServer.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
 		return w
 	}
 
 	// Before shutdown.
-	w := get()
+	w := get("/readyz")
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
-	var healthy map[string]interface{}
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &healthy))
-	assert.Equal(t, "healthy", healthy["status"])
+	var ready map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &ready))
+	assert.Equal(t, "ready", ready["status"])
 
 	// After shutdown was initiated, on the very same running server.
 	shutdownAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	server.SetShutdownStateHandler(func() (bool, time.Time) { return true, shutdownAt })
 
-	w = get()
+	w = get("/readyz")
 	require.Equal(t, http.StatusServiceUnavailable, w.Code,
 		"a draining server must report 503 to its readiness probe")
 	var draining map[string]interface{}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &draining))
 	assert.Equal(t, "shutting_down", draining["status"])
 	assert.Equal(t, shutdownAt.Format(time.RFC3339), draining["shutdown_time"])
+
+	w = get("/livez")
+	require.Equal(t, http.StatusOK, w.Code,
+		"a draining pod that fails its liveness probe is killed before its sweep finishes")
+	assert.Contains(t, w.Body.String(), "alive")
 }
 
 // SetRequestTracker feeds the drain loop in main: a request that is in flight
@@ -240,7 +246,7 @@ func TestRtPxHealthReportsShutdownState(t *testing.T) {
 func TestRtPxRequestTrackerCountsRequests(t *testing.T) {
 	logrus.SetLevel(logrus.ErrorLevel)
 
-	server, err := NewServer(RtPxconfig(), health.BuildInfo{})
+	server, err := NewServer(RtPxconfig())
 	require.NoError(t, err)
 
 	var started, ended, inFlightDuringRequest int
@@ -254,7 +260,7 @@ func TestRtPxRequestTrackerCountsRequests(t *testing.T) {
 	})
 
 	w := httptest.NewRecorder()
-	server.httpServer.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/health", nil))
+	server.httpServer.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, 1, started, "the request start handler must run once per request")
@@ -269,7 +275,7 @@ func TestRtPxStartReportsListenFailure(t *testing.T) {
 
 	cfg := RtPxconfig()
 	cfg.BindAddress = "127.0.0.1:99999" // outside the valid port range
-	server, err := NewServer(cfg, health.BuildInfo{})
+	server, err := NewServer(cfg)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -285,7 +291,7 @@ func TestRtPxStartReportsListenFailure(t *testing.T) {
 func TestRtPxStartShutsDownOnContextCancel(t *testing.T) {
 	logrus.SetLevel(logrus.ErrorLevel)
 
-	server, err := NewServer(RtPxconfig(), health.BuildInfo{}) // port 0: the OS picks a free port
+	server, err := NewServer(RtPxconfig()) // port 0: the OS picks a free port
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -339,7 +345,7 @@ func (l *RtPxfailingListener) Addr() net.Addr {
 func TestRtPxStartReportsShutdownFailure(t *testing.T) {
 	logrus.SetLevel(logrus.ErrorLevel)
 
-	server, err := NewServer(RtPxconfig(), health.BuildInfo{})
+	server, err := NewServer(RtPxconfig())
 	require.NoError(t, err)
 
 	ln := RtPxnewFailingListener()
@@ -426,7 +432,7 @@ func TestRtPxListenerBudgetsReachTheServer(t *testing.T) {
 	cfg.ReadHeaderTimeout = 33
 	cfg.IdleTimeout = 44
 
-	server, err := NewServer(cfg, health.BuildInfo{})
+	server, err := NewServer(cfg)
 	require.NoError(t, err)
 
 	assert.Equal(t, 11*time.Second, server.httpServer.ReadTimeout, "read_timeout bounds a request body")
@@ -440,7 +446,7 @@ func TestRtPxListenerBudgetsReachTheServer(t *testing.T) {
 // link speed (ADR 0015). A fixed default here made the largest servable object a
 // function of the client's bandwidth.
 func TestRtPxTransferBudgetsDefaultToNoDeadline(t *testing.T) {
-	server, err := NewServer(RtPxconfig(), health.BuildInfo{})
+	server, err := NewServer(RtPxconfig())
 	require.NoError(t, err)
 
 	assert.Zero(t, server.httpServer.ReadTimeout, "an upload may take as long as it takes")

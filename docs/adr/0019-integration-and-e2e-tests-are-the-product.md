@@ -354,6 +354,6 @@ chart must move together.
 - ADR 0031 — a test states the target and stays red until the product meets it; it generalises D1 and D4 of this record to every test layer and supplies the target-versus-current distinction.
 - ADR 0020 — Performance is measured before and after, never asserted
 - ADR 0021 — Key material and licenses are generated, never committed
-- [README.md](../../README.md) — user-facing reference, including the client configuration the end-to-end environment must run
+- [docs/operations/clients/](../operations/clients/) — the client configuration the end-to-end environment must run
 - [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — threat model and the residual-risk checklist the suites are evidence against
 - [CLAUDE.md](../../CLAUDE.md) — project conventions, the testing strategy and the build and test targets

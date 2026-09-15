@@ -389,12 +389,12 @@ func TestRtPxMalformedPartUploadReachesTheObjectHandler(t *testing.T) {
 	}
 }
 
-// Health and version answer without a signature - a readiness probe cannot sign
-// - while every S3 route stays behind authentication.
-func TestRtPxHealthBypassesAuthButS3DoesNot(t *testing.T) {
+// The two probes answer without a signature - kubelet cannot sign - while every
+// S3 route stays behind authentication.
+func TestRtPxProbesBypassAuthButS3DoesNot(t *testing.T) {
 	_, router := RtPxrouter(t, false)
 
-	for _, target := range []string{"/health", "/version"} {
+	for _, target := range []string{"/livez", "/readyz"} {
 		t.Run("unauthenticated "+target, func(t *testing.T) {
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, target, nil))
@@ -435,7 +435,7 @@ func TestRtPxMonitoringMiddlewareIsTransparent(t *testing.T) {
 		method string
 		target string
 	}{
-		{name: "health", method: http.MethodGet, target: "/health"},
+		{name: "liveness probe", method: http.MethodGet, target: "/livez"},
 		{name: "unauthenticated object read", method: http.MethodGet, target: "/bucket/key"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -464,30 +464,31 @@ func RtPxwithoutRequestID(body string) string {
 
 var RtPxrequestIDElement = regexp.MustCompile(`(?s)\s*<RequestId>.*?</RequestId>`)
 
-// A probe reads /health and /version unsigned and with no S3 parameters. Anything
+// A probe reads /livez and /readyz unsigned and with no S3 parameters. Anything
 // that is an S3 request - signed, or carrying listing parameters - addresses a
 // bucket of that name, which S3 allows and no documented limit forbids
 // (ADR 0006 D2; ADR 0014 D11 exempts the probe, not the name).
-func TestRtPxHealthEndpointsDoNotShadowSameNamedBuckets(t *testing.T) {
+func TestRtPxProbeEndpointsDoNotShadowSameNamedBuckets(t *testing.T) {
 	_, router := RtPxrouter(t, false)
 
 	// The probe stays the probe, and keeps answering while the server drains
 	// (ADR 0029 D1).
-	for _, target := range []string{"/health", "/version"} {
+	for target, want := range map[string]string{"/livez": "alive", "/readyz": "ready"} {
 		t.Run("probe "+target, func(t *testing.T) {
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, target, nil))
 
 			assert.Equal(t, http.StatusOK, w.Code)
 			assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+			assert.Contains(t, w.Body.String(), want)
 		})
 	}
 
-	// A listing on a bucket named "health" is an S3 request; unsigned, so the S3
+	// A listing on a bucket named "livez" is an S3 request; unsigned, so the S3
 	// answer is the auth refusal - never the probe document.
 	t.Run("listing parameters reach the S3 router", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/health?list-type=2&prefix=a/", nil))
+		router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/livez?list-type=2&prefix=a/", nil))
 
 		const rule = "anything that is an S3 request - signed, or carrying listing parameters - " +
 			"addresses a bucket of that name, which S3 allows and no documented limit forbids; the " +
@@ -498,7 +499,7 @@ func TestRtPxHealthEndpointsDoNotShadowSameNamedBuckets(t *testing.T) {
 	})
 
 	// A signed GET is an S3 request whatever the bucket is called.
-	for _, target := range []string{"/health", "/version"} {
+	for _, target := range []string{"/livez", "/readyz"} {
 		t.Run("signed "+target, func(t *testing.T) {
 			assert.Contains(t, RtPxhandlerName(t, router, RtPxsignedRequest(t, http.MethodGet, target)),
 				"bucket.(*Handler).Handle")
@@ -506,8 +507,28 @@ func TestRtPxHealthEndpointsDoNotShadowSameNamedBuckets(t *testing.T) {
 	}
 
 	// Only GET is shadowed: the other verbs already reach the bucket handler.
-	req := httptest.NewRequest(http.MethodPut, "/health", nil)
+	req := httptest.NewRequest(http.MethodPut, "/livez", nil)
 	assert.Contains(t, RtPxhandlerName(t, router, req), "bucket.(*Handler).Handle")
+}
+
+// The endpoints this listener no longer carries. They are ordinary bucket names
+// now, so an unsigned GET is the S3 refusal and nothing answers a probe document
+// (ADR 0034); what they used to report is the monitoring listener's /status.
+func TestRtPxRemovedEndpointsAreOrdinaryBuckets(t *testing.T) {
+	_, router := RtPxrouter(t, false)
+
+	for _, target := range []string{"/health", "/version"} {
+		t.Run(target, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, target, nil))
+
+			require.Equal(t, http.StatusForbidden, w.Code,
+				"%s is no longer a probe route; body: %s", target, w.Body.String())
+			assert.Equal(t, "application/xml", w.Header().Get("Content-Type"))
+			assert.Contains(t, RtPxhandlerName(t, router, httptest.NewRequest(http.MethodGet, target, nil)),
+				"bucket.(*Handler).Handle")
+		})
+	}
 }
 
 // Every route the server registers, walked out of the router itself and driven
@@ -522,11 +543,11 @@ func TestRtPxEveryRouteIsBoundToAuthentication(t *testing.T) {
 	logrus.SetLevel(logrus.ErrorLevel)
 	_, router := RtPxrouter(t, false)
 
-	// The two readiness endpoints, and nothing else: a probe has to read them
-	// before a client could have signed anything.
+	// The two probe endpoints, and nothing else: a probe has to read them before
+	// a client could have signed anything.
 	public := map[string]bool{
-		"GET /health":  true,
-		"GET /version": true,
+		"GET /livez":  true,
+		"GET /readyz": true,
 	}
 
 	// Path variables are filled with names that cannot collide with the public
@@ -562,11 +583,11 @@ func TestRtPxEveryRouteIsBoundToAuthentication(t *testing.T) {
 
 			if public[method+" "+fill.Replace(template)] {
 				assert.NotEqual(t, http.StatusForbidden, w.Code,
-					"%s %s is a readiness endpoint and must answer without a signature", method, target)
+					"%s %s is a probe endpoint and must answer without a signature", method, target)
 				continue
 			}
 			assert.Equal(t, http.StatusForbidden, w.Code,
-				"%s %s served an unsigned request: every route but the readiness pair is signed", method, target)
+				"%s %s served an unsigned request: every route but the probe pair is signed", method, target)
 		}
 		return nil
 	})
@@ -646,7 +667,7 @@ func TestRtPxEveryAnswerStatesARequestID(t *testing.T) {
 	_, router := RtPxrouter(t, false)
 
 	cases := []struct{ name, method, target string }{
-		{"the probe", http.MethodGet, "/health"},
+		{"the probe", http.MethodGet, "/livez"},
 		{"an unsigned S3 request", http.MethodGet, "/bucket/key"},
 		{"a method no route declares", http.MethodPatch, "/bucket/key"},
 		{"a CORS preflight", http.MethodOptions, "/bucket/key"},

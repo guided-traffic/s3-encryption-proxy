@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/health"
 	"io"
 	"net"
 	"net/http"
@@ -80,7 +79,7 @@ func StartExitProviderProxyInstanceTuned(t *testing.T, tune func(*config.Config)
 	}
 
 	// Create proxy server
-	server, err := proxy.NewServer(cfg, health.BuildInfo{})
+	server, err := proxy.NewServer(cfg)
 	require.NoError(t, err, "Failed to create proxy server")
 
 	// Create context for the server
@@ -702,15 +701,16 @@ func TestExitProvider_PurePassthrough(t *testing.T) {
 	t.Log("✅ Pure pass-through test completed successfully!")
 }
 
-// TestUnauthenticatedEndpoints: /health and /version answer ahead of the
+// TestUnauthenticatedProbes: /livez and /readyz answer ahead of the
 // authentication middleware, which is what lets a load balancer probe the proxy
-// without a credential (ADR 0014 D11). This ran as a table that skipped its only
-// case and therefore asserted nothing; it now talks to the running proxy.
-func TestUnauthenticatedEndpoints(t *testing.T) {
+// without a credential (ADR 0014 D11). Both are 200 here: the proxy serves and
+// is not draining, and readiness is a lifecycle signal, never a load signal
+// (ADR 0034). The body is not pinned - a probe's answer is its status code.
+func TestUnauthenticatedProbes(t *testing.T) {
 	EnsureMinIOAndProxyAvailable(t)
 	logrus.SetLevel(logrus.ErrorLevel)
 
-	for _, path := range []string{"/health", "/version"} {
+	for _, path := range []string{"/livez", "/readyz"} {
 		path := path
 		t.Run(path, func(t *testing.T) {
 			req, err := http.NewRequest(http.MethodGet, ProxyEndpoint+path, nil)
@@ -725,7 +725,6 @@ func TestUnauthenticatedEndpoints(t *testing.T) {
 
 			assert.Equalf(t, http.StatusOK, resp.StatusCode,
 				"%s must answer without a credential: %s", path, string(body))
-			assert.NotEmptyf(t, body, "%s answered an empty body", path)
 		})
 	}
 }

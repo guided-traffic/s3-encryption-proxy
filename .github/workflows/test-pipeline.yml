@@ -331,7 +331,7 @@ jobs:
       - name: Wait for S3 Encryption Proxy to be ready
         run: |
           for i in {1..30}; do
-            if curl -f http://localhost:8080/health; then
+            if curl -f http://localhost:8080/livez; then
               echo "S3 Encryption Proxy is ready"
               break
             fi
@@ -349,7 +349,7 @@ jobs:
       - name: Wait for the TLS proxy endpoint to be ready
         run: |
           for i in {1..30}; do
-            if curl -f -k https://localhost:8443/health; then
+            if curl -f -k https://localhost:8443/livez; then
               echo "TLS proxy endpoint is ready"
               break
             fi
@@ -406,7 +406,7 @@ jobs:
 
       - name: Wait for both proxy endpoints to be ready again
         run: |
-          for url in http://localhost:8080/health https://localhost:8443/health; do
+          for url in http://localhost:8080/livez https://localhost:8443/livez; do
             for i in {1..30}; do
               if curl -f -k "$url"; then
                 echo "$url is ready"

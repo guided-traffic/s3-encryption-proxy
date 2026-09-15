@@ -55,6 +55,30 @@ func (w *HlthrecordingWriter) Write(p []byte) (int, error) {
 	return w.ResponseRecorder.Write(p)
 }
 
+// Hlthprobe is one of the two endpoints, so every shared property is asserted
+// for both without writing it twice.
+type Hlthprobe struct {
+	name   string
+	path   string
+	invoke func(h *Handler, w http.ResponseWriter, r *http.Request)
+	logged string
+}
+
+var Hlthprobes = []Hlthprobe{
+	{
+		name:   "livez",
+		path:   "/livez",
+		invoke: func(h *Handler, w http.ResponseWriter, r *http.Request) { h.Live(w, r) },
+		logged: "Liveness probe",
+	},
+	{
+		name:   "readyz",
+		path:   "/readyz",
+		invoke: func(h *Handler, w http.ResponseWriter, r *http.Request) { h.Ready(w, r) },
+		logged: "Readiness probe",
+	},
+}
+
 func TestHlthNewHandler(t *testing.T) {
 	logger, _ := HlthnewTestLogger()
 
@@ -66,7 +90,7 @@ func TestHlthNewHandler(t *testing.T) {
 		{name: "logging enabled", logHealthRequests: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h := NewHandler(logger, tc.logHealthRequests, BuildInfo{})
+			h := NewHandler(logger, tc.logHealthRequests)
 
 			require.NotNil(t, h)
 			assert.Same(t, logger, h.logger)
@@ -81,7 +105,7 @@ func TestHlthNewHandler(t *testing.T) {
 
 func TestHlthSetShutdownStateHandler(t *testing.T) {
 	logger, _ := HlthnewTestLogger()
-	h := NewHandler(logger, false, BuildInfo{})
+	h := NewHandler(logger, false)
 
 	expectedTime := time.Date(2024, 3, 1, 12, 30, 0, 0, time.UTC)
 	h.SetShutdownStateHandler(func() (bool, time.Time) { return true, expectedTime })
@@ -94,7 +118,7 @@ func TestHlthSetShutdownStateHandler(t *testing.T) {
 
 func TestHlthSetRequestTracker(t *testing.T) {
 	logger, _ := HlthnewTestLogger()
-	h := NewHandler(logger, false, BuildInfo{})
+	h := NewHandler(logger, false)
 
 	started, ended := 0, 0
 	h.SetRequestTracker(func() { started++ }, func() { ended++ })
@@ -108,24 +132,47 @@ func TestHlthSetRequestTracker(t *testing.T) {
 	assert.Equal(t, 1, ended)
 }
 
-func TestHlthHealthHealthyResponse(t *testing.T) {
-	logger, _ := HlthnewTestLogger()
-	h := NewHandler(logger, false, BuildInfo{})
+// The defect this endpoint exists to remove: one handler served both probes and
+// answered 503 from the moment the drain started, so a draining pod failed its
+// liveness probe by design and a kill inside the grace period skipped the
+// multipart sweep entirely (ADR 0028, ADR 0029 D1). Liveness answers 200 while
+// the drain runs, and it reports nothing else either (ADR 0034).
+func TestHlthLiveIsConstantEvenWhileDraining(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		handler func() (bool, time.Time)
+	}{
+		{name: "no shutdown handler configured", handler: nil},
+		{name: "not draining", handler: func() (bool, time.Time) { return false, time.Time{} }},
+		{
+			name:    "draining",
+			handler: func() (bool, time.Time) { return true, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC) },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logger, _ := HlthnewTestLogger()
+			h := NewHandler(logger, false)
+			if tc.handler != nil {
+				h.SetShutdownStateHandler(tc.handler)
+			}
 
-	rr := httptest.NewRecorder()
-	h.Health(rr, httptest.NewRequest(http.MethodGet, "/health", nil))
+			rr := httptest.NewRecorder()
+			h.Live(rr, httptest.NewRequest(http.MethodGet, "/livez", nil))
 
-	assert.Equal(t, http.StatusOK, rr.Code)
-	assert.Equal(t, "application/json", rr.Header().Get("Content-Type"))
-	// json.Encoder terminates the document with a newline.
-	assert.Equal(t, "{\"status\":\"healthy\"}\n", rr.Body.String())
-
-	var body map[string]string
-	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
-	assert.Equal(t, map[string]string{"status": "healthy"}, body)
+			require.Equal(t, http.StatusOK, rr.Code,
+				"a restart repairs nothing a liveness probe could detect here, so it never fails")
+			assert.Equal(t, "application/json", rr.Header().Get("Content-Type"))
+			// json.Encoder terminates the document with a newline.
+			assert.Equal(t, "{\"status\":\"alive\"}\n", rr.Body.String())
+			assert.NotContains(t, rr.Body.String(), "shutting_down",
+				"liveness must not report the drain")
+		})
+	}
 }
 
-func TestHlthHealthShutdownStateHandlerVariants(t *testing.T) {
+// The drain is a per-request state: the same handler answers 200 and then 503
+// on the same running server, which is exactly how main installs it.
+func TestHlthReadyReportsTheDrain(t *testing.T) {
 	shutdownAt := time.Date(2025, 7, 4, 8, 15, 30, 0, time.FixedZone("CEST", 2*60*60))
 
 	for _, tc := range []struct {
@@ -138,13 +185,13 @@ func TestHlthHealthShutdownStateHandlerVariants(t *testing.T) {
 			name:     "no shutdown handler configured",
 			handler:  nil,
 			wantCode: http.StatusOK,
-			wantBody: map[string]string{"status": "healthy"},
+			wantBody: map[string]string{"status": "ready"},
 		},
 		{
 			name:     "shutdown not initiated",
 			handler:  func() (bool, time.Time) { return false, time.Time{} },
 			wantCode: http.StatusOK,
-			wantBody: map[string]string{"status": "healthy"},
+			wantBody: map[string]string{"status": "ready"},
 		},
 		{
 			name:     "shutdown initiated",
@@ -159,13 +206,13 @@ func TestHlthHealthShutdownStateHandlerVariants(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			logger, _ := HlthnewTestLogger()
-			h := NewHandler(logger, false, BuildInfo{})
+			h := NewHandler(logger, false)
 			if tc.handler != nil {
 				h.SetShutdownStateHandler(tc.handler)
 			}
 
 			rr := httptest.NewRecorder()
-			h.Health(rr, httptest.NewRequest(http.MethodGet, "/health", nil))
+			h.Ready(rr, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 
 			assert.Equal(t, tc.wantCode, rr.Code)
 			assert.Equal(t, "application/json", rr.Header().Get("Content-Type"))
@@ -184,9 +231,9 @@ func TestHlthHealthShutdownStateHandlerVariants(t *testing.T) {
 	}
 }
 
-func TestHlthHealthShutdownStateIsReEvaluatedPerRequest(t *testing.T) {
+func TestHlthReadyShutdownStateIsReEvaluatedPerRequest(t *testing.T) {
 	logger, _ := HlthnewTestLogger()
-	h := NewHandler(logger, false, BuildInfo{})
+	h := NewHandler(logger, false)
 
 	shuttingDown := false
 	h.SetShutdownStateHandler(func() (bool, time.Time) {
@@ -194,86 +241,28 @@ func TestHlthHealthShutdownStateIsReEvaluatedPerRequest(t *testing.T) {
 	})
 
 	first := httptest.NewRecorder()
-	h.Health(first, httptest.NewRequest(http.MethodGet, "/health", nil))
+	h.Ready(first, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 	assert.Equal(t, http.StatusOK, first.Code)
 
 	shuttingDown = true
 
 	second := httptest.NewRecorder()
-	h.Health(second, httptest.NewRequest(http.MethodGet, "/health", nil))
+	h.Ready(second, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 	assert.Equal(t, http.StatusServiceUnavailable, second.Code)
 	assert.Contains(t, second.Body.String(), "shutting_down")
 	assert.Contains(t, second.Body.String(), "1970-01-01T00:00:00Z")
-}
 
-// /version answers what the binary was stamped with. It used to answer a
-// hard-coded "dev" beside a comment saying it should be injected at build time,
-// while the same process already reported the real version as s3ep_server_info -
-// so the metric and the endpoint disagreed about the same running binary, and an
-// operator reading the endpoint could not tell which version was serving them.
-func TestHlthVersionResponse(t *testing.T) {
-	logger, _ := HlthnewTestLogger()
-	h := NewHandler(logger, false, BuildInfo{
-		Version:   "5.0.0",
-		Commit:    "03e9184",
-		BuildTime: "2026-09-14T08:00:00Z",
-	})
-	// Version must ignore the shutdown state and stay available.
-	h.SetShutdownStateHandler(func() (bool, time.Time) { return true, time.Now() })
-
-	rr := httptest.NewRecorder()
-	h.Version(rr, httptest.NewRequest(http.MethodGet, "/version", nil))
-
-	assert.Equal(t, http.StatusOK, rr.Code)
-	assert.Equal(t, "application/json", rr.Header().Get("Content-Type"))
-
-	var body map[string]string
-	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
-	assert.Equal(t, map[string]string{
-		"version":    "5.0.0",
-		"commit":     "03e9184",
-		"build_time": "2026-09-14T08:00:00Z",
-		"service":    "s3-encryption-proxy",
-	}, body)
-}
-
-// An unstamped binary - a `go build` with no ldflags, which is what a developer
-// runs - answers the empty strings it actually holds rather than inventing a
-// version. The endpoint reports the build; it does not guess at one.
-func TestHlthVersionOfAnUnstampedBinary(t *testing.T) {
-	logger, _ := HlthnewTestLogger()
-	h := NewHandler(logger, false, BuildInfo{})
-
-	rr := httptest.NewRecorder()
-	h.Version(rr, httptest.NewRequest(http.MethodGet, "/version", nil))
-
-	require.Equal(t, http.StatusOK, rr.Code)
-	var body map[string]string
-	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
-	assert.Equal(t, "s3-encryption-proxy", body["service"])
-	assert.Empty(t, body["version"])
+	// Liveness on the same handler is unaffected by that state.
+	live := httptest.NewRecorder()
+	h.Live(live, httptest.NewRequest(http.MethodGet, "/livez", nil))
+	assert.Equal(t, http.StatusOK, live.Code)
 }
 
 func TestHlthRequestTrackerInvocation(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		invoke func(h *Handler, w http.ResponseWriter, r *http.Request)
-		path   string
-	}{
-		{
-			name:   "health",
-			invoke: func(h *Handler, w http.ResponseWriter, r *http.Request) { h.Health(w, r) },
-			path:   "/health",
-		},
-		{
-			name:   "version",
-			invoke: func(h *Handler, w http.ResponseWriter, r *http.Request) { h.Version(w, r) },
-			path:   "/version",
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, probe := range Hlthprobes {
+		t.Run(probe.name, func(t *testing.T) {
 			logger, _ := HlthnewTestLogger()
-			h := NewHandler(logger, false, BuildInfo{})
+			h := NewHandler(logger, false)
 
 			var events []string
 			h.SetRequestTracker(
@@ -282,7 +271,7 @@ func TestHlthRequestTrackerInvocation(t *testing.T) {
 			)
 
 			rr := &HlthrecordingWriter{ResponseRecorder: httptest.NewRecorder(), events: &events}
-			tc.invoke(h, rr, httptest.NewRequest(http.MethodGet, tc.path, nil))
+			probe.invoke(h, rr, httptest.NewRequest(http.MethodGet, probe.path, nil))
 
 			// The end tracker is deferred, so it must run after the body write.
 			assert.Equal(t, []string{"start", "write", "end"}, events)
@@ -292,30 +281,34 @@ func TestHlthRequestTrackerInvocation(t *testing.T) {
 }
 
 func TestHlthRequestTrackerIsBalancedAcrossRequests(t *testing.T) {
-	logger, _ := HlthnewTestLogger()
-	h := NewHandler(logger, false, BuildInfo{})
-	h.SetShutdownStateHandler(func() (bool, time.Time) { return true, time.Unix(0, 0).UTC() })
+	for _, probe := range Hlthprobes {
+		t.Run(probe.name, func(t *testing.T) {
+			logger, _ := HlthnewTestLogger()
+			h := NewHandler(logger, false)
+			// Draining: readiness takes its early return here, liveness does not.
+			h.SetShutdownStateHandler(func() (bool, time.Time) { return true, time.Unix(0, 0).UTC() })
 
-	active, maxActive := 0, 0
-	h.SetRequestTracker(
-		func() {
-			active++
-			if active > maxActive {
-				maxActive = active
+			active, maxActive := 0, 0
+			h.SetRequestTracker(
+				func() {
+					active++
+					if active > maxActive {
+						maxActive = active
+					}
+				},
+				func() { active-- },
+			)
+
+			for i := 0; i < 3; i++ {
+				rr := httptest.NewRecorder()
+				probe.invoke(h, rr, httptest.NewRequest(http.MethodGet, probe.path, nil))
 			}
-		},
-		func() { active-- },
-	)
 
-	for i := 0; i < 3; i++ {
-		rr := httptest.NewRecorder()
-		h.Health(rr, httptest.NewRequest(http.MethodGet, "/health", nil))
-		require.Equal(t, http.StatusServiceUnavailable, rr.Code)
+			// Even on the early-return shutdown path the counter is released.
+			assert.Equal(t, 0, active)
+			assert.Equal(t, 1, maxActive)
+		})
 	}
-
-	// Even on the early-return shutdown path the counter must be released.
-	assert.Equal(t, 0, active)
-	assert.Equal(t, 1, maxActive)
 }
 
 func TestHlthRequestTrackerPartiallyConfigured(t *testing.T) {
@@ -332,7 +325,7 @@ func TestHlthRequestTrackerPartiallyConfigured(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			logger, _ := HlthnewTestLogger()
-			h := NewHandler(logger, false, BuildInfo{})
+			h := NewHandler(logger, false)
 
 			started, ended := 0, 0
 			var onStart, onEnd func()
@@ -344,13 +337,13 @@ func TestHlthRequestTrackerPartiallyConfigured(t *testing.T) {
 			}
 			h.SetRequestTracker(onStart, onEnd)
 
-			healthRR := httptest.NewRecorder()
-			h.Health(healthRR, httptest.NewRequest(http.MethodGet, "/health", nil))
-			versionRR := httptest.NewRecorder()
-			h.Version(versionRR, httptest.NewRequest(http.MethodGet, "/version", nil))
+			liveRR := httptest.NewRecorder()
+			h.Live(liveRR, httptest.NewRequest(http.MethodGet, "/livez", nil))
+			readyRR := httptest.NewRecorder()
+			h.Ready(readyRR, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 
-			assert.Equal(t, http.StatusOK, healthRR.Code)
-			assert.Equal(t, http.StatusOK, versionRR.Code)
+			assert.Equal(t, http.StatusOK, liveRR.Code)
+			assert.Equal(t, http.StatusOK, readyRR.Code)
 			assert.Equal(t, tc.wantStart, started)
 			assert.Equal(t, tc.wantEnd, ended)
 		})
@@ -358,106 +351,76 @@ func TestHlthRequestTrackerPartiallyConfigured(t *testing.T) {
 }
 
 func TestHlthLogHealthRequests(t *testing.T) {
-	for _, tc := range []struct {
-		name        string
-		logRequests bool
-		invoke      func(h *Handler, w http.ResponseWriter, r *http.Request)
-		path        string
-		wantMessage string
-	}{
-		{
-			name:        "health logs when enabled",
-			logRequests: true,
-			invoke:      func(h *Handler, w http.ResponseWriter, r *http.Request) { h.Health(w, r) },
-			path:        "/health",
-			wantMessage: "Health check request",
-		},
-		{
-			name:        "version logs when enabled",
-			logRequests: true,
-			invoke:      func(h *Handler, w http.ResponseWriter, r *http.Request) { h.Version(w, r) },
-			path:        "/version",
-			wantMessage: "Version check request",
-		},
-		{
-			name:        "health silent when disabled",
-			logRequests: false,
-			invoke:      func(h *Handler, w http.ResponseWriter, r *http.Request) { h.Health(w, r) },
-			path:        "/health",
-		},
-		{
-			name:        "version silent when disabled",
-			logRequests: false,
-			invoke:      func(h *Handler, w http.ResponseWriter, r *http.Request) { h.Version(w, r) },
-			path:        "/version",
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			logger, hook := HlthnewTestLogger()
-			h := NewHandler(logger, tc.logRequests, BuildInfo{})
-
-			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
-			req.RemoteAddr = "203.0.113.7:54321"
-
-			rr := httptest.NewRecorder()
-			tc.invoke(h, rr, req)
-
-			assert.Equal(t, http.StatusOK, rr.Code)
-
-			if tc.wantMessage == "" {
-				assert.Empty(t, hook.AllEntries(), "no log entry expected when logging is disabled")
-				return
+	for _, probe := range Hlthprobes {
+		for _, logRequests := range []bool{true, false} {
+			name := probe.name + " silent when disabled"
+			if logRequests {
+				name = probe.name + " logs when enabled"
 			}
 
-			entries := hook.AllEntries()
-			require.Len(t, entries, 1)
-			entry := entries[0]
-			assert.Equal(t, logrus.DebugLevel, entry.Level)
-			assert.Equal(t, tc.wantMessage, entry.Message)
-			assert.Equal(t, http.MethodGet, entry.Data["method"])
-			assert.Equal(t, tc.path, entry.Data["path"])
-			assert.Equal(t, "203.0.113.7:54321", entry.Data["remote"])
-		})
+			t.Run(name, func(t *testing.T) {
+				logger, hook := HlthnewTestLogger()
+				h := NewHandler(logger, logRequests)
+
+				req := httptest.NewRequest(http.MethodGet, probe.path, nil)
+				req.RemoteAddr = "203.0.113.7:54321"
+
+				rr := httptest.NewRecorder()
+				probe.invoke(h, rr, req)
+
+				assert.Equal(t, http.StatusOK, rr.Code)
+
+				if !logRequests {
+					assert.Empty(t, hook.AllEntries(), "no log entry expected when logging is disabled")
+					return
+				}
+
+				entries := hook.AllEntries()
+				require.Len(t, entries, 1)
+				entry := entries[0]
+				assert.Equal(t, logrus.DebugLevel, entry.Level)
+				assert.Equal(t, probe.logged, entry.Message)
+				assert.Equal(t, http.MethodGet, entry.Data["method"])
+				assert.Equal(t, probe.path, entry.Data["path"])
+				assert.Equal(t, "203.0.113.7:54321", entry.Data["remote"])
+			})
+		}
 	}
 }
 
 func TestHlthResponseWriteFailureIsLogged(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		setup       func(h *Handler)
-		invoke      func(h *Handler, w http.ResponseWriter, r *http.Request)
-		path        string
-		wantCode    int
-		wantMessage string
+		name     string
+		setup    func(h *Handler)
+		invoke   func(h *Handler, w http.ResponseWriter, r *http.Request)
+		path     string
+		wantCode int
 	}{
 		{
-			name:        "healthy response write fails",
-			invoke:      func(h *Handler, w http.ResponseWriter, r *http.Request) { h.Health(w, r) },
-			path:        "/health",
-			wantCode:    http.StatusOK,
-			wantMessage: "Failed to write health response",
+			name:     "liveness response write fails",
+			invoke:   func(h *Handler, w http.ResponseWriter, r *http.Request) { h.Live(w, r) },
+			path:     "/livez",
+			wantCode: http.StatusOK,
+		},
+		{
+			name:     "readiness response write fails",
+			invoke:   func(h *Handler, w http.ResponseWriter, r *http.Request) { h.Ready(w, r) },
+			path:     "/readyz",
+			wantCode: http.StatusOK,
 		},
 		{
 			name: "shutdown response write fails",
 			setup: func(h *Handler) {
 				h.SetShutdownStateHandler(func() (bool, time.Time) { return true, time.Unix(0, 0).UTC() })
 			},
-			invoke:      func(h *Handler, w http.ResponseWriter, r *http.Request) { h.Health(w, r) },
-			path:        "/health",
-			wantCode:    http.StatusServiceUnavailable,
-			wantMessage: "Failed to write health response",
-		},
-		{
-			name:        "version response write fails",
-			invoke:      func(h *Handler, w http.ResponseWriter, r *http.Request) { h.Version(w, r) },
-			path:        "/version",
-			wantCode:    http.StatusOK,
-			wantMessage: "Failed to write version response",
+			invoke:   func(h *Handler, w http.ResponseWriter, r *http.Request) { h.Ready(w, r) },
+			path:     "/readyz",
+			wantCode: http.StatusServiceUnavailable,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			logger, hook := HlthnewTestLogger()
-			h := NewHandler(logger, false, BuildInfo{})
+			h := NewHandler(logger, false)
 			if tc.setup != nil {
 				tc.setup(h)
 			}
@@ -476,7 +439,7 @@ func TestHlthResponseWriteFailureIsLogged(t *testing.T) {
 			entries := hook.AllEntries()
 			require.Len(t, entries, 1)
 			assert.Equal(t, logrus.ErrorLevel, entries[0].Level)
-			assert.Equal(t, tc.wantMessage, entries[0].Message)
+			assert.Equal(t, "Failed to write probe response", entries[0].Message)
 			loggedErr, ok := entries[0].Data[logrus.ErrorKey].(error)
 			require.True(t, ok, "log entry must carry the write error")
 			assert.EqualError(t, loggedErr, "Hlth: simulated write failure")

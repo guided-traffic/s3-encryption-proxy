@@ -385,5 +385,6 @@ instead; the blanket form remains available as a decision of its own.
 * ADR 0011 — The proxy owns the part layout it writes, and refuses copies it cannot re-encrypt
 * ADR 0012 — Client-supplied checksums are verified against the plaintext and never forwarded
 * ADR 0013 — A configuration key exists only if code reads it, and an unworkable configuration refuses to start
-* [README.md](../../README.md) — S3 API behaviour worth knowing: the refusals, checksums, versioned buckets
+* [docs/operations/s3-api.md](../operations/s3-api.md) — the refusals, request ids, versioned buckets
+* [docs/operations/integrity.md](../operations/integrity.md) — the checksums and the entity tag
 * [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — threat model and trust boundaries

@@ -2,7 +2,7 @@
 
 > God node · 64 connections · `internal/proxy/handlers/bucket/test_helpers_test.go`
 
-**Community:** [Handler Test Helpers](Handler_Test_Helpers.md)
+**Community:** [MockS3Backend Object Operations](MockS3Backend_Object_Operations.md)
 
 ## Connections by Relation
 

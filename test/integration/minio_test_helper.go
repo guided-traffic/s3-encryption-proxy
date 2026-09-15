@@ -604,14 +604,14 @@ func CreateProxyClientWithEndpoint(endpoint string) (*s3.Client, error) {
 	return NewS3Client(endpoint, ProxyTestAccessKey, ProxyTestSecretKey)
 }
 
-// WaitForHealthCheck waits for the health endpoint to become available
+// WaitForHealthCheck waits for the proxy to answer its liveness probe (ADR 0034).
 func WaitForHealthCheck(t *testing.T, endpoint string) {
 	t.Helper()
 
 	ready := false
 	for i := 0; i < 30; i++ {
 		time.Sleep(100 * time.Millisecond)
-		resp, err := tlsHTTPClient().Get(endpoint + "/health")
+		resp, err := tlsHTTPClient().Get(endpoint + "/livez")
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == 200 {

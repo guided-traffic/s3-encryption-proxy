@@ -148,28 +148,36 @@ backend, which has no reserved object-key namespace to park it in.
 upload is bound to an instance only from the arrival of a held part, and only that
 upload. Every SDK uploader produces the short part *last*, so the window is the
 tail of the upload — the last part plus Complete — and everything before it stays
-freely servable by any instance.
+freely servable by any instance. **Round 2 corrects how narrow:** the short part is
+dispatched last but is the smallest, so it seals while the full-size parts of its
+concurrency batch are still uploading and Complete waits for all of them. The
+window is the slowest still-running part, not a round trip — and it is an hour when
+the client stalls after its 200.
 
-**6. Ungraceful failover is in scope (question 24, second half).** An upload whose
-instance is SIGKILLed is adoptable once the lease expires, not after the idle
-hour. The lease is **bounded from below by the Sentinel failover window, not by
-the duration of a part** — roughly 90 s — because a TTL inside the failover window
-would have a live owner's upload adopted while it is healthy.
+**6. Ungraceful failover was declared in scope (question 24, second half) — and
+[round 2](#refining-round-2-2026-09-15--the-idle-clock-landed-and-it-does-not-fit)
+withdrew it the same day.** As taken, the decision read: an upload whose instance
+is SIGKILLed is adoptable once the lease expires, not after the idle hour, with the
+lease bounded from below by the Sentinel failover window — roughly 90 s — because a
+TTL inside that window would have a live holder's upload adopted while it is
+healthy. Its justification was the throttled idle-clock touch, "one store write per
+second per part in flight, a 2600-fold reduction against a 64 KiB read loop at the
+measured 162.5 MiB/s", and that this is not the per-iteration progress deadline
+ADR 0015 rejected.
 
-That works because the heartbeat is [029](029-multipart-idle-clock.md)'s throttled
-touch: one store write per second per part in flight, which is a 2600-fold
-reduction against a 64 KiB read loop at the measured 162.5 MiB/s. It is also how a
-5 GiB part on a slow link survives, which is 029's own remaining fix. **It is not
-the per-iteration progress deadline ADR 0015 rejected** — once a second is not per
-iteration, so the objection recorded there does not reach this construction.
+**Both halves of the justification are wrong against the code that landed, and
+decision 5 forecloses the property the decision promises.** The decision stands
+withdrawn; what replaces it is question 34.
 
-**7. A defect found on the way out left in its own ticket:
-[041](041-the-liveness-probe-kills-the-drain.md).** `/health` serves both probes
-and reports the drain, so a terminating pod fails liveness by design and may be
-killed before `runShutdownTail` runs — which is where the sweep, and under this
-design the lease release, live. The chart also has no `preStop` hook, so the drain
-begins while the pod's endpoints are still propagating. Neither depends on
-anything here, and 041 is scheduled ahead of this ticket.
+**7. A defect found on the way out, since fixed.** One endpoint served both
+probes and reported the drain, so a terminating pod failed liveness by design and
+could be killed before the shutdown tail ran — which is where the sweep, and under
+this design the lease release, live. The chart had no `preStop` hook either, so
+the drain began while the pod's endpoints were still propagating. Both landed on
+2026-09-15 and neither depended on anything here. What this ticket inherits is the
+rule, [ADR 0034](../adr/0034-a-probe-reports-the-process-never-its-dependencies.md): the serving listener answers `/livez` and
+`/readyz`, a `preStop` hold runs before SIGTERM, and the grace period covers the
+hold plus the drain plus the sweep.
 
 ### The reference scenario
 
@@ -198,7 +206,9 @@ and where a **schema version in the row** earns its keep, because today the
 compatibility is an assumption with no mechanism behind it.
 
 **Phase 2 — an old pod is terminated.**
-1. SIGTERM. The drain begins; see 041 for what is wrong with this moment today.
+1. The `preStop` hold runs first, so the pod's endpoints are withdrawn before
+   anything stops accepting ([ADR 0034](../adr/0034-a-probe-reports-the-process-never-its-dependencies.md) D10). Then SIGTERM, and
+   the drain begins.
 2. The in-flight middle part finishes: sealed, stored, its row written, `200` to
    Velero. **That part is safe.**
 3. The other four in-flight parts have their connections closed, the SDK retries
@@ -235,10 +245,10 @@ between two instances* is for, and "which entity tag is live" becomes a decision
 of its own.
 
 **4. The peer leg needs its own listener, closed after the client-facing one.**
-This follows from decision 5 and from 041 together, and nothing else in this
-ticket would have found it. Once a `preStop` hook withdraws the endpoints before
-SIGTERM, a client's `Complete` no longer reaches the draining owner through the
-Service — it reaches another pod, which forwards it to the owner by pod address.
+This follows from decision 5 and from the `preStop` hold ([ADR 0034](../adr/0034-a-probe-reports-the-process-never-its-dependencies.md)
+D10) together, and nothing else in this ticket would have found it. The hook
+withdraws the endpoints before SIGTERM, so a client's `Complete` no longer reaches
+the draining owner through the Service — it reaches another pod, which forwards it to the owner by pod address.
 But `http.Server.Shutdown` refuses new connections from SIGTERM onward, so a
 freshly opened peer connection is rejected in exactly the phase the forward exists
 for. `runShutdownTail` already closes the client listener last, after the sweep;
@@ -278,8 +288,9 @@ question yet. They are recorded so the reasoning is not re-derived.
   internal producer need no coordination; a readiness gate on the store would make
   the majority of the traffic less available than the single instance it replaces.
   A store outage refuses multipart with `503 SlowDown` and leaves the pod Ready.
-  Written into [041](041-the-liveness-probe-kills-the-drain.md) as well, because
-  that is where the probes are built.
+  This is no longer this ticket's rule to make: it is [ADR 0034](../adr/0034-a-probe-reports-the-process-never-its-dependencies.md)
+  D5, decided and built on 2026-09-15, and it binds whatever this design puts
+  behind readiness.
 * **Sentinel's own failure modes need two answers the proxy can enforce.**
   Acknowledged rows can be lost on a failover, because replication is
   asynchronous — that is **fail-closed**, since `VerifyClientParts` demands an
@@ -298,7 +309,8 @@ question yet. They are recorded so the reasoning is not re-derived.
 
 ### Where the open questions stand after this round
 
-**Answered above:** 1, 2, 7, 8, 17, 24. Question 16 is answered in part — the
+**Answered above:** 1, 2, 7, 8, 17, 24 — but **17 and 24 were reopened by round 2**
+and continue as questions 34 and 35. Question 16 is answered in part — the
 store's key expiry deletes the row, but what *ends* an upload whose owner was
 SIGKILLed, and on whose clock, is still open.
 
@@ -321,19 +333,140 @@ after a duplicate part*.
 
 ### What this round changed outside the ticket
 
-* **[029](029-multipart-idle-clock.md) is no longer optional and is no longer
-  "not scheduled".** Its remaining fix — the `atomic.Int64` clock the part body
-  touches as bytes arrive — is the shape this design's lease heartbeat needs.
-  Landing it first hands this ticket a designed and tested heartbeat; landing this
-  first means 029's fix is designed twice. It was found moved into `archive/` in
-  the working tree with that fix unimplemented — `lastTouched` is still a
-  `time.Time` written under the session mutex, and `idleFor` still takes that mutex
-  to measure — and was moved back.
-* **[041](041-the-liveness-probe-kills-the-drain.md) is new and runs first.**
+* **The multipart idle clock was pulled ahead of this work, and has since landed**
+  (`fix: multipart clock`, released in 5.0.2). It was scheduled first because its
+  throttled `atomic.Int64` store looked like the shape this design's lease
+  heartbeat needs. Round 2 checked the landed code: it is not — see there.
+* **The probe split and the `preStop` hook were raised here and have since
+  landed** ([ADR 0034](../adr/0034-a-probe-reports-the-process-never-its-dependencies.md)).
 
 Raised 2026-09-14 by the owner: *several s3-proxy instances side by side share the
 workload and synchronise with each other so that they cooperate on multipart
 uploads too.* **Refined 2026-09-15 — see the round above. Not scheduled, no code written.**
+
+## Refining round 2, 2026-09-15 — the idle clock landed, and it does not fit
+
+The multipart idle-clock fix merged and shipped in 5.0.2. This round checked the
+landed code against what decision 6 assumed of it. The assumption did not survive.
+
+### What landed
+
+`lastTouched` is an `atomic.Int64` written outside the session mutex; the part
+body is wrapped on both upload paths so the clock moves with the bytes; every
+store is skipped while the last one is younger than the touch resolution. Three
+facts decide everything below.
+
+* **The throttle is 100 ms, not one second** — a tenth of the smallest idle
+  timeout the loader accepts, so the coarseness can never be what expires an
+  upload.
+* **The value is nanoseconds since this process started**, from one package
+  variable set at start. Deliberately not a wall instant: two wall samples can tie
+  or run backwards, which had made three sweeper tests intermittently red.
+* **It is an atomic store, never an I/O.** A touch costs a load and a branch on
+  the hottest path in the product.
+
+### What that does to decision 6
+
+**The rate is out by an order of magnitude, in the wrong direction.** Decision 6
+budgeted one store write per second per part in flight. At a 100 ms throttle, a
+store write behind each touch is ten per second per part; at three instances
+serving five concurrent parts each that is 150 writes per second of pure
+heartbeat, at a resolution nothing needs. The "2600-fold reduction" arithmetic was
+right for one second against 2600 reads per second at 162.5 MiB/s; against the
+landed throttle it is 260-fold.
+
+**The value cannot be a lease at all.** It is measured from *this* process's start
+and means nothing in another. Serialising it strips exactly the monotonic reading
+it was given for — which is the objection this ticket already records against
+wall-clock arithmetic between machines.
+
+**That is the good answer, not the bad one.** There are two clocks, not one, and
+they are different instruments with different owners:
+
+| Clock | Owner | Decides |
+|---|---|---|
+| the idle clock | the process, monotonic since start | abandonment (ADR 0028) — stays local, unchanged |
+| a lease TTL, if there is one | the store, server-side expiry | adoptability |
+
+A server-side expiry is compared against nothing the proxy holds, so a lease needs
+no agreement between instance clocks at all. ADR 0014's exposure — every instance
+validating against its own wall clock, NTP as a correctness dependency — does not
+reach it. What the landed work really hands this design is not a rate but a
+**pattern**: a throttled store outside the mutex that cannot deadlock inside a
+seal.
+
+### The contradiction between decisions 5 and 6
+
+Decision 5 keeps the held short part in the memory of the instance that received
+it. Phase 0 of the reference scenario states that before that part arrives **the
+upload has no owner**. So ownership begins and ends with those bytes.
+
+Decision 6 promises that an upload whose instance is SIGKILLed becomes adoptable
+once its lease expires. **That set is empty.** Before the held part there is no
+owner and nothing to adopt — every instance already serves every part. After it,
+the bytes are client plaintext in RAM, a SIGKILL destroys them, and the client
+never sends them again: it has been answered 200 and its next request is Complete.
+No survivor can finish that upload at any price.
+
+Decision 5 is precisely what forecloses ungraceful failover of a pinned upload —
+its rejection of "seal the held part under the object's data key and park it in
+the store" is what does it. Decision 6 was written as though it did not.
+
+What a lease can still buy here is **ending, not adoption**: its expiry turns
+"pinned" into "certainly dead", so the upload is aborted at the backend promptly
+instead of waiting out the idle hour. That is an answer to question 16. It is not
+an answer to question 24.
+
+### "Owner" is three words wearing one
+
+The holder of the held part is **the pod kube-proxy happened to route the last
+part to**. Not elected, not stable, not knowable in advance, non-existent until
+that moment, and brought into being only because S3 refuses a non-final part below
+5 MiB. The word "owner" makes an accident look like a role, and a role is
+something that can be leased, renewed and inherited — which is how decision 6 came
+to be phrased the way it was.
+
+The ticket uses "owner" for three unrelated things: the holder of the held part,
+the instance that runs the sweeper, and the holder of a lease. They have different
+lifetimes and different failure modes, and only the first is created by the data
+path. **The holder is a single address, not a tenancy**, and the rest of this
+ticket should say holder where it means holder.
+
+### How long the pin actually stands
+
+Corrected from decision 5's "the last part plus Complete".
+
+* **Normal:** the short part is dispatched last but is the smallest, so it seals
+  while the full-size parts of its concurrency batch are still uploading, and
+  Complete waits for every one of them. The window is the slowest still-running
+  part — tenths of a second at 5 MiB and the measured 162.5 MiB/s — and a retry of
+  any of those parts extends it by that part's full duration.
+* **Pathological:** a client that receives its 200 and then stalls or dies leaves
+  the pin standing until the idle sweeper fires — `multipart_session_idle_timeout`,
+  3600 s by default. That is the abandoned case, where no instance wants to
+  complete anything.
+
+So the exposure is milliseconds to seconds for uploads that are going to succeed,
+and an hour for uploads that are already lost. Both halves matter: the first makes
+question 34 decidable, the second says an address alone does not clean up.
+
+### The shape this suggests, not decided
+
+If the pin is an **address** rather than a lease, TCP is the liveness check: the
+row records where the held part lies, a Complete landing elsewhere is forwarded
+there, and a refused or unreachable connection means the bytes are gone, the
+upload is unfinishable, and it is ended at the backend with an honest answer. No
+TTL, no heartbeat, no renewal, no clock of any kind — questions 9's lease half and
+17 dissolve with it.
+
+**What is not free about it, and must be settled before any code:** a partition in
+which the holder is alive and merely unreachable from the forwarder has a healthy
+instance abort a live upload. The destructive primitive is already there — both
+sweeps issue a real `AbortMultipartUpload`, safe today only because the table is
+the process's own. "Unreachable" becoming a network-triggerable data loss is the
+class SECURITY_ARCHITECTURE.md §1.2 rule 2 refuses to leave to configuration. A
+compare-and-set on the row, where exactly one party may declare an upload over, is
+the guard; which party that is, is part of question 35.
 
 ## Second pass, 2026-09-14 — what the first pass got wrong
 
@@ -1100,11 +1233,6 @@ accepted ADR.
   failure", which is precisely the refusal this ticket lifts. Also: 040's
   fingerprint-seen counter is per process and resets per pod restart, so a fleet
   zero is never evidence of absence.
-* **[029](029-multipart-idle-clock.md)** — its remaining work is to move the idle
-  clock during a part, as an `atomic.Int64` stored at most once a second. **That
-  throttled store is the shape a lease heartbeat needs.** Landing 029 first hands
-  036 a designed, tested heartbeat; landing 036 first means 029's fix gets designed
-  twice. Neither ticket references the other.
 * **[017](017-filename-encryption.md) / ADR 0023** — the session carries the
   client's cleartext bucket and object key, and ADR 0023 D8 puts the name transform
   at exactly one boundary, below which everything is the stored name. A shared row
@@ -1189,8 +1317,9 @@ accepted ADR.
 
 ## Open questions
 
-All undecided. None is answered here. 1-6 are the original set, sharpened; 7
-onwards are new.
+All undecided. None is answered here. 1-6 are the original set, sharpened; 7-33
+came from the second pass and the first refining round; 34 and 35 from round 2,
+which reopened 17 and 24.
 
 1. **Where the shared state lives.** A shared database; a lock service such as
    etcd or Consul; the S3 backend itself; **or the Kubernetes API's
@@ -1273,7 +1402,9 @@ onwards are new.
     the record outlive it.
 17. **Is a lease renewed while a part body is in flight, or simply longer than the
     longest possible part?** Renewal needs the progress hook ADR 0015 explicitly
-    rejected; the alternative is a lease of hours.
+    rejected; the alternative is a lease of hours. **Reopened by round 2 and
+    superseded by question 35** — the landed idle clock is process-local and cannot
+    be a lease value, and if the pin is an address there is no lease to renew.
 18. **Is coordination-store reachability a readiness condition, and what does an
     instance do while the store is unreachable — for reads, for single-request PUTs,
     for multipart?** Reads and single PUTs need no coordination, so putting them
@@ -1307,6 +1438,8 @@ onwards are new.
     at all**, or only cooperation: must something automatically take over an upload
     whose instance was SIGKILLed, or is it only true that another instance *can*
     take it if asked? Open question 6 asks only about graceful shutdown.
+    **Reopened by round 2 and sharpened into question 34**: decision 5 makes
+    failover of a *pinned* upload impossible whatever the lease says.
 25. **Is a fleet single-cluster by definition?** It decides whether a per-part
     round trip is LAN or WAN, whether the licence's singular `k8s_cluster_id` still
     describes the deployment, and whether the chart is even the unit of
@@ -1343,6 +1476,21 @@ onwards are new.
 33. **Is a 6.0.0 bundle branch being opened, and does 036 gate it or ride it?**
     (ADR 0018 D7/D11.) Shared with [037](037-multiple-backends.md) and
     [038](038-s3-encryption-operator.md), which carry the same expired premise.
+34. **Is failover of a *pinned* upload — one whose holder already has the held
+    part in memory — explicitly out of scope?** Decision 5 makes it impossible, so
+    the only alternative is to reverse decision 5 and seal the held part into the
+    store, with a new AEAD construction, chunking against Valkey's
+    `client-output-buffer-limit replica`, and up to
+    `multipart_short_part_buffer_size` of client plaintext per upload at rest in a
+    component ADR 0001 never considered. Answering "out of scope" also answers
+    question 24's second half and leaves the exposure at the window measured in
+    round 2.
+35. **Is the pin an address or a lease?** An address makes TCP the liveness check
+    and deletes the TTL, the heartbeat, the renewal and every clock; a lease keeps
+    them and buys a bounded cleanup of the stalled-client hour an address does not
+    reach. The address form needs a compare-and-set naming exactly one party that
+    may declare an upload over, or a partition turns "unreachable" into
+    network-triggerable data loss. Depends on 34 and subsumes 17.
 
 ## What it must not break
 
@@ -1401,11 +1549,12 @@ Split by what each item depends on, so the cheap half is not hostage to the
 expensive half (open question 23 decides whether that split becomes two tickets).
 
 **The refining round of 2026-09-15 settled part of the second block** — questions
-1, 2, 7, 8, 17 and 24 are answered there and the boxes below that depend on them
-are answered with them. Two further items now live elsewhere:
-[041](041-the-liveness-probe-kills-the-drain.md) carries the probe split and the
-`preStop` hook, and [029](029-multipart-idle-clock.md) carries the throttled clock
-this design reuses as its lease heartbeat. Both run before any code here.
+1, 2, 7 and 8 are answered there and the boxes below that depend on them are
+answered with them; **17 and 24 were reopened by round 2** and continue as
+questions 34 and 35. One further item lived elsewhere and is done: the probe
+split and the `preStop` hook landed on 2026-09-15, and the rule they left behind
+is [ADR 0034](../adr/0034-a-probe-reports-the-process-never-its-dependencies.md). The idle-clock work this design looked to for a
+heartbeat has landed too and does not serve that purpose — see *Refining round 2*.
 
 **Needs no design decision — could ship in 5.x:**
 

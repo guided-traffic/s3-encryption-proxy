@@ -151,10 +151,13 @@ services:
       - s3-encryption-proxy
     networks:
       - s3-demo
+    # -O /dev/null, not --spider: --spider sends HEAD and the probe route is GET
+    # only, so a HEAD is an unsigned S3 request for a bucket named livez and is
+    # answered 403.
     command: >
       sh -c '
       while true; do
-        wget --quiet --tries=1 --spider http://s3-encryption-proxy:8080/health || exit 1
+        wget --quiet --tries=1 -O /dev/null http://s3-encryption-proxy:8080/livez || exit 1
         sleep 10
       done
       '

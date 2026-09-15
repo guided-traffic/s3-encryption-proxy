@@ -96,25 +96,53 @@ Pod labels
 {{- end }}
 
 {{/*
-Termination grace period, derived from the proxy's own shutdown budget
-(ADR 0015 D5). shutdown_timeout is the budget an in-flight transfer gets when
-the process is asked to stop; the platform must not kill the pod before it has
-expired, so the grace period is that value plus five seconds. An unset or zero
-shutdown_timeout means the proxy's own 30-second fallback.
+The preStop hold must be a real hold. A duration below one second is the opt-out
+this chart deliberately does not have (ADR 0034 D10): it renders everywhere,
+installs everywhere, and leaves the pod refusing connections the cluster is
+still sending it - the failure the hook exists to close, silently. An operator
+who wants a shorter hold has one second; one who wants none has to say so to
+someone, not to a values file.
+*/}}
+{{- define "s3-encryption-proxy.validatePreStop" -}}
+{{- if lt (int .Values.preStopSleepSeconds) 1 -}}
+{{- fail (printf "preStopSleepSeconds is %d and the hook has no off switch. It holds the pod while its EndpointSlice withdrawal reaches kube-proxy on every node; without that hold the listener stops accepting connections the cluster is still routing to it, and the client sees a connection error rather than a retryable answer (ADR 0034). Set preStopSleepSeconds to 1 or more - 5 is the default and is well above propagation in a small cluster." (int .Values.preStopSleepSeconds)) -}}
+{{- end -}}
+{{- end }}
 
-The value is read out of the rendered config rather than duplicated in a second
-values key: two numbers that have to agree drift, and the one that loses is the
-one nobody looks at. A config that does not parse is a render-time failure, not
-a pod that is killed mid-transfer.
+{{/*
+Termination grace period, derived as preStopSleepSeconds + shutdown_timeout + 5
+(ADR 0015 D5). The hook holds the pod while its endpoints are withdrawn,
+shutdown_timeout is the budget an in-flight transfer gets when the process is
+asked to stop, and the trailing five seconds cover the listener close and the
+process exit. An unset or zero shutdown_timeout means the proxy's own 30-second
+fallback.
+
+shutdown_timeout is read out of the rendered config rather than duplicated in a
+second values key: two numbers that have to agree drift, and the one that loses
+is the one nobody looks at. A config that does not parse is a render-time
+failure, not a pod that is killed mid-transfer.
+
+An override below the sum is the same failure and gets the same answer: it
+leaves the multipart sweep of ADR 0028 without a budget, and a SIGKILL there
+strands every open upload at the backend. An operator who wants less moves one
+of the two numbers that mean something; the sum is only their consequence.
 */}}
 {{- define "s3-encryption-proxy.terminationGracePeriodSeconds" -}}
-{{- if .Values.terminationGracePeriodSeconds -}}
-{{- .Values.terminationGracePeriodSeconds -}}
-{{- else -}}
 {{- $parsed := include "s3-encryption-proxy.parsedConfig" . | fromYaml -}}
 {{- $budget := int (default 30 (get $parsed "shutdown_timeout")) -}}
 {{- if lt $budget 1 -}}{{- $budget = 30 -}}{{- end -}}
-{{- add $budget 5 -}}
+{{- $preStop := int .Values.preStopSleepSeconds -}}
+{{- $sum := add $preStop $budget 5 -}}
+{{- /* Not a truthiness test: a numeric 0 is an override far below the sum and
+       has to be refused like any other, and Go templates read it as false. */}}
+{{- if not (empty (toString .Values.terminationGracePeriodSeconds)) -}}
+{{- $given := int .Values.terminationGracePeriodSeconds -}}
+{{- if lt $given $sum -}}
+{{- fail (printf "terminationGracePeriodSeconds is %d and the pod needs %d: preStopSleepSeconds %d + shutdown_timeout %d + 5 for the listener close and the process exit. A shorter grace period kills the process inside its own drain, so the multipart sweep never runs and every open upload is left at the backend (ADR 0028, ADR 0029). Set it to %d or more, or lower preStopSleepSeconds or shutdown_timeout." $given $sum $preStop $budget $sum) -}}
+{{- end -}}
+{{- $given -}}
+{{- else -}}
+{{- $sum -}}
 {{- end -}}
 {{- end }}
 
@@ -133,10 +161,10 @@ pod at runtime with none.
 {{- end }}
 
 {{/*
-The probe scheme, derived from the config the pod will actually receive. /health
-is served by the S3 listener, so it speaks TLS as soon as the config sets
-tls.enabled -- and a plaintext httpGet against a TLS listener gets a 400, so the
-pod never goes Ready and says nothing about why.
+The probe scheme, derived from the config the pod will actually receive. /livez
+and /readyz are served by the S3 listener, so they speak TLS as soon as the
+config sets tls.enabled -- and a plaintext httpGet against a TLS listener gets a
+400, so the pod never goes Ready and says nothing about why.
 
 Derived rather than given a values key of its own: two sources of truth for "is
 this listener TLS" is how the trap gets rebuilt. probes.scheme exists for the one

@@ -403,7 +403,7 @@ belongs to ADR 0014. Checksum verification buys most of the same practical benef
 - ADR 0018 — A major release is declared by a label, never discovered at merge
 - ADR 0019 — Integration and end-to-end tests are the product; they are never skipped
 - ADR 0020 — Performance is measured before and after, never asserted
-- [README.md](../../README.md) — user-facing reference; it gains the statement that every
-  declared checksum is verified, and the measured cost per algorithm, when the verification ships
+- [docs/operations/integrity.md](../operations/integrity.md) — every declared checksum is verified, and
+  the measured cost per algorithm
 - [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — the client leg, what is verified on
   it and what is not

@@ -2,6 +2,7 @@ package monitoring
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -57,23 +58,41 @@ func TestMonNewServerConfiguration(t *testing.T) {
 	assert.Equal(t, "monitoring-server", s.logger.Data["component"])
 }
 
-func TestMonServerHealthEndpoint(t *testing.T) {
+func TestMonServerLivenessEndpoint(t *testing.T) {
 	s := NewServer(&Config{BindAddress: "127.0.0.1:0", MetricsPath: "/metrics"})
 
-	rec := Monserve(t, s, http.MethodGet, "/health")
+	rec := Monserve(t, s, http.MethodGet, "/livez")
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, "OK", rec.Body.String())
 }
 
-func TestMonServerInfoEndpoint(t *testing.T) {
+func TestMonServerStatusEndpoint(t *testing.T) {
+	s := NewServer(&Config{BindAddress: "127.0.0.1:0", MetricsPath: "/metrics"})
+	SetServerInfo("mon-status-version", "mon-status-commit", "mon-status-build-time")
+
+	rec := Monserve(t, s, http.MethodGet, "/status")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+
+	var doc StatusDocument
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &doc))
+	assert.Equal(t, "s3-encryption-proxy", doc.Service)
+	assert.Equal(t, "mon-status-version", doc.Build.Version)
+	assert.NotEmpty(t, doc.Backend.Status)
+}
+
+// The two names this listener carried before are gone rather than aliased: a
+// route under a third meaning is the confusion the split removes (ADR 0034).
+func TestMonServerNoLongerServesHealthOrInfo(t *testing.T) {
 	s := NewServer(&Config{BindAddress: "127.0.0.1:0", MetricsPath: "/metrics"})
 
-	rec := Monserve(t, s, http.MethodGet, "/info")
-
-	assert.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
-	assert.JSONEq(t, `{"service":"s3-encryption-proxy","monitoring":"enabled"}`, rec.Body.String())
+	for _, target := range []string{"/health", "/info"} {
+		t.Run(target, func(t *testing.T) {
+			assert.Equal(t, http.StatusNotFound, Monserve(t, s, http.MethodGet, target).Code)
+		})
+	}
 }
 
 func TestMonServerMetricsEndpoint(t *testing.T) {
@@ -140,7 +159,7 @@ func TestMonServerStartServesAndShutsDownOnContextCancel(t *testing.T) {
 	}()
 
 	client := &http.Client{Timeout: 2 * time.Second}
-	url := "http://" + addr + "/health"
+	url := "http://" + addr + "/livez"
 
 	require.Eventually(t, func() bool {
 		resp, err := client.Get(url)
@@ -256,13 +275,13 @@ func TestMonServerEndpointsSurviveWriteFailures(t *testing.T) {
 		expectedHeader string
 	}{
 		{
-			name:           "health endpoint with a broken connection",
-			target:         "/health",
+			name:           "liveness endpoint with a broken connection",
+			target:         "/livez",
 			expectedStatus: http.StatusOK,
 		},
 		{
-			name:           "info endpoint with a broken connection",
-			target:         "/info",
+			name:           "status endpoint with a broken connection",
+			target:         "/status",
 			expectedStatus: http.StatusOK,
 			expectedHeader: "application/json",
 		},

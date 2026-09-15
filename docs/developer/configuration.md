@@ -49,7 +49,12 @@ has no viper default at all — its 30-second fallback lives in the two places i
 the binary that consume it, the shutdown path in `main.go` and
 `Server.shutdownBudget`, and again in the Helm chart, whose
 `terminationGracePeriodSeconds` helper derives the pod's grace period from the
-same key and falls back to 30 as well. `s3_backends[].region` has none either,
+same key — as `preStopSleepSeconds + shutdown_timeout + 5` — and falls back to 30
+as well. `preStopSleepSeconds` is the chart's alone and is deliberately not a
+configuration key: no Go code reads it, and the time an EndpointSlice withdrawal
+needs is a property of the cluster
+([ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md),
+[ADR 0034](../adr/0034-a-probe-reports-the-process-never-its-dependencies.md) D10). `s3_backends[].region` has none either,
 and cannot: viper defaults a key, not a list element, so `resolveBackends`
 applies `us-east-1` to an entry that names no region, after the unmarshal — and
 therefore after the `${VAR}` expansion, so a region written as a reference to an
@@ -168,7 +173,7 @@ security controls above.
 
 ## Related
 
-- [README: the container's own configuration](../../README.md#the-containers-own-configuration) — the operator-facing variable table
-- [README: complete configuration file structure](../../README.md#complete-configuration-file-structure) — every key and its default
+- [docs/operations/configuration.md](../operations/configuration.md#the-containers-own-configuration) — the operator-facing variable table, the `${VAR}` mechanism and the shipped examples
+- [README: the configuration key reference](../../README.md#configuration) — every key and its default
 - [ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md) — a key exists only if code reads it, and an unknown one refuses the start
 - [ADR 0021](../adr/0021-key-material-is-generated-never-committed.md) — key material is generated, never committed

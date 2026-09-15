@@ -77,10 +77,10 @@ func detectStack() StackInfo {
 	if !reachable(minioEndpoint + "/minio/health/live") {
 		missing = append(missing, "minio")
 	}
-	if !reachable(proxyHTTPEndpoint + "/health") {
+	if !reachable(proxyHTTPEndpoint + "/livez") {
 		missing = append(missing, "proxy(:8080)")
 	}
-	if !reachable(proxyTLSEndpoint + "/health") {
+	if !reachable(proxyTLSEndpoint + "/livez") {
 		missing = append(missing, "proxy-tls(:8443)")
 	}
 	if len(missing) > 0 {

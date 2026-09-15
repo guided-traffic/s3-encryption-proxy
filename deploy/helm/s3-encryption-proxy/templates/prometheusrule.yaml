@@ -1,0 +1,86 @@
+{{- if and .Values.monitoring.enabled .Values.monitoring.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "s3-encryption-proxy.fullname" . }}
+  {{- if .Values.monitoring.prometheusRule.namespace }}
+  namespace: {{ .Values.monitoring.prometheusRule.namespace }}
+  {{- end }}
+  labels:
+    {{- include "s3-encryption-proxy.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.monitoring.prometheusRule.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  groups:
+    - name: {{ include "s3-encryption-proxy.fullname" . }}
+      rules:
+        {{- /* Every rule here tells a human. Nothing in the platform acts on
+               any of them: a probe that read a dependency takes every instance
+               out at the same moment that dependency fails (ADR 0034 D5/D6). */}}
+        - alert: S3EPObjectIntegrityFailure
+          expr: increase(s3ep_object_integrity_failures_total[{{ .Values.monitoring.prometheusRule.integrity.window }}]) > 0
+          for: 0m
+          labels:
+            severity: critical
+          annotations:
+            summary: "An object failed its integrity check ({{ "{{" }} $labels.reason {{ "}}" }}, {{ "{{" }} $labels.phase {{ "}}" }})"
+            description: >-
+              This series is supposed to stay at zero: a read was refused or cut because the
+              stored object did not authenticate. phase=before_response is a refused read;
+              phase=mid_stream means the status line was already 200 and the response was cut,
+              so the request is counted as a success everywhere else. Either way the stored
+              bytes, the metadata or the key material are not what this proxy wrote.
+
+        - alert: S3EPBackendTransportFailing
+          {{- /* The share, not the count. The SDK retries, so an ordinary
+                 network produces some failures and a bare counter cannot be
+                 read; the denominator is what makes a threshold mean
+                 something (ADR 0034 D6). */}}
+          expr: >-
+            sum(rate(s3ep_backend_transport_failures_total[{{ .Values.monitoring.prometheusRule.backend.window }}]))
+            /
+            clamp_min(
+              sum(rate(s3ep_backend_transport_failures_total[{{ .Values.monitoring.prometheusRule.backend.window }}]))
+              + sum(rate(s3ep_backend_responses_total[{{ .Values.monitoring.prometheusRule.backend.window }}])),
+              0.001
+            )
+            > {{ .Values.monitoring.prometheusRule.backend.failureRatio }}
+          for: {{ .Values.monitoring.prometheusRule.backend.for }}
+          labels:
+            severity: warning
+          annotations:
+            summary: "More than {{ .Values.monitoring.prometheusRule.backend.failureRatio }} of backend round trips get no HTTP response"
+            description: >-
+              Round trips to the S3 backend are failing at the transport level - DNS, connect,
+              TLS or timeout. Any HTTP answer counts as reachability here, a 403 included, so
+              this is the network or the backend being gone, not a permission problem. The
+              proxy's log names the class, the host and the error for each one; /status on the
+              monitoring listener shows the last failure and its class.
+
+        - alert: S3EPLicenseExpiringSoon
+          expr: (s3ep_license_expiry_timestamp - time()) / 86400 < {{ .Values.monitoring.prometheusRule.license.warnDays }}
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "The license expires in less than {{ .Values.monitoring.prometheusRule.license.warnDays }} days"
+            description: >-
+              The proxy ends itself gracefully when the token expires, so this is a planned
+              outage with a date on it. Replace the token before then.
+
+        - alert: S3EPLicenseExpired
+          expr: s3ep_license_info == 0
+          for: 0m
+          labels:
+            severity: critical
+          annotations:
+            summary: "The license is not valid"
+            description: >-
+              The proxy admits only the exit provider without a valid license, and it shuts
+              down gracefully when a running token expires. Expect the instance to stop.
+{{- end }}

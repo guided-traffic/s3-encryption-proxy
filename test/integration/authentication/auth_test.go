@@ -156,14 +156,13 @@ func testRobustS3Authentication(t *testing.T) {
 
 // testEnterpriseSecurityConfiguration tests enterprise security features
 func testEnterpriseSecurityConfiguration(t *testing.T) {
-	t.Run("HealthEndpointAccessible", func(t *testing.T) {
-		// Health endpoint should be accessible without authentication
-		resp, err := TLSHTTPClient().Get(ProxyEndpoint + "/health")
+	t.Run("LivenessEndpointAccessible", func(t *testing.T) {
+		// The liveness probe answers ahead of authentication (ADR 0014 D11)
+		resp, err := TLSHTTPClient().Get(ProxyEndpoint + "/livez")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
-		t.Logf("Health endpoint accessible: %d", resp.StatusCode)
 	})
 
 	t.Run("S3EndpointProtected", func(t *testing.T) {
@@ -230,9 +229,9 @@ func testEnterpriseSecurityConfiguration(t *testing.T) {
 
 	t.Run("SecurityHeaders", func(t *testing.T) {
 		// The headers ride on the authentication refusal, which is the response
-		// the proxy writes itself. This used to read /health - a response that
-		// carries none of them - and log whatever it found, so it passed either
-		// way and named a header the proxy deliberately does not set.
+		// the proxy writes itself. This used to read a probe endpoint - a
+		// response that carries none of them - and log whatever it found, so it
+		// passed either way and named a header the proxy deliberately does not set.
 		resp, err := TLSHTTPClient().Get(ProxyEndpoint + "/")
 		require.NoError(t, err)
 		defer resp.Body.Close()

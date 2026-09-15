@@ -5,7 +5,7 @@ This Helm chart deploys the S3 Encryption Proxy to a Kubernetes cluster.
 The chart renders one Deployment, one Service, one ConfigMap, one Secret and one
 ServiceAccount, plus optional Ingress, cert-manager Certificates (one for the
 Ingress, one for the proxy's own Service), PodDisruptionBudget, monitoring
-Service, ServiceMonitor and Grafana dashboard ConfigMap. It renders no
+Service, ServiceMonitor, PrometheusRule and Grafana dashboard ConfigMap. It renders no
 NetworkPolicy: the network boundary belongs to the administrator (ADR 0030),
 and no HorizontalPodAutoscaler: **this chart installs one instance and refuses
 to render a second** (ADR 0033) — see
@@ -13,11 +13,20 @@ to render a second** (ADR 0033) — see
 
 ## Prerequisites
 
-- Kubernetes 1.23+ (the chart renders `policy/v1`)
-- Helm 3.2.0+
+- Kubernetes 1.34+, declared as `kubeVersion: ">=1.34.0-0"` in `Chart.yaml`.
+  The pod's `preStop` hook uses the native `sleep` action, which is stable from
+  1.34; an older cluster fails the install rather than running without the hook.
+  The `-0` suffix is what lets a distribution version such as `1.34.4-gke.1`
+  satisfy the requirement instead of being read as a prerelease.
+- Helm 3.2.0+. `helm install` and `helm upgrade` read the real cluster version,
+  so the `kubeVersion` floor above is checked against your cluster. A client-only
+  `helm template` has no cluster to ask and falls back to the version its own
+  binary was built against, which on an older Helm is below 1.34 and is refused —
+  pass `--kube-version 1.34.0` to render offline on any client.
 - cert-manager, only if `certificate.enabled` is set, or `serviceTLS.enabled`
   without `serviceTLS.existingSecret`
-- Prometheus Operator, only if `monitoring.serviceMonitor.enabled` is set
+- Prometheus Operator, only if `monitoring.serviceMonitor.enabled` or
+  `monitoring.prometheusRule.enabled` is set
 - **A license token.** Without one the proxy refuses to start with any provider
   type other than `exit` — see [The proxy needs three things](#the-proxy-needs-three-things-to-start).
 - **A 256-bit AES key** for the `aes` provider. The chart ships no key and no
@@ -230,15 +239,29 @@ emptyDir the chart always mounts at `/tmp`.
 | `resources.limits.memory` | Memory limit | `512Mi` |
 | `resources.requests.cpu` | CPU request | `250m` |
 | `resources.requests.memory` | Memory request | `256Mi` |
-| `livenessProbe` | Whole probe object, replaced as one | `GET /health` on port `http`, `initialDelaySeconds: 30`, `periodSeconds: 10`, `timeoutSeconds: 5`, `failureThreshold: 3` |
-| `readinessProbe` | Whole probe object, replaced as one | `GET /health` on port `http`, `initialDelaySeconds: 5`, `periodSeconds: 5`, `timeoutSeconds: 3`, `failureThreshold: 3` |
+| `livenessProbe` | Whole probe object, replaced as one | `GET /livez` on port `http`, `initialDelaySeconds: 2`, `periodSeconds: 5`, `timeoutSeconds: 5`, `failureThreshold: 3` |
+| `readinessProbe` | Whole probe object, replaced as one | `GET /readyz` on port `http`, `initialDelaySeconds: 5`, `periodSeconds: 5`, `timeoutSeconds: 3`, `failureThreshold: 3` |
 | `probes.scheme` | Override the probe scheme. Empty derives it from `tls.enabled` in `config` | `""` |
 
-`/health` is served by the same listener as the S3 API, so it speaks TLS as soon
-as `config` sets `tls.enabled` — and a plaintext probe against a TLS listener
-gets a 400, so the pod never becomes Ready and says nothing about why. The chart
-derives the scheme from the config the pod will actually receive rather than from
-a second value that can drift out of sync with it. Set `probes.scheme` only under
+The two probes answer two different questions
+([ADR 0034](../../../docs/adr/0034-a-probe-reports-the-process-never-its-dependencies.md)).
+`/livez` is a constant 200 and never reports the drain: the only reaction to a failing liveness
+probe is a restart, and a restart during a shutdown would skip the multipart
+sweep the process is in the middle of. `/readyz` answers 503 from the moment the
+drain starts, which takes the pod out of the Service while the listener stays up.
+Pointing both at one endpoint, which is what this chart did before the probes
+were split, kills a draining pod by design.
+
+There is no startup probe and `initialDelaySeconds` is 2 rather than 30: a
+constant-200 handler needs no warm-up, and the proxy's whole startup path is
+local, so there is no half-started window to cover. The effect is that a wedged
+process is noticed after about 17 s instead of 60 s.
+
+Both paths are served by the same listener as the S3 API, so they speak TLS as
+soon as `config` sets `tls.enabled` — and a plaintext probe against a TLS
+listener gets a 400, so the pod never becomes Ready and says nothing about why.
+The chart derives the scheme from the config the pod will actually receive rather
+than from a second value that can drift out of sync with it. Set `probes.scheme` only under
 `configMap.useExistingConfigMap: true`, where the chart cannot see the config.
 
 Memory is the limit to watch: a client-driven multipart upload holds a part that
@@ -310,6 +333,7 @@ render before it, and `false` renders nothing.
 | `podDisruptionBudget.enabled` | Enable PodDisruptionBudget. Over a single pod it cannot protect the service | `false` |
 | `podDisruptionBudget.maxUnavailable` | Maximum unavailable pods during voluntary disruptions | `1` |
 | `podDisruptionBudget.minAvailable` | Minimum available pods (alternative to `maxUnavailable`) | unset |
+| `preStopSleepSeconds` | Seconds the pod holds still before the proxy is sent SIGTERM, as a `lifecycle.preStop.sleep` hook | `5` |
 | `terminationGracePeriodSeconds` | Pod termination grace period | `""`, derived |
 
 Set either `minAvailable` or `maxUnavailable`, never both - the chart fails the
@@ -323,11 +347,32 @@ release exists. A single instance cannot be drained without downtime, which is
 why `values-production.yaml` ships `podDisruptionBudget.enabled: false` — an
 honest gap rather than a drain that never finishes.
 
-Left empty, `terminationGracePeriodSeconds` is `shutdown_timeout` from `config`
-plus five seconds ([ADR 0015](../../../docs/adr/0015-a-transfer-is-bounded-by-the-client-and-by-shutdown.md)):
-the platform must not kill the process before its own transfer budget has
-expired. An absent or zero `shutdown_timeout` means the proxy's 30-second
-fallback, so the derived value is 35. Set it only to override that.
+`preStopSleepSeconds` buys the pod's EndpointSlice withdrawal time to reach
+kube-proxy on every node. Without it the listener stops accepting in the same
+moment that propagation begins, and for its duration the pod refuses connections
+the cluster is still sending it. The hook has no opt-out — an opt-out is the
+broken drain running silently — but its duration is a values key, because the
+propagation time is a property of the cluster and not of the proxy. Five seconds
+is well over what a small cluster needs, and every second is paid per pod on
+every rollout. **A value below 1 fails the render**: a zero hold is the opt-out
+this chart does not have, wearing a values key — it installs everywhere and
+leaves the drain racing the withdrawal exactly as before the hook existed.
+
+Left empty, `terminationGracePeriodSeconds` is
+`preStopSleepSeconds` + `shutdown_timeout` from `config` + five seconds
+([ADR 0015](../../../docs/adr/0015-a-transfer-is-bounded-by-the-client-and-by-shutdown.md)):
+the hook, the proxy's own transfer budget, and the listener close with the
+process exit. An absent or zero `shutdown_timeout` means the proxy's 30-second
+fallback, so the derived value at the defaults is 40.
+
+**An explicit `terminationGracePeriodSeconds` below that sum fails the render**,
+naming all three numbers and the sum. It used to win outright, which left the
+multipart sweep
+([ADR 0028](../../../docs/adr/0028-an-abandoned-upload-is-ended-not-forgotten.md))
+without a budget and said nothing: the pod was SIGKILLed mid-drain and every open
+upload stayed at the backend. A shorter shutdown is had by lowering one of the two
+numbers that mean something; the sum is only their consequence. A value at or
+above the sum is honoured as before.
 
 ### Ingress Configuration
 
@@ -445,6 +490,15 @@ nothing to resolve to and the proxy refuses to start.
 | `monitoring.serviceMonitor.labels` | Extra ServiceMonitor labels | `{}` |
 | `monitoring.serviceMonitor.annotations` | ServiceMonitor annotations | `{}` |
 | `monitoring.serviceMonitor.path` | Metrics path override | `""` (falls back to `monitoring.metricsPath`) |
+| `monitoring.prometheusRule.enabled` | Render the alerting rules (with `monitoring.enabled`) | `false` |
+| `monitoring.prometheusRule.namespace` | PrometheusRule namespace | `""` (the release namespace) |
+| `monitoring.prometheusRule.labels` | Extra PrometheusRule labels, for your Prometheus' rule selector | `{}` |
+| `monitoring.prometheusRule.annotations` | PrometheusRule annotations | `{}` |
+| `monitoring.prometheusRule.integrity.window` | Window for the integrity-failure alert | `5m` |
+| `monitoring.prometheusRule.backend.window` | Rate window for the backend failure share | `5m` |
+| `monitoring.prometheusRule.backend.failureRatio` | Share of backend round trips with no HTTP response that fires the alert | `0.1` |
+| `monitoring.prometheusRule.backend.for` | How long that share must hold | `5m` |
+| `monitoring.prometheusRule.license.warnDays` | Days before expiry that the licence alert fires | `30` |
 | `monitoring.grafana.dashboard.enabled` | Render the dashboard ConfigMap | `false` |
 | `monitoring.grafana.dashboard.namespace` | Dashboard namespace | `""` (release namespace) |
 | `monitoring.grafana.dashboard.labels` | Dashboard discovery labels | `{grafana_dashboard: "1"}` |
@@ -456,10 +510,13 @@ renders on its own flag. The ServiceMonitor selects the monitoring Service by it
 `app.kubernetes.io/component: monitoring` label, so `monitoring.service.enabled`
 must be set as well or it matches nothing.
 
-The proxy exports six of its own metrics: `s3ep_requests_total`,
-`s3ep_request_duration_seconds`, `s3ep_active_connections`, `s3ep_server_info`,
-`s3ep_license_info` and `s3ep_license_expiry_timestamp`, plus the Go runtime and
-process collectors (`go_*`, `process_*`).
+The proxy exports thirteen of its own metrics — request rate and latency, active
+connections, build information, licence validity and expiry, object integrity
+failures, the backend observation (last response, last failure by class, whether
+anything was observed, and the two counters an alert reads) and the active
+encryption provider — plus the Go runtime and process collectors (`go_*`,
+`process_*`). The full table with labels is in the
+[docs/operations/monitoring.md](../../../docs/operations/monitoring.md#metrics).
 
 **The bundled dashboard draws all five of its panels** — request rate, request
 latency, active connections, licence status and days to expiry — and a unit test
@@ -471,11 +528,50 @@ broken. Days to expiry is computed in the query,
 be written once at startup and could never fall.
 `monitoring.grafana.dashboard.enabled` is `false` by default.
 
+### Alerting rules
+
+`monitoring.prometheusRule.enabled` renders a `PrometheusRule` with four alerts.
+**Every one of them tells a human, and nothing in the platform acts on any of
+them** — that boundary is the decision
+([ADR 0034](../../../docs/adr/0034-a-probe-reports-the-process-never-its-dependencies.md)
+D5, D6): a probe that read a dependency would take every instance out of rotation
+at the same moment that dependency failed.
+
+| Alert | Fires when | Severity |
+|---|---|---|
+| `S3EPObjectIntegrityFailure` | `s3ep_object_integrity_failures_total` moves at all. It is supposed to stay at zero: a read was refused or cut because the stored object did not authenticate | critical |
+| `S3EPBackendTransportFailing` | More than `backend.failureRatio` of backend round trips get no HTTP response for `backend.for` | warning |
+| `S3EPLicenseExpiringSoon` | Less than `license.warnDays` left on the token | warning |
+| `S3EPLicenseExpired` | `s3ep_license_info` is 0 | critical |
+
+**The backend alert reads a share, never a count.** The AWS SDK retries, so an
+ordinary network produces some transport failures and a bare counter cannot be
+read; `s3ep_backend_responses_total` is the denominator that makes a threshold
+mean something. Any HTTP answer counts as a response, a `403` included — the
+question is whether the backend answered, not whether it agreed — so this alert
+is about the network or the backend being gone, never about permissions.
+
+A unit test holds the rules to the same contract as the dashboard: it fails if an
+alert names a series no scrape exports, because an alert that cannot fire looks
+exactly like an alert with nothing to report, and unlike an empty dashboard panel
+nobody ever opens it.
+
+The rules are off by default: thresholds nobody tuned page somebody at three in
+the morning. Set your Prometheus' rule selector labels through
+`monitoring.prometheusRule.labels`.
+
 **The metrics listener has no authentication** — that is what makes an ordinary
-Prometheus scrape work — and it names no licensee, so what it exposes is request
-rate and latency by route template, build version and commit, active connections
-and the licence validity and expiry. Who may reach the port is the operator's to
-decide; the chart ships no NetworkPolicy for it.
+Prometheus scrape work — and it names no licensee. What it exposes is request
+rate and latency by route template, build version and commit, active connections,
+the licence validity and expiry, the backend observation, **and the active
+encryption provider**: `s3ep_encryption_provider_info` carries its alias, type and
+key fingerprint, and `/status` on the same port repeats them. The `type` is the
+field that matters — `exit` means this proxy is not encrypting and the backend
+holds plaintext — so an unauthenticated reader of this port learns whether the
+data behind the proxy is encrypted at rest. That is deliberate (ADR 0034 D8): an
+operator has to be able to see it, and the alternative was putting it on the S3
+listener where every client reaches it without a signature. Who may reach the
+port is the operator's to decide; the chart ships no NetworkPolicy for it.
 
 ### Values nothing reads
 
@@ -708,8 +804,11 @@ kubectl logs -l app.kubernetes.io/name=s3-encryption-proxy
 # the generated name is the one described under Known limitations)
 kubectl get configmap my-s3-proxy-s3-encryption-proxy-config -o jsonpath='{.data.config\.yaml}'
 
-# Render locally without installing
-helm template my-s3-proxy . --values values-production.yaml
+# Render locally without installing. --kube-version is not decoration: a
+# client-only render falls back to the version the Helm binary was built
+# against, and on an older client that is below the chart's 1.34 floor -- the
+# call is then refused by the version check rather than by anything in values.
+helm template my-s3-proxy . --values values-production.yaml --kube-version 1.34.0
 
 # Check certificate status (if enabled)
 kubectl describe certificate my-s3-proxy-s3-encryption-proxy-tls

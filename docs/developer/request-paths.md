@@ -15,12 +15,18 @@ request tracking, logging, CORS. The drain guard is first, so a request arriving
 during shutdown costs no signature check and is not counted as work the drain
 waits for ([ADR 0029](../adr/0029-the-shutdown-budget-finishes-work-and-sweeps-what-cannot-be-finished.md) D1);
 authentication is second, so nothing further runs for a request that will be
-refused and no handler ever runs unauthenticated. `/health` and `/version` sit on
+refused and no handler ever runs unauthenticated. `/livez` and `/readyz` sit on
 a subrouter registered ahead of the chain and are the only paths outside it — a
 readiness probe has to keep being answered while the drain guard refuses
 everything else. That subrouter matches a probe only: unsigned and with no query
-string. A signed `GET /health`, or one carrying listing parameters, is an S3
+string. A signed `GET /livez`, or one carrying listing parameters, is an S3
 request for a bucket of that name and falls through to the S3 routes.
+
+Those two are the whole unsigned surface of this listener, and both answer a
+constant document: `/livez` is always 200 and reports nothing, `/readyz` reports
+the drain and nothing else. Everything descriptive — the build, the active
+provider, what the backend last did, the licence — is `/status` on the monitoring
+listener ([ADR 0034](../adr/0034-a-probe-reports-the-process-never-its-dependencies.md)).
 
 **A bucket answers in both forms, `/{bucket}` and `/{bucket}/`.** Every bucket
 route is registered through one helper that adds both, because a route added on

@@ -266,7 +266,8 @@ unchanged.
 - ADR 0017 — Stored data compatibility is not owed; a major release may break the format
 - ADR 0019 — Integration and end-to-end tests are the product; they are never skipped
 - ADR 0020 — Performance is measured before and after, never asserted
-- [README.md](../../README.md) — the listing reference: reported sizes, forwarded parameters, the
-  `max-keys` rule, the mixed-bucket under-report, the entity-tag deviation
+- [docs/operations/s3-api.md](../operations/s3-api.md) — the listing reference: reported sizes, forwarded
+  parameters, the `max-keys` rule, the mixed-bucket under-report
+- [docs/operations/integrity.md](../operations/integrity.md) — the entity-tag deviation
 - [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — the hostile-backend model and why no
   checksum element is emitted

@@ -1,4 +1,4 @@
-.PHONY: helm-unittest-plugin build build-keygen build-all license-tool generate-license test test-unit test-unit-race test-integration test-integration-race test-integration-tls test-integration-all test-integration-performance test-conformance test-conformance-minio test-conformance-localstack test-conformance-parallel test-conformance-wasabi test-conformance-wasabi-seed perf-baseline perf-baseline-quick perf-baseline-offline perf-compare e2e-up e2e-down test-e2e-velero e2e-velero e2e-rclone-up e2e-rclone-down test-e2e-rclone e2e-rclone e2e-s3cmd-up e2e-s3cmd-down test-e2e-s3cmd e2e-s3cmd coverage test-unit-coverage coverage-integration-collect coverage-report clean run dev deps lint fmt security gosec vuln static quality all-checks helm-lint helm-test helm-install helm-dev helm-prod helm-monitoring run-monitoring test-monitoring
+.PHONY: helm-unittest-plugin build build-keygen build-all license-tool generate-license test test-unit test-unit-race test-integration test-integration-race test-integration-tls test-integration-all test-integration-performance test-integration-shutdown test-conformance test-conformance-minio test-conformance-localstack test-conformance-parallel test-conformance-wasabi test-conformance-wasabi-seed perf-baseline perf-baseline-quick perf-baseline-offline perf-compare e2e-up e2e-down test-e2e-velero e2e-velero e2e-rclone-up e2e-rclone-down test-e2e-rclone e2e-rclone e2e-s3cmd-up e2e-s3cmd-down test-e2e-s3cmd e2e-s3cmd coverage test-unit-coverage coverage-integration-collect coverage-report clean run dev deps lint fmt security gosec vuln static quality all-checks helm-lint helm-test helm-install helm-dev helm-prod helm-monitoring run-monitoring test-monitoring
 
 # Go toolchain. The Containerfile FROM line is the single source of truth for
 # the Go version in this repo (see CLAUDE.md, "Go toolchain version"); nothing
@@ -177,6 +177,15 @@ test-conformance-wasabi-seed:
 test-integration-performance:
 	@echo "Running performance integration tests in isolation..."
 	$(GOTEST) -v -tags=integration -count=1 -p 1 -timeout=60m ./test/integration/performance-test/...
+
+# The shutdown suite SIGTERMs the proxy container and asserts at the backend that
+# the multipart sweep ended what the process was holding (ADR 0028, ADR 0029).
+# It is out of INTEGRATION_PKGS for a stronger reason than performance-test is:
+# that one only competes for the backend, this one destroys the proxy every other
+# package is talking to. Needs the demo stack (./start-demo.sh) and puts it back.
+test-integration-shutdown:
+	@echo "Running the shutdown integration suite (it SIGTERMs the proxy container)..."
+	$(GOTEST) -v -tags=integration -count=1 -p 1 -timeout=10m ./test/integration/shutdown/...
 
 # --- Local performance baseline (ADR 0020 D17) ----------------------------
 # Deliberately local and referenced by no CI workflow: a baseline compares two
@@ -438,6 +447,7 @@ help:
 	@echo "  test-unit       - Run unit tests only"
 	@echo "  test-unit-race  - Unit tests under the race detector"
 	@echo "  test-integration - Run integration tests only"
+	@echo "  test-integration-shutdown - Shutdown suite; owns the demo stack (SIGTERMs the proxy)"
 	@echo "  coverage        - Generate test coverage report"
 	@echo "  lint            - Lint the code"
 	@echo "  fmt             - Format the code"
@@ -476,12 +486,18 @@ helm-unittest-plugin:
 # unrenderable for months because this target proved only that values.yaml works.
 # The Velero values are a real consumer of the chart and a drift there costs a
 # 45-minute e2e run to discover, so they render here too.
+# --kube-version is parsed out of the chart's own kubeVersion floor rather than
+# written here: a client-only render has no cluster to ask and falls back to the
+# version the helm binary was built against, so without it the target passes or
+# fails by who is running it.
+HELM_KUBE_VERSION := $(shell sed -n 's/^kubeVersion:.*>=\([0-9.]*\).*/\1/p' $(HELM_CHART_DIR)/Chart.yaml)
+
 helm-test: helm-lint helm-unittest-plugin
-	@echo "Testing Helm chart..."
-	helm template test-release $(HELM_CHART_DIR) > /dev/null
+	@echo "Testing Helm chart (kube-version $(HELM_KUBE_VERSION))..."
+	helm template test-release $(HELM_CHART_DIR) --kube-version $(HELM_KUBE_VERSION) > /dev/null
 	@for f in $(HELM_CHART_DIR)/values-*.yaml test/e2e/velero/values-proxy.yaml; do \
 		echo "  rendering $$f"; \
-		helm template test-release $(HELM_CHART_DIR) -f $$f > /dev/null || exit 1; \
+		helm template test-release $(HELM_CHART_DIR) --kube-version $(HELM_KUBE_VERSION) -f $$f > /dev/null || exit 1; \
 	done
 	helm unittest $(HELM_CHART_DIR)
 	@echo "Helm chart template test passed"
@@ -521,8 +537,8 @@ test-monitoring: build
 	./$(BUILD_DIR)/$(BINARY_NAME) --config config/aes-example.yaml & \
 	SERVER_PID=$$!; \
 	sleep 3; \
-	echo "Testing health endpoint..."; \
-	curl -f http://localhost:9090/health || (kill $$SERVER_PID; exit 1); \
+	echo "Testing liveness endpoint..."; \
+	curl -f http://localhost:9090/livez || (kill $$SERVER_PID; exit 1); \
 	echo "Testing metrics endpoint..."; \
 	curl -f http://localhost:9090/metrics > /dev/null || (kill $$SERVER_PID; exit 1); \
 	echo "Testing custom metrics..."; \

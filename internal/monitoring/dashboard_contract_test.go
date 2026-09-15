@@ -19,6 +19,12 @@ import (
 // that break too - a series renamed here leaves the dashboard behind.
 const monDashboardPath = "../../deploy/helm/s3-encryption-proxy/dashboards/s3ep-performance-dashboard.json"
 
+// The chart's alerting rules. They are a template, so this reads the source
+// rather than a render: a Helm action inside an expression would be a syntax
+// error at install time, which is late, and the series names are plain text
+// either way.
+const monPrometheusRulePath = "../../deploy/helm/s3-encryption-proxy/templates/prometheusrule.yaml"
+
 var monSeriesPattern = regexp.MustCompile(`\bs3ep_[a-z0-9_]+`)
 
 func TestMonDashboardQueriesOnlySeriesTheProxyExports(t *testing.T) {
@@ -62,6 +68,37 @@ func TestMonDashboardQueriesOnlySeriesTheProxyExports(t *testing.T) {
 		assert.Contains(t, monExportedSeries(t), name,
 			"%s queries %s, which no scrape exports", where, name)
 	}
+}
+
+// An alert querying a series nothing exports never fires, and looks exactly
+// like an alert that has nothing to report - the same break the dashboard had
+// for a release, with a worse consequence: a dashboard that draws nothing is
+// noticed by whoever opens it, an alert that cannot fire is noticed by nobody.
+func TestMonAlertRulesQueryOnlySeriesTheProxyExports(t *testing.T) {
+	raw, err := os.ReadFile(monPrometheusRulePath)
+	require.NoError(t, err, "the chart's alerting rules must be readable from here")
+
+	referenced := monSeriesPattern.FindAllString(string(raw), -1)
+	require.NotEmpty(t, referenced, "the rules must query something")
+
+	exported := monExportedSeries(t)
+	for _, name := range referenced {
+		assert.Contains(t, exported, name,
+			"an alert rule queries %s, which no scrape exports", name)
+	}
+}
+
+// Both halves of the backend failure ratio have to be there. A numerator with
+// no denominator is a count, and a count of retried-away failures is not a
+// signal (ADR 0034 D6).
+func TestMonAlertRulesReadTheBackendFailureShareNotItsCount(t *testing.T) {
+	raw, err := os.ReadFile(monPrometheusRulePath)
+	require.NoError(t, err)
+
+	rules := string(raw)
+	require.Contains(t, rules, "s3ep_backend_transport_failures_total")
+	assert.Contains(t, rules, "s3ep_backend_responses_total",
+		"the denominator is what makes the threshold mean something")
 }
 
 // A Grafana variable whose values come from a counter resolves to nothing until
@@ -127,6 +164,12 @@ func monExportedSeries(t *testing.T) []string {
 	RequestsTotal.WithLabelValues("GET", "/{bucket}/{key}", "200").Inc()
 	RequestDuration.WithLabelValues("GET", "/{bucket}/{key}").Observe(0.01)
 	ActiveConnections.Set(0)
+	// The vectors an alert rule names. A CounterVec exports no family at all
+	// until one of its children exists, so without these the rule contract test
+	// would fail on a metric that is declared and simply idle.
+	RecordObjectIntegrityFailure("authentication", IntegrityPhaseBeforeResponse)
+	BackendTransportFailures.WithLabelValues(backendFailureOther).Add(0)
+	BackendResponses.Add(0)
 
 	families, err := Gatherer().Gather()
 	require.NoError(t, err)

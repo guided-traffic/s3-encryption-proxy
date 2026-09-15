@@ -9,7 +9,6 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/health"
 	"math/big"
 	"net"
 	"net/http"
@@ -139,7 +138,7 @@ func TestServerTLSConfiguration(t *testing.T) {
 			}
 
 			// Create server
-			server, err := NewServer(cfg, health.BuildInfo{})
+			server, err := NewServer(cfg)
 			require.NoError(t, err)
 
 			// Start server in background
@@ -186,8 +185,8 @@ func TestServerTLSConfiguration(t *testing.T) {
 				client.Transport = tr
 			}
 
-			// Make request to health endpoint
-			url := fmt.Sprintf("%s://%s/health", protocol, listener)
+			// Make request to the liveness probe
+			url := fmt.Sprintf("%s://%s/livez", protocol, listener)
 			resp, err := client.Get(url)
 
 			if tt.expectHTTPS {
@@ -249,7 +248,7 @@ func TestServerTLSInvalidCertificates(t *testing.T) {
 	}
 
 	// Create server (this should succeed as validation happens during config loading)
-	server, err := NewServer(cfg, health.BuildInfo{})
+	server, err := NewServer(cfg)
 	require.NoError(t, err)
 
 	// Start server - this should fail due to missing certificate files
@@ -293,7 +292,7 @@ func TestServerTLSGracefulShutdown(t *testing.T) {
 	}
 
 	// Create server
-	server, err := NewServer(cfg, health.BuildInfo{})
+	server, err := NewServer(cfg)
 	require.NoError(t, err)
 
 	// Start server in background
@@ -351,7 +350,7 @@ func TestTLSConfigurationLogging(t *testing.T) {
 	}
 
 	// Create server
-	server, err := NewServer(cfg, health.BuildInfo{})
+	server, err := NewServer(cfg)
 	require.NoError(t, err)
 
 	// Verify that the TLS configuration is properly set

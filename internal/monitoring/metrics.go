@@ -142,6 +142,65 @@ var (
 		},
 		[]string{"reason", "phase"},
 	)
+
+	// What the real traffic showed about the backend. Nothing here probes on
+	// its own, and no automatic actor may act on it (ADR 0034). The gauges are
+	// the same measurement the status document renders for a human; the two
+	// counters below are what an alert is written against, because a document
+	// and a last-seen timestamp cannot express a rate.
+	BackendLastResponseTimestamp = factory.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "s3ep_backend_last_response_timestamp",
+			Help: "Unix time of the last HTTP response from the backend, 0 when there has been none",
+		},
+	)
+
+	BackendLastFailureTimestamp = factory.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "s3ep_backend_last_failure_timestamp",
+			Help: "Unix time of the last backend transport failure, by class",
+		},
+		[]string{"class"},
+	)
+
+	BackendObserved = factory.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "s3ep_backend_observed",
+			Help: "1 once any backend round trip has been observed since start",
+		},
+	)
+
+	// The class label is bounded to the five classes the observer resolves. No
+	// host label: exactly one backend is configured, so it would be a constant.
+	BackendTransportFailures = factory.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3ep_backend_transport_failures_total",
+			Help: "Backend round trips that never produced an HTTP response, by failure class",
+		},
+		[]string{"class"},
+	)
+
+	// The denominator. The SDK retries, so a handful of failures an hour is
+	// normal and a bare failure count cannot be read; what an operator alerts on
+	// is the share of round trips that failed. s3ep_requests_total is the client
+	// leg and cannot serve as this.
+	BackendResponses = factory.NewCounter(
+		prometheus.CounterOpts{
+			Name: "s3ep_backend_responses_total",
+			Help: "Backend round trips that produced an HTTP response, any status code",
+		},
+	)
+
+	// The fingerprint is a label because an operator has to be able to see
+	// which key the objects being written name, and an exit provider means the
+	// backend holds plaintext (ADR 0025).
+	EncryptionProviderInfo = factory.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "s3ep_encryption_provider_info",
+			Help: "The active KEK provider (always 1)",
+		},
+		[]string{"alias", "type", "kek_fingerprint"},
+	)
 )
 
 // The phases an integrity failure can be found in.
@@ -163,6 +222,7 @@ func RecordObjectIntegrityFailure(reason, phase string) {
 // SetServerInfo sets server build information
 func SetServerInfo(version, commit, buildTime string) {
 	ServerInfo.WithLabelValues(version, commit, buildTime).Set(1)
+	setStatusBuild(version, commit, buildTime)
 }
 
 // SetLicenseInfo sets license information. It is called once, at startup, which
@@ -178,4 +238,5 @@ func SetLicenseInfo(expiresAt string, valid bool, expiryTimestamp float64) {
 	}
 	LicenseInfo.WithLabelValues(expiresAt).Set(value)
 	LicenseExpiryTime.Set(expiryTimestamp)
+	setStatusLicense(expiresAt, valid, expiryTimestamp)
 }

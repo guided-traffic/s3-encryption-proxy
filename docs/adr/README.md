@@ -104,6 +104,7 @@ this column is a reading aid.
 | [0030](0030-the-network-boundary-belongs-to-the-administrator.md) | The network boundary is the administrator's: the chart ships no network policy, the unauthenticated monitoring listener is fenced by the cluster or not at all, and the scrape names no licensee | Implemented |
 | [0031](0031-a-test-states-the-target-and-stays-red-until-the-product-meets-it.md) | A test states the behaviour the product is supposed to have, is committed red until the product meets it, and never encodes the current answer as the expectation — while a behaviour an ADR decides is itself the target | Implemented, except D7 and D9 outside the two client suites: the twenty-seven tests the sweep rewrote carry their citation in a comment, not in the failure |
 | [0032](0032-the-entity-tag-is-a-change-token-never-a-content-digest.md) | The entity tag is a change token and never a content digest: under an encrypting provider a thirty-two-hex tag is answered with a `-0` suffix, at object and part level, inverted on every tag a client sends back | Implemented |
+| [0034](0034-a-probe-reports-the-process-never-its-dependencies.md) | A probe reports the process and never its dependencies: liveness is a constant success, readiness is a lifecycle signal the drain makes false, dependency health is reported on the monitoring listener and acted on by nobody, and the platform holds the pod while its endpoints are withdrawn | Implemented |
 
 ### Process
 
@@ -118,10 +119,12 @@ this column is a reading aid.
 | [0027](0027-conformance-is-asserted-against-a-backend-that-is-not-minio.md) | One backend-agnostic conformance suite runs free against the local stack and on a schedule against a paid backend; the corpus is seeded once and a byte budget is enforced in code | Implemented |
 | [0028](0028-an-abandoned-upload-is-ended-not-forgotten.md) | A client-driven multipart upload expires on inactivity, not on age, and the sweeper aborts it at the backend before it forgets it | Implemented |
 | [0029](0029-the-shutdown-budget-finishes-work-and-sweeps-what-cannot-be-finished.md) | Graceful shutdown goes readiness-false, stop accepting, finish what is running, then end every upload that can no longer be finished | Implemented |
+| [0035](0035-the-readme-advertises-the-reference-lives-under-docs.md) | The README advertises the product and carries the configuration key reference; operator and client reference lives under `docs/operations/`, and the security design is not decomposed | Implemented |
 
 ## Related documents
 
-* [README.md](../../README.md) — user-facing reference
+* [README.md](../../README.md) — the product's front page and the configuration key reference
+* [docs/operations/README.md](../operations/README.md) — what an operator or a client needs: configuration, deployment, S3 API behaviour, integrity, monitoring, upgrading, per-client notes
 * [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — threat model, trust boundaries and the hardening checklist
 * [docs/developer/README.md](../developer/README.md) — how the subsystems work; the home for everything an ADR may not name
 * [CLAUDE.md](../../CLAUDE.md) — project conventions, the ticket lifecycle and the ADR obligation

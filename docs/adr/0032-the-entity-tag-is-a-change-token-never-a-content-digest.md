@@ -219,4 +219,5 @@ or collided by a client, and D1 is what makes keeping that property free.
 - ADR 0012 — Client-supplied checksums are verified against the plaintext and never forwarded
 - ADR 0017 — Stored data compatibility is not owed, and how a format break is run
 - ADR 0025 — Leaving is a supported mode: the exit provider changes no value it did not write
-- [README.md](../../README.md) — S3 API behaviour worth knowing
+- [docs/operations/integrity.md](../operations/integrity.md) — the entity tag as a client meets it
+- [docs/operations/clients/rclone.md](../operations/clients/rclone.md) — the one client option this costs

@@ -18,7 +18,7 @@ func WithClientIdentity(r *http.Request, accessKeyID string) *http.Request {
 }
 
 // ClientIdentity returns the access key id that authenticated the request, or
-// the empty string on an unauthenticated path such as /health.
+// the empty string on an unauthenticated path such as /livez.
 func ClientIdentity(ctx context.Context) string {
 	id, _ := ctx.Value(clientIdentityKey{}).(string)
 	return id
