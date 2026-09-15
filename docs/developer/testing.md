@@ -217,8 +217,15 @@ Under `test/integration/<package>/`.
 | `encryption-modes` | The `aes` and `exit` providers, each against a proxy the test starts in process |
 | `authentication` | Header SigV4: credentials, malformed and oversized headers, clock skew |
 | `performance-test` | Proxy against MinIO throughput. `make test-integration-performance`, on its own, because the others would compete for the backend |
+| `shutdown` | One test, and the only one that proves the shutdown end to end: it opens a multipart upload through the proxy, `SIGTERM`s the proxy *container*, and asserts at MinIO directly that the sweep ended the upload ([ADR 0028](../adr/0028-an-abandoned-upload-is-ended-not-forgotten.md), [ADR 0029](../adr/0029-the-shutdown-budget-finishes-work-and-sweeps-what-cannot-be-finished.md)). `make test-integration-shutdown`, on its own for a stronger reason than `performance-test`: that one competes for the backend, this one destroys the proxy every other package is talking to. It restarts the container in `t.Cleanup`, so a failed or panicking run still leaves the stack usable |
 
-`conformance` is the seventh directory under the same path and is deliberately
+The five unit tests beside `runShutdownTail` fix the *order* of the shutdown and
+its budget arithmetic; what they cannot show is a real process under a real
+signal, which is the whole point of the `shutdown` package. After changing proxy
+code, `./start-demo.sh rebuild` before running it — every container suite talks
+to a built image, never to your working tree.
+
+`conformance` is the eighth directory under the same path and is deliberately
 not one of these: it carries the `conformance` tag, is driven by
 `scripts/conformance-run.sh`, and is outside the Makefile's `INTEGRATION_PKGS`,
 so neither `make test-integration` nor the TLS run touches it — see *The

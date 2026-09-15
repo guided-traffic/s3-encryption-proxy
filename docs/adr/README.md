@@ -104,6 +104,7 @@ this column is a reading aid.
 | [0030](0030-the-network-boundary-belongs-to-the-administrator.md) | The network boundary is the administrator's: the chart ships no network policy, the unauthenticated monitoring listener is fenced by the cluster or not at all, and the scrape names no licensee | Implemented |
 | [0031](0031-a-test-states-the-target-and-stays-red-until-the-product-meets-it.md) | A test states the behaviour the product is supposed to have, is committed red until the product meets it, and never encodes the current answer as the expectation — while a behaviour an ADR decides is itself the target | Implemented, except D7 and D9 outside the two client suites: the twenty-seven tests the sweep rewrote carry their citation in a comment, not in the failure |
 | [0032](0032-the-entity-tag-is-a-change-token-never-a-content-digest.md) | The entity tag is a change token and never a content digest: under an encrypting provider a thirty-two-hex tag is answered with a `-0` suffix, at object and part level, inverted on every tag a client sends back | Implemented |
+| [0034](0034-a-probe-reports-the-process-never-its-dependencies.md) | A probe reports the process and never its dependencies: liveness is a constant success, readiness is a lifecycle signal the drain makes false, dependency health is reported on the monitoring listener and acted on by nobody, and the platform holds the pod while its endpoints are withdrawn | Implemented |
 
 ### Process
 

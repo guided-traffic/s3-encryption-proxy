@@ -223,10 +223,10 @@ YAML
 PROXY_PID=$!
 
 for _ in $(seq 1 30); do
-  curl -fsS "$S3EP_CONFORMANCE_PROXY_ENDPOINT/health" >/dev/null 2>&1 && break
+  curl -fsS "$S3EP_CONFORMANCE_PROXY_ENDPOINT/livez" >/dev/null 2>&1 && break
   sleep 1
 done
-if ! curl -fsS "$S3EP_CONFORMANCE_PROXY_ENDPOINT/health" >/dev/null 2>&1; then
+if ! curl -fsS "$S3EP_CONFORMANCE_PROXY_ENDPOINT/livez" >/dev/null 2>&1; then
   echo "error: the proxy did not become healthy" >&2
   cat "$WORK_DIR/proxy.log" >&2
   exit 1

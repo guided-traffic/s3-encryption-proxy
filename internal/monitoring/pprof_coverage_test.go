@@ -46,7 +46,7 @@ func TestPprofServerServesOnlyProfiling(t *testing.T) {
 		})
 	}
 
-	for _, target := range []string{"/metrics", "/health", "/info"} {
+	for _, target := range []string{"/metrics", "/livez", "/status"} {
 		t.Run("does not serve "+target, func(t *testing.T) {
 			assert.Equal(t, http.StatusNotFound,
 				Monserve(t, &Server{httpServer: s.httpServer}, http.MethodGet, target).Code,

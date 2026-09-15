@@ -2,6 +2,7 @@ package monitoring
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -34,22 +35,23 @@ func NewServer(cfg *Config) *Server {
 	// registered there any more.
 	mux.Handle(cfg.MetricsPath, promhttp.HandlerFor(Gatherer(), promhttp.HandlerOpts{}))
 
-	// Health check endpoint for monitoring
-	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+	// Liveness, the same constant 200 the serving listener answers: the only
+	// reaction to a failing liveness probe is a restart, and no precondition
+	// outside this process is repaired by one (ADR 0034).
+	mux.HandleFunc("/livez", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		if _, err := w.Write([]byte("OK")); err != nil {
-			// Log error but don't fail the health check
-			_ = err // Error is already handled by the write operation itself
-		}
+		_, _ = w.Write([]byte("OK"))
 	})
 
-	// Server info endpoint
-	mux.HandleFunc("/info", func(w http.ResponseWriter, _ *http.Request) {
+	// The one descriptive document, and nothing automatic acts on it. It sits
+	// on this listener rather than the S3 one because it names the active
+	// provider, which an unauthenticated client must not be able to read
+	// (ADR 0030, ADR 0034).
+	mux.HandleFunc("/status", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		if _, err := w.Write([]byte(`{"service":"s3-encryption-proxy","monitoring":"enabled"}`)); err != nil {
-			// Log error but don't fail the info endpoint
-			_ = err // Error is already handled by the write operation itself
+		if err := json.NewEncoder(w).Encode(StatusSnapshot()); err != nil {
+			logger.WithError(err).Debug("Status document not delivered")
 		}
 	})
 

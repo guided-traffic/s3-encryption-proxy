@@ -176,6 +176,57 @@ tests:
           path: spec.template.spec.containers[0].readinessProbe.httpGet.scheme
           value: HTTPS
 
+  # Liveness and readiness are separate endpoints on purpose (ADR 0034): one
+  # constant 200 that never reports the drain, one that does. Pointing both at
+  # the same path is the defect this pins against.
+  - it: probes liveness on /livez
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.path
+          value: /livez
+
+  - it: probes readiness on /readyz
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /readyz
+
+  # A constant-200 handler needs no warm-up, so there is no startup probe and no
+  # blind window: 2 + 3 * 5 notices a wedged process in about 17s.
+  - it: gives the liveness probe no warm-up window
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.initialDelaySeconds
+          value: 2
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.periodSeconds
+          value: 5
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.failureThreshold
+          value: 3
+
+  # Without the hook the listener stops accepting in the same moment the
+  # EndpointSlice update starts propagating, and the cluster keeps sending
+  # connections to a pod that refuses them. It has no opt-out.
+  - it: holds the pod with a preStop sleep while its endpoints go away
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].lifecycle.preStop.sleep.seconds
+          value: 5
+
+  - it: follows preStopSleepSeconds into the hook
+    template: deployment.yaml
+    set:
+      preStopSleepSeconds: 12
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].lifecycle.preStop.sleep.seconds
+          value: 12
+
   - it: lets probes.scheme override the derivation
     template: deployment.yaml
     set:
@@ -211,6 +262,15 @@ tests:
       - notExists:
           path: spec.ports[0].nodePort
 
+  # preStop + shutdown_timeout + 5: the hook, the transfer budget, and the
+  # listener close with the process exit.
+  - it: derives the termination grace period at the defaults
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 40
+
   - it: derives the termination grace period from shutdown_timeout
     template: deployment.yaml
     set:
@@ -220,7 +280,35 @@ tests:
     asserts:
       - equal:
           path: spec.template.spec.terminationGracePeriodSeconds
-          value: 125
+          value: 130
+
+  - it: derives the termination grace period from preStopSleepSeconds
+    template: deployment.yaml
+    set:
+      preStopSleepSeconds: 20
+    asserts:
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 55
+
+  - it: honours an explicit grace period above the sum
+    template: deployment.yaml
+    set:
+      terminationGracePeriodSeconds: 90
+    asserts:
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 90
+
+  # An override below the sum used to win outright, which left the multipart
+  # sweep of ADR 0028 without a budget and said nothing.
+  - it: refuses a grace period that undercuts the drain
+    template: deployment.yaml
+    set:
+      terminationGracePeriodSeconds: 20
+    asserts:
+      - failedTemplate:
+          errorMessage: "terminationGracePeriodSeconds is 20 and the pod needs 40: preStopSleepSeconds 5 + shutdown_timeout 30 + 5 for the listener close and the process exit. A shorter grace period kills the process inside its own drain, so the multipart sweep never runs and every open upload is left at the backend (ADR 0028, ADR 0029). Set it to 40 or more, or lower preStopSleepSeconds or shutdown_timeout."
 
   # A client-driven multipart upload lives in the process that created it, and
   # nothing here makes a client stick to one pod. A second replica therefore does
@@ -391,6 +479,47 @@ tests:
             - RELEASE-NAME-s3-encryption-proxy.NAMESPACE.svc
             - RELEASE-NAME-s3-encryption-proxy.NAMESPACE.svc.cluster.example
             - s3.internal.example
+
+  # Go templates read a numeric 0 as false, so the override branch used to skip
+  # it and derive the sum instead -- silently accepting the smallest override
+  # there is. ADR 0034 D11 says an override below the sum fails the render, and
+  # 0 is below every sum.
+  - it: refuses a grace period of zero rather than silently deriving one
+    template: deployment.yaml
+    set:
+      terminationGracePeriodSeconds: 0
+    asserts:
+      - failedTemplate:
+          errorMessage: "terminationGracePeriodSeconds is 0 and the pod needs 40: preStopSleepSeconds 5 + shutdown_timeout 30 + 5 for the listener close and the process exit. A shorter grace period kills the process inside its own drain, so the multipart sweep never runs and every open upload is left at the backend (ADR 0028, ADR 0029). Set it to 40 or more, or lower preStopSleepSeconds or shutdown_timeout."
+
+  # An empty string is "not set" and must still derive, or the default values
+  # file stops rendering.
+  - it: derives the grace period when the override is an empty string
+    template: deployment.yaml
+    set:
+      terminationGracePeriodSeconds: ""
+    asserts:
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 40
+
+  # A zero hold is the opt-out this chart does not have, wearing a values key
+  # (ADR 0034 D10): it renders, installs, and leaves the drain racing the
+  # EndpointSlice withdrawal exactly as before the hook existed.
+  - it: refuses a preStop hold of zero
+    template: deployment.yaml
+    set:
+      preStopSleepSeconds: 0
+    asserts:
+      - failedTemplate:
+          errorMessage: "preStopSleepSeconds is 0 and the hook has no off switch. It holds the pod while its EndpointSlice withdrawal reaches kube-proxy on every node; without that hold the listener stops accepting connections the cluster is still routing to it, and the client sees a connection error rather than a retryable answer (ADR 0034). Set preStopSleepSeconds to 1 or more - 5 is the default and is well above propagation in a small cluster."
+
+  - it: refuses a negative preStop hold
+    template: deployment.yaml
+    set:
+      preStopSleepSeconds: -1
+    asserts:
+      - failedTemplate: {}
 
   - it: refuses service TLS with no way to get a certificate
     template: deployment.yaml

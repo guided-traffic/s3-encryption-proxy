@@ -5,9 +5,15 @@
 **Accepted.** Date: 2026-09-07.
 
 Implemented today: both SigV4 forms, static client credentials with their length minimums,
-constant-time signature comparison, a fixed failure message per error code, unauthenticated
-`/health` and `/version`, an unauthenticated monitoring listener, and profiling endpoints on
-their own loopback listener that refuses a non-loopback address at startup.
+constant-time signature comparison, a fixed failure message per error code, two unauthenticated
+probe paths, an unauthenticated monitoring listener, and profiling endpoints on their own loopback
+listener that refuses a non-loopback address at startup.
+
+**Amended 2026-09-15: the probe paths are `/livez` and `/readyz`.** D11 and D14 named `/health`
+and `/version`, which were removed by [ADR 0034](0034-a-probe-reports-the-process-never-its-dependencies.md).
+Neither rule changes — the exemption still covers the probe and not the name, and it still costs
+exactly two legal bucket names — only the two names it costs. What each probe may report is
+ADR 0034's, not this record's.
 
 **Amended 2026-09-10: the deletions have landed, the two additions have not.** `s3_security`
 carries `max_clock_skew_seconds` and nothing else — the six keys no code read are gone from the
@@ -162,9 +168,11 @@ it was "no key that reads nothing".
 key id, the signed header names and the clock offset are logged and never echoed into the
 response (ADR 0008).
 
-**D11** `/health` and `/version` are unauthenticated by design and are served ahead of the
-authentication middleware; D14 says which requests to those two paths are the probe and which
-are S3 requests. The monitoring listener carries no authentication at all and is to be
+**D11** The probe endpoints are unauthenticated by design and are served ahead of the
+authentication middleware; D14 says which requests to those paths are the probe and which are S3
+requests. *Amended 2026-09-15 (ADR 0034): the paths are `/livez` and `/readyz`, where they were
+`/health` and `/version` until then. The rule is unchanged and the count is: two unsigned paths on
+the serving listener, no more.* The monitoring listener carries no authentication at all and is to be
 fenced by the network, not by the proxy. Profiling endpoints run on their own listener bound to
 loopback; a non-loopback address for them is a startup error, because a heap profile of this
 process contains key material and plaintext.
@@ -187,12 +195,14 @@ header is `400 InvalidRequest`. Where MinIO and AWS disagree — MinIO answers a
 header with status 400 and code `AccessDenied` — this proxy follows AWS, because clients branch on
 the code (ADR 0006 D2).
 
-**D14** A request to `/health` or `/version` is the probe only when it is unsigned and carries no
-query string at all. Anything else addressed to those two paths is an S3 request for a bucket of
-that name — which S3 allows and this proxy does not forbid — and is routed, authenticated and
-answered as one. Reserving the two names for the probe would make two legal bucket names
-unreachable through the proxy without saying so anywhere; the probe keeps its exemption, the name
-does not get one. Both paths keep answering the probe while the proxy drains (ADR 0029 D1).
+**D14** A request to a probe path is the probe only when it is unsigned and carries no query
+string at all. Anything else addressed to those paths is an S3 request for a bucket of that name —
+which S3 allows and this proxy does not forbid — and is routed, authenticated and answered as one.
+Reserving the names for the probe would make two legal bucket names unreachable through the proxy
+without saying so anywhere; the probe keeps its exemption, the name does not get one. Both paths
+keep answering while the proxy drains (ADR 0029 D1), and what each of them may say is ADR 0034.
+*Amended 2026-09-15 (ADR 0034): the paths are `/livez` and `/readyz`, where they were `/health`
+and `/version` until then.*
 
 ## Consequences
 

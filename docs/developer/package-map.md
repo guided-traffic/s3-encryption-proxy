@@ -56,7 +56,7 @@ type, `handlers/bucket/listing.go` for the stored-to-plaintext conversion.
 | `utils/` | One file: the detached, 30-second context that lets a multipart abort finish after the client is gone |
 | `handlers/object/` | GET, PUT, HEAD, DELETE, DeleteObjects, ranged reads, the internal multipart producer, and the object sub-resources: `?tagging`, `?retention` and `?legal-hold` forwarded, `?acl`, `?select` and `?torrent` refused |
 | `handlers/multipart/` | The client-driven multipart verbs |
-| `handlers/bucket/`, `handlers/root/`, `handlers/health/` | Bucket verbs and sub-resources, ListBuckets, `/health`, and the version, commit and build time the binary was linked with on `/version` |
+| `handlers/bucket/`, `handlers/root/`, `handlers/health/` | Bucket verbs and sub-resources, ListBuckets, and the two probe endpoints of the S3 listener: `/livez`, a constant 200, and `/readyz`, which reports the drain ([ADR 0034](../adr/0034-a-probe-reports-the-process-never-its-dependencies.md)) |
 | `interfaces/s3_backend.go` | The 52 methods of the AWS SDK's S3 client the handlers compile against. Mocked in the handler unit tests. `CopyObject` is deliberately absent: both server-side copy verbs are refused ([ADR 0011](../adr/0011-the-proxy-owns-the-part-layout.md) D9) |
 
 What each verb actually does is in [request-paths.md](request-paths.md).
@@ -67,7 +67,7 @@ What each verb actually does is in [request-paths.md](request-paths.md).
 |---|---|
 | `internal/config/` | Viper loading, `${VAR}` expansion, defaults, and all validation. A key that is not read by code does not exist ([ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md)), and a key that is not validated here is a key nobody checked |
 | `internal/license/` | The startup gate, and the hourly runtime check that ends the process when the token expires — through main's drain path, not from the monitoring goroutine |
-| `internal/monitoring/` | Prometheus metrics, and pprof on its own loopback listener |
+| `internal/monitoring/` | Prometheus metrics, the monitoring listener's `/livez` and `/status`, the observer that records what every backend round trip showed, and pprof on its own loopback listener |
 
 ## Where the tests are
 

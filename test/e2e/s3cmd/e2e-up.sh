@@ -93,8 +93,8 @@ wait_for() {
 }
 
 CA="$REPO/$S3EP_CA_CERT"
-wait_for "the proxy (http)" "${S3EP_HTTP_ENDPOINT}/health"
-wait_for "the proxy (tls)" "${S3EP_TLS_ENDPOINT}/health" "$CA"
+wait_for "the proxy (http)" "${S3EP_HTTP_ENDPOINT}/livez"
+wait_for "the proxy (tls)" "${S3EP_TLS_ENDPOINT}/livez" "$CA"
 wait_for "MinIO" "${S3EP_BACKEND_ENDPOINT}/minio/health/live" "$CA"
 
 log "ready. Run: make test-e2e-s3cmd"

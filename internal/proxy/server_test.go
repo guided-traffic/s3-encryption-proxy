@@ -4,7 +4,6 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/health"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -73,7 +72,7 @@ func TestServer_NewServer_WithExitProvider(t *testing.T) {
 
 	// This will fail because we don't have real S3 credentials
 	// But we can test that the server structure is created correctly
-	server, err := NewServer(cfg, health.BuildInfo{})
+	server, err := NewServer(cfg)
 	if err != nil {
 		// Expected to fail due to invalid S3 credentials in test
 		// Check that it's the expected error type
@@ -86,34 +85,34 @@ func TestServer_NewServer_WithExitProvider(t *testing.T) {
 	assert.NotNil(t, server.logger)
 }
 
-func TestServer_HealthEndpoint(t *testing.T) {
+func TestServer_ProbeEndpoints(t *testing.T) {
 	// Set log level to reduce noise during tests
 	logrus.SetLevel(logrus.ErrorLevel)
 
 	// Create a properly initialized test server
 	config := createTestConfigExit()
-	server, err := NewServer(config, health.BuildInfo{})
+	server, err := NewServer(config)
 	require.NoError(t, err)
 
-	// Create test request
-	req := httptest.NewRequest("GET", "/health", nil)
-	w := httptest.NewRecorder()
-
-	// Call health handler through router
 	router := mux.NewRouter()
 	server.setupRoutes(router)
-	router.ServeHTTP(w, req)
 
-	// Check response
-	resp := w.Result()
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	for path, want := range map[string]string{"/livez": "alive", "/readyz": "ready"} {
+		t.Run(path, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 
-	body, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	assert.Contains(t, string(body), "healthy")
+			resp := w.Result()
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+			body, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			assert.Contains(t, string(body), want)
+		})
+	}
 }
 
-func TestServer_HealthEndpointLogging(t *testing.T) {
+func TestServer_ProbeEndpointLogging(t *testing.T) {
 	// Create test configurations
 	cfgWithLogging := &config.Config{
 		LogHealthRequests: true,
@@ -131,12 +130,12 @@ func TestServer_HealthEndpointLogging(t *testing.T) {
 		expectLogging bool
 	}{
 		{
-			name:          "Health logging enabled",
+			name:          "Probe logging enabled",
 			config:        cfgWithLogging,
 			expectLogging: true,
 		},
 		{
-			name:          "Health logging disabled",
+			name:          "Probe logging disabled",
 			config:        cfgWithoutLogging,
 			expectLogging: false,
 		},
@@ -150,13 +149,13 @@ func TestServer_HealthEndpointLogging(t *testing.T) {
 				logger: logrus.WithField("component", "test-proxy-server"),
 			}
 
-			// Create router with middleware and health handler
+			// Create router with middleware and probe handlers
 			router := mux.NewRouter()
 			server.setupRoutes(router)
 			handler := server.loggingMiddleware(router)
 
 			// Create test request
-			req := httptest.NewRequest("GET", "/health", nil)
+			req := httptest.NewRequest("GET", "/readyz", nil)
 			w := httptest.NewRecorder()
 
 			// Call the handler
@@ -168,7 +167,7 @@ func TestServer_HealthEndpointLogging(t *testing.T) {
 
 			body, err := io.ReadAll(resp.Body)
 			require.NoError(t, err)
-			assert.Contains(t, string(body), `"status":"healthy"`)
+			assert.Contains(t, string(body), `"status":"ready"`)
 			assert.Equal(t, "application/json", resp.Header.Get("Content-Type"))
 
 			// Note: We can't easily test the actual logging output without
@@ -302,9 +301,15 @@ func TestServer_RoutingSetup(t *testing.T) {
 		expectedMatch bool
 	}{
 		{
-			name:          "Health endpoint",
+			name:          "Liveness probe",
 			method:        "GET",
-			path:          "/health",
+			path:          "/livez",
+			expectedMatch: true,
+		},
+		{
+			name:          "Readiness probe",
+			method:        "GET",
+			path:          "/readyz",
 			expectedMatch: true,
 		},
 		{
@@ -429,7 +434,7 @@ func TestServer_WriteS3Error_KEK_MISSING(t *testing.T) {
 	logrus.SetLevel(logrus.ErrorLevel)
 
 	cfg := createTestConfigExit()
-	server, err := NewServer(cfg, health.BuildInfo{})
+	server, err := NewServer(cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 
@@ -480,7 +485,7 @@ func TestServer_handleS3Error_KEK_MISSING(t *testing.T) {
 	logrus.SetLevel(logrus.ErrorLevel)
 
 	cfg := createTestConfigExit()
-	server, err := NewServer(cfg, health.BuildInfo{})
+	server, err := NewServer(cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 
@@ -590,7 +595,7 @@ func TestServer_UploadPartCopyIsNotShadowedByUploadPart(t *testing.T) {
 func TestServer_AuthErrorDoesNotReflectAttackerText(t *testing.T) {
 	logrus.SetLevel(logrus.ErrorLevel)
 
-	server, err := NewServer(createTestConfigExit(), health.BuildInfo{})
+	server, err := NewServer(createTestConfigExit())
 	require.NoError(t, err)
 
 	// No "/" in the key: the credential scope is split on it.

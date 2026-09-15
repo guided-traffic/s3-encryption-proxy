@@ -38,10 +38,10 @@ func (s *Server) setupRoutes(router *mux.Router) {
 	}
 
 	// Initialize handlers
-	healthHandler := health.NewHandler(s.logger, s.config.LogHealthRequests, s.build)
+	healthHandler := health.NewHandler(s.logger, s.config.LogHealthRequests)
 	// Late binding on purpose: main creates the server first and installs these
 	// handlers afterwards, so the values are still nil here. Copying them would
-	// freeze that nil and /health would keep answering 200 while the server
+	// freeze that nil and /readyz would keep answering 200 while the server
 	// drains, which is exactly the signal a readiness probe acts on.
 	healthHandler.SetShutdownStateHandler(func() (bool, time.Time) {
 		if s.shutdownStateHandler == nil {
@@ -62,14 +62,17 @@ func (s *Server) setupRoutes(router *mux.Router) {
 		},
 	)
 
-	// Health and version endpoints - before middleware to avoid authentication.
-	// The probe is unsigned and carries no parameters; anything else addresses a
-	// bucket of that name, which S3 allows, so it falls through to the S3 routes
-	// rather than being answered with the probe document (ADR 0014 D11 exempts
-	// the probe, not the name).
-	healthRouter := router.NewRoute().Subrouter()
-	healthRouter.HandleFunc("/health", healthHandler.Health).Methods("GET").MatcherFunc(isProbeRequest)
-	healthRouter.HandleFunc("/version", healthHandler.Version).Methods("GET").MatcherFunc(isProbeRequest)
+	// The two probe endpoints - before middleware to avoid authentication. Both
+	// answer a fixed document and neither carries operational data: what this
+	// process is, which provider it writes through and whether the backend
+	// answers is the monitoring listener's /status (ADR 0034). The probe is
+	// unsigned and carries no parameters; anything else addresses a bucket of
+	// that name, which S3 allows, so it falls through to the S3 routes rather
+	// than being answered with the probe document (ADR 0014 D11 exempts the
+	// probe, not the name).
+	probeRouter := router.NewRoute().Subrouter()
+	probeRouter.HandleFunc("/livez", healthHandler.Live).Methods("GET").MatcherFunc(isProbeRequest)
+	probeRouter.HandleFunc("/readyz", healthHandler.Ready).Methods("GET").MatcherFunc(isProbeRequest)
 
 	// S3 API endpoints - protected by S3 authentication
 	s3Router := router.NewRoute().Subrouter()
@@ -161,9 +164,8 @@ func bucketRoute(router *mux.Router, handler http.HandlerFunc, methods []string,
 	}
 }
 
-// isProbeRequest tells a readiness probe from an S3 request for a bucket that
-// happens to be called "health" or "version": a probe is unsigned and carries
-// no query at all.
+// isProbeRequest tells a probe from an S3 request for a bucket that happens to
+// carry the probe's own name: a probe is unsigned and carries no query at all.
 func isProbeRequest(r *http.Request, _ *mux.RouteMatch) bool {
 	return r.Header.Get("Authorization") == "" && r.URL.RawQuery == ""
 }

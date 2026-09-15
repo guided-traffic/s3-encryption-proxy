@@ -1,0 +1,112 @@
+suite: alerting rules
+templates:
+  - prometheusrule.yaml
+tests:
+  - it: renders nothing by default
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # Both flags, because the rules read series the scrape has to carry: enabling
+  # the rule without the listener produces alerts that can never fire.
+  - it: renders nothing when the monitoring listener is off
+    set:
+      monitoring.enabled: false
+      monitoring.prometheusRule.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders the four alerts when both flags are set
+    set:
+      monitoring.enabled: true
+      monitoring.prometheusRule.enabled: true
+    asserts:
+      - isKind:
+          of: PrometheusRule
+      - equal:
+          path: metadata.name
+          value: RELEASE-NAME-s3-encryption-proxy
+      - lengthEqual:
+          path: spec.groups
+          count: 1
+      - equal:
+          path: spec.groups[0].rules[0].alert
+          value: S3EPObjectIntegrityFailure
+      - equal:
+          path: spec.groups[0].rules[1].alert
+          value: S3EPBackendTransportFailing
+      - equal:
+          path: spec.groups[0].rules[2].alert
+          value: S3EPLicenseExpiringSoon
+      - equal:
+          path: spec.groups[0].rules[3].alert
+          value: S3EPLicenseExpired
+
+  # The share, never the count. The AWS SDK retries, so an ordinary network
+  # produces some transport failures and a bare counter cannot be read; without
+  # the denominator this rule fires on a healthy backend (ADR 0034 D6).
+  - it: reads the backend failure share and not its count
+    set:
+      monitoring.enabled: true
+      monitoring.prometheusRule.enabled: true
+    asserts:
+      - matchRegex:
+          path: spec.groups[0].rules[1].expr
+          pattern: s3ep_backend_transport_failures_total
+      - matchRegex:
+          path: spec.groups[0].rules[1].expr
+          pattern: s3ep_backend_responses_total
+      - matchRegex:
+          path: spec.groups[0].rules[1].expr
+          pattern: "> 0.1"
+
+  - it: follows the tuned thresholds and windows
+    set:
+      monitoring.enabled: true
+      monitoring.prometheusRule.enabled: true
+      monitoring.prometheusRule.backend.window: 15m
+      monitoring.prometheusRule.backend.failureRatio: 0.25
+      monitoring.prometheusRule.backend.for: 30m
+      monitoring.prometheusRule.license.warnDays: 7
+    asserts:
+      - matchRegex:
+          path: spec.groups[0].rules[1].expr
+          pattern: "\\[15m\\]"
+      - matchRegex:
+          path: spec.groups[0].rules[1].expr
+          pattern: "> 0.25"
+      - equal:
+          path: spec.groups[0].rules[1].for
+          value: 30m
+      - matchRegex:
+          path: spec.groups[0].rules[2].expr
+          pattern: "< 7"
+
+  # The rule selector of a Prometheus install is a label match, so a chart that
+  # cannot add labels renders rules nothing ever loads.
+  - it: carries the operator's own selector labels and namespace
+    set:
+      monitoring.enabled: true
+      monitoring.prometheusRule.enabled: true
+      monitoring.prometheusRule.namespace: observability
+      monitoring.prometheusRule.labels:
+        release: kube-prometheus-stack
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: observability
+      - equal:
+          path: metadata.labels.release
+          value: kube-prometheus-stack
+
+  # Prometheus' own templating has to survive Helm's. A summary rendered with
+  # the actions stripped names no series and is useless in the page.
+  - it: leaves Prometheus label templating intact
+    set:
+      monitoring.enabled: true
+      monitoring.prometheusRule.enabled: true
+    asserts:
+      - matchRegex:
+          path: spec.groups[0].rules[0].annotations.summary
+          pattern: "\\{\\{ \\$labels\\.reason \\}\\}"

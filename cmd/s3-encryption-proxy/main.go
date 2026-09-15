@@ -14,7 +14,6 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/internal/license"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/monitoring"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/health"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
@@ -130,7 +129,7 @@ func runProxy(_ *cobra.Command, _ []string) {
 	}
 
 	// Create and start the proxy server
-	proxyServer, err := proxy.NewServer(cfg, health.BuildInfo{Version: version, Commit: commit, BuildTime: buildTime})
+	proxyServer, err := proxy.NewServer(cfg)
 	if err != nil {
 		logrus.WithError(err).Fatal("Failed to create proxy server")
 	}
@@ -157,7 +156,7 @@ func runProxy(_ *cobra.Command, _ []string) {
 		}
 	}
 
-	// Set shutdown state handler for health checks
+	// Set shutdown state handler for the readiness probe
 	proxyServer.SetShutdownStateHandler(func() (bool, time.Time) {
 		return atomic.LoadInt32(&shutdownMode) == 1, time.Unix(0, shutdownStart.Load())
 	})
@@ -245,7 +244,7 @@ func runProxy(_ *cobra.Command, _ []string) {
 		exitCode = 1
 	}
 
-	// Enter shutdown mode - health endpoint will now return 503
+	// Enter shutdown mode - the readiness probe will now answer 503
 	atomic.StoreInt32(&shutdownMode, 1)
 	started := time.Now()
 	shutdownStart.Store(started.UnixNano())

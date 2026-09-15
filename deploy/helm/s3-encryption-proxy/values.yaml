@@ -131,18 +131,25 @@ resources:
 probes:
   scheme: ""  # empty = derive; HTTP or HTTPS
 
+# Liveness asks one question only: can the process still answer HTTP (ADR 0034)?
+# /livez is a constant 200 and never reports the drain, so a draining pod is not
+# killed inside its own shutdown budget. A constant-200 handler needs no warm-up,
+# which is why there is no startup probe and why initialDelaySeconds is 2: a
+# wedged process is noticed after about 17s rather than 60s.
 livenessProbe:
   httpGet:
-    path: /health
+    path: /livez
     port: http
-  initialDelaySeconds: 30
-  periodSeconds: 10
+  initialDelaySeconds: 2
+  periodSeconds: 5
   timeoutSeconds: 5
   failureThreshold: 3
 
+# Readiness is the lifecycle signal: /readyz answers 503 from the moment the
+# drain starts, so the pod leaves the Service before the listener closes.
 readinessProbe:
   httpGet:
-    path: /health
+    path: /readyz
     port: http
   initialDelaySeconds: 5
   periodSeconds: 5
@@ -203,10 +210,20 @@ podDisruptionBudget:
   maxUnavailable: 1
   # minAvailable: 1
 
-# Kubernetes termination grace period. Leave unset and the chart derives it from
-# the shutdown_timeout in the config below, plus five seconds (ADR 0015 D5): the
-# platform must not kill the process before its own transfer budget has expired.
-# Set it only to override that derivation.
+# Seconds the pod holds still before the proxy is sent SIGTERM, as a
+# lifecycle.preStop.sleep hook. It buys the EndpointSlice withdrawal time to
+# reach kube-proxy on every node, so the listener does not start refusing
+# connections the cluster is still sending it. That propagation is a property of
+# the cluster, not of the proxy, which is why it lives here and not in config
+# below. The hook itself has no opt-out: a cluster that rendered without it would
+# run the broken drain silently.
+preStopSleepSeconds: 5
+
+# Kubernetes termination grace period. Leave unset and the chart derives it as
+# preStopSleepSeconds + the shutdown_timeout in the config below + five seconds
+# (ADR 0015 D5): the platform must not kill the process before the hook, its own
+# transfer budget and the multipart sweep have had their time. An override below
+# that sum fails the render rather than leaving the sweep without a budget.
 terminationGracePeriodSeconds: ""
 
 # S3 Encryption Proxy Configuration (raw config.yaml content)
@@ -320,6 +337,30 @@ monitoring:
     port: ""
     # Override path for ServiceMonitor (defaults to monitoring.metricsPath)
     path: ""
+
+  # Alerting rules for Prometheus Operator. Every rule here tells a human and
+  # nothing acts on any of them automatically -- that boundary is the decision
+  # (ADR 0034). Off by default because a rule nobody tuned pages somebody at
+  # three in the morning; the thresholds below are starting points.
+  prometheusRule:
+    enabled: false
+    # Empty renders into the release namespace.
+    namespace: ""
+    labels: {}
+    annotations: {}
+    integrity:
+      # s3ep_object_integrity_failures_total is supposed to stay at zero, so the
+      # window only decides how fast the alert clears, not whether it fires.
+      window: 5m
+    backend:
+      window: 5m
+      # The SHARE of backend round trips that never got an HTTP response. Not a
+      # count: the AWS SDK retries, so an ordinary network produces some and a
+      # bare count cannot be read. 0.1 = one in ten.
+      failureRatio: 0.1
+      for: 5m
+    license:
+      warnDays: 30
 
   # Grafana Dashboard configuration
   grafana:

@@ -376,9 +376,11 @@ func TestRtPxMiddlewareWrappersInitialiseOnDemand(t *testing.T) {
 	})
 }
 
-// setupMiddleware is also the place where log_health_requests is applied; both
-// settings must produce a working chain.
-func TestRtPxSetupMiddlewareHonoursLogHealthRequests(t *testing.T) {
+// The S3 logging middleware drops nothing. The probe routes sit ahead of the
+// chain, so a path it sees is always S3 traffic — a bucket named "livez"
+// included — and log_health_requests governs the probe handlers alone
+// (ADR 0034).
+func TestRtPxSetupMiddlewareLogsEveryS3Path(t *testing.T) {
 	for _, logHealth := range []bool{false, true} {
 		server := RtPxserver(t)
 		server.config.LogHealthRequests = logHealth
@@ -395,16 +397,16 @@ func TestRtPxSetupMiddlewareHonoursLogHealthRequests(t *testing.T) {
 		require.NotNil(t, server.corsHandler)
 		require.NotNil(t, server.s3AuthService)
 
-		w := httptest.NewRecorder()
-		server.loggingMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		})).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/health", nil))
+		for _, path := range []string{"/bucket/key", "/livez", "/readyz"} {
+			buf.Reset()
+			w := httptest.NewRecorder()
+			server.loggingMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})).ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
 
-		assert.Equal(t, http.StatusOK, w.Code)
-		if logHealth {
-			assert.Contains(t, buf.String(), "/health", "health requests are logged when configured")
-		} else {
-			assert.NotContains(t, buf.String(), "/health", "health requests stay out of the log by default")
+			assert.Equal(t, http.StatusOK, w.Code)
+			assert.Contains(t, buf.String(), path,
+				"log_health_requests=%v must not decide whether an S3 path is logged", logHealth)
 		}
 	}
 }

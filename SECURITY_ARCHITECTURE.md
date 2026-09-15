@@ -700,22 +700,26 @@ default rather than something tighter.
   below for what it does and does not buy.
 - **Replay within the window.** There is no nonce store. A captured signed
   request can be replayed until its timestamp ages out of the 15-minute window.
-- **A probe on `/health` and `/version`.** Both are registered on a subrouter
-  that carries no middleware, before the S3 subrouter that carries the auth
-  middleware ([router.go:65-67](internal/proxy/router.go#L65)), and are
-  unauthenticated by design. Since 2026-09-13 those routes match a probe only —
-  unsigned and with no query string (ADR 0014 D14). A signed request to either
-  path, or one carrying S3 parameters, is an S3 request for a bucket of that name
-  and goes through authentication like any other, so the exemption covers the
-  probe and not the two names. Since 5.0.0 `/version` answers the build the
-  binary was stamped with — `version`, `commit`, `build_time` and `service` —
-  where it answered a constant `dev` before, so an unauthenticated probe learns
-  the exact release. Those are the three labels `s3ep_server_info` already
-  carried, and the control is the same one the metrics port has: who can reach
-  the listener.
+- **A probe on `/livez` and `/readyz`.** Both are registered on a subrouter that
+  carries no middleware, before the S3 subrouter that carries the auth middleware
+  ([router.go:74-75](internal/proxy/router.go#L74)), and are unauthenticated by
+  design. Those routes match a probe only — unsigned and with no query string
+  (ADR 0014 D14). A signed request to either path, or one carrying S3 parameters,
+  is an S3 request for a bucket of that name and goes through authentication like
+  any other, so the exemption covers the probe and not the two names.
+  **Both answer a fixed document and disclose nothing** (ADR 0034): `/livez` is a
+  constant `200`, `/readyz` says only whether the process is draining and when
+  the drain began. That is the whole unauthenticated surface of this listener.
+  `/health` and `/version` were removed with ADR 0034 — `/version` had answered
+  the build the binary was stamped with, so an unauthenticated probe learned the
+  exact release; it is now `s3ep_server_info` on the monitoring listener, behind
+  the same control as the rest of the operational data. **A drain is still
+  observable without a credential**: `/readyz` answering `503` tells any reader
+  that this instance is shutting down, which is exactly what a load balancer has
+  to be able to see.
 - **Anything on the monitoring listener.** `monitoring.bind_address`
-  (`:9090` # default) serves `/metrics`, `/health` and `/info` with **no
-  authentication at all** ([monitoring/server.go:34](internal/monitoring/server.go#L34)).
+  (`:9090` # default) serves `/metrics`, `/livez` and `/status` with **no
+  authentication at all** ([monitoring/server.go:35-55](internal/monitoring/server.go#L35)).
   That is deliberate — it is what an ordinary Prometheus scrape needs, and it is
   what every exporter does. **Restricting who can reach the port is the
   operator's**, through whatever the cluster uses. The chart ships no
@@ -726,18 +730,40 @@ default rather than something tighter.
   by anything that can route to the pod once the monitoring listener runs
   (`monitoring.enabled`, plus `monitoring.service.enabled` for a Service in front
   of it), until the operator writes a policy of their own.
-  Six metrics are declared, down from twenty: the thirteen nothing ever observed
-  went first, then `s3ep_license_days_remaining`, which was set once at startup
-  and never refreshed ([monitoring/metrics.go:72](internal/monitoring/metrics.go#L72)).
-  None carries a bucket name, an object key or a provider identity — the request
-  labels are the gorilla/mux path *template*, not the request path
-  ([middleware.go:79-86](internal/monitoring/middleware.go#L79)) — and since
-  5.0.0 none names the **licensee** either: `licensed_to` and `company` were
-  labels of `s3ep_license_info` and are gone, because a metric is scraped widely
-  and retained long, and an unauthenticated endpoint is the wrong place for a
-  customer name. What remains of the licence is its validity and its expiry. So
-  the listener discloses little; it is still unauthenticated, and it is still the
-  process that holds the KEK.
+  Thirteen metrics are declared. None carries a bucket name or an object key — the
+  request labels are the gorilla/mux path *template*, not the request path
+  ([middleware.go:79-86](internal/monitoring/middleware.go#L79)) — and none names
+  the **licensee**: `licensed_to` and `company` were labels of
+  `s3ep_license_info` and are gone, because a metric is scraped widely and
+  retained long, and an unauthenticated endpoint is the wrong place for a
+  customer name. What remains of the licence is its validity and its expiry.
+
+  **What this listener does disclose, deliberately, is the active provider.**
+  `s3ep_encryption_provider_info` carries `alias`, `type` and `kek_fingerprint`,
+  and `/status` repeats them
+  ([monitoring/status.go](internal/monitoring/status.go)). The fingerprint is
+  designed to identify a key without revealing anything about it (ADR 0004), and
+  the alias is a name the operator chose. **The `type` is the field that
+  matters**: `exit` means this proxy is not encrypting and the backend holds
+  plaintext (ADR 0025). An unauthenticated reader of this port therefore learns
+  whether the data behind the proxy is encrypted at rest.
+
+  That is the trade ADR 0034 D8 takes on purpose. An operator has to be able to
+  see which provider is active — it is the difference between "encrypted at rest"
+  and "not" — and the alternative was putting it on the S3 listener, where every
+  client can reach it without a signature. It sits behind the one control this
+  port has, which is who can route to it (ADR 0030), and on a default install the
+  listener is off entirely. **If that disclosure is not acceptable in your
+  deployment, the answer is a network policy in front of `:9090`, not a
+  configuration key** — there is none, and `monitoring.enabled: false` removes
+  the metrics with it.
+
+  The rest of `/status` is the build, the backend's last observed answer or
+  transport failure with its class, and the licence expiry — the same facts the
+  metrics carry, rendered for a human. The endpoint issues no request of its own,
+  so reading it cannot be used to make this proxy touch the backend
+  (ADR 0034 D7). So the listener discloses little beyond the provider; it is
+  still unauthenticated, and it is still the process that holds the KEK.
 - **`/debug/pprof` is no longer on that listener (ADR 0013).** When
   `monitoring.pprof_enabled` is set (`false` # default) the profiling endpoints
   run on their own listener at `monitoring.pprof_bind_address`

@@ -118,7 +118,7 @@ check_services() {
     fi
 
     # Check S3 Encryption Proxy
-    if ! curl -f http://localhost:8080/health &> /dev/null; then
+    if ! curl -f http://localhost:8080/livez &> /dev/null; then
         log_error "S3 Encryption Proxy is not running or not accessible at http://localhost:8080"
         exit 1
     fi

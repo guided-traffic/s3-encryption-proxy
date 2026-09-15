@@ -77,18 +77,19 @@ func TestMwCORSMiddleware(t *testing.T) {
 	})
 }
 
+// This middleware runs on the S3 subrouter only. The probe routes sit ahead of
+// the chain and never reach it, so there is no path it may drop: a request for a
+// bucket named "livez" is S3 traffic and is logged like any other (ADR 0034).
 func TestMwLoggerMiddleware(t *testing.T) {
 	tests := []struct {
-		name              string
-		path              string
-		logHealthRequests bool
-		status            int
-		wantLogged        bool
+		name   string
+		path   string
+		status int
 	}{
-		{name: "object request is logged", path: "/bucket/key", status: http.StatusCreated, wantLogged: true},
-		{name: "health is skipped by default", path: "/health", status: http.StatusOK, wantLogged: false},
-		{name: "version is skipped by default", path: "/version", status: http.StatusOK, wantLogged: false},
-		{name: "health is logged when enabled", path: "/health", logHealthRequests: true, status: http.StatusOK, wantLogged: true},
+		{name: "object request is logged", path: "/bucket/key", status: http.StatusCreated},
+		{name: "a bucket named livez is logged like any other", path: "/livez", status: http.StatusOK},
+		{name: "a bucket named readyz is logged like any other", path: "/readyz", status: http.StatusOK},
+		{name: "a bucket named health is logged like any other", path: "/health", status: http.StatusOK},
 	}
 
 	for _, tt := range tests {
@@ -101,19 +102,13 @@ func TestMwLoggerMiddleware(t *testing.T) {
 			req.RemoteAddr = "192.0.2.10:4711"
 			req.Header.Set("User-Agent", "mw-test-agent")
 
-			NewLogger(entry, tt.logHealthRequests).
+			NewLogger(entry).
 				Middleware(MwechoHandler(&downstreamCalled, tt.status)).
 				ServeHTTP(rec, req)
 
-			// The handler always runs; only the log record is conditional.
 			assert.True(t, downstreamCalled)
 			assert.Equal(t, tt.status, rec.Code)
 			assert.Equal(t, "downstream-body", rec.Body.String())
-
-			if !tt.wantLogged {
-				assert.Empty(t, hook.AllEntries(), "no record expected for %s", tt.path)
-				return
-			}
 
 			require.Len(t, hook.AllEntries(), 1)
 			logged := hook.LastEntry()
@@ -135,7 +130,7 @@ func TestMwLoggerDefaultsToOKWithoutExplicitWriteHeader(t *testing.T) {
 	entry, hook := MwtestLogger()
 	rec := httptest.NewRecorder()
 
-	NewLogger(entry, false).Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	NewLogger(entry).Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, err := io.WriteString(w, "no explicit status")
 		assert.NoError(t, err)
 	})).ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/bucket/key", nil))

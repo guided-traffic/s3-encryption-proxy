@@ -8,6 +8,12 @@ depending on high availability or on anything in 036.
 written.** The decisions are P1 to P13 under *Refining round*; one unknown is
 left to measure rather than decide, and it is work item 11.
 
+**Built 2026-09-15.** Work items 1 to 10 are done and verified — see *What was
+built* at the end of this file. Item 11 is the only one outstanding, and it is a
+measurement against a real cluster, not a change to the tree. The decisions P1
+to P12 now live in [ADR 0034](../adr/0034-a-probe-reports-the-process-never-its-dependencies.md);
+this file is a work list again and is archived when item 11 is answered.
+
 ## The shape after this work
 
 | Listener | Path | Answers |
@@ -424,19 +430,88 @@ is already terminating. It is work item 11.
 
 ## Done when
 
-- [ ] `/livez`, `/readyz` and the status endpoint exist; `/health` and `/version`
+- [x] `/livez`, `/readyz` and the status endpoint exist; `/health` and `/version`
       are gone from both listeners, and `git grep` finds only MinIO's and
       Vault's.
-- [ ] The liveness endpoint does not report the drain, the readiness one does,
+- [x] The liveness endpoint does not report the drain, the readiness one does,
       and the status one is acted on by nobody.
-- [ ] The status document reports the backend from observed traffic and says
+- [x] The status document reports the backend from observed traffic and says
       `no request since start` when there has been none.
-- [ ] A `preStop` hook holds the pod while its endpoints are withdrawn, and the
+- [x] A `preStop` hook holds the pod while its endpoints are withdrawn, and the
       grace period covers hook plus drain plus sweep. An override below the sum
       fails the render.
-- [ ] `make helm-test` pins the probe wiring, the hook and the arithmetic.
-- [ ] The shutdown suite shows a SIGTERMed container finishing its sweep — no
+- [x] `make helm-test` pins the probe wiring, the hook and the arithmetic.
+- [x] The shutdown suite shows a SIGTERMed container finishing its sweep — no
       multipart upload left at the backend — and leaves the stack usable.
 - [ ] The kubelet question is answered against a real cluster and written down
       here.
-- [ ] P2, P4 and P5 are in an ADR.
+- [x] P2, P4 and P5 are in an ADR.
+
+## What was built, 2026-09-15
+
+Items 1 to 10, in one change. What is worth knowing beyond the work list:
+
+- **The endpoint bodies.** `/livez` answers `{"status":"alive"}`, `/readyz`
+  answers `{"status":"ready"}` and, while draining, the `shutting_down` document
+  it answered on `/health` before. Nothing machine-reads a body — a probe reads
+  the status code — so the strings are documentation, not an interface.
+- **The backend observer sees what a handler never does.** It wraps the backend
+  HTTP client, so it records transport failures the SDK retried away. The first
+  live run against the demo stack produced exactly one, class `other`, with
+  nothing in the proxy log — the retry had succeeded. A failure is therefore
+  reported three ways: `warn` with the class, host, method and error, because
+  that line is its only record; `s3ep_backend_transport_failures_total{class}`
+  beside `s3ep_backend_responses_total`, because an alert needs a rate and the
+  numerator alone cannot be read; and the status document, for the current
+  state. A failure under an already-cancelled request is none of the three.
+- **The observer had to learn which end failed.** The request body handed to the
+  backend is the proxy's own reader chain — the upload checksum verifier in front
+  of the segment sealer — and net/http reports an error it raises as the error of
+  the round trip. So one client sending a wrong `Content-MD5` counted as a
+  backend transport failure, logged a warning naming the backend host, and
+  flipped the status document to `failing` while the backend behaved perfectly;
+  any credentialed client could have driven the alert at will. The observer now
+  tags the body it hands over and exempts a failure that came from it, the way it
+  already exempted a request whose context was done. Found by review, reproduced
+  against the real SDK, pinned by two tests.
+- **The alerting rules are a `PrometheusRule` in the chart**, off by default,
+  with four alerts: object integrity, the backend failure *share*, and the two
+  licence ones. The backend rule reads a share and never a count, because the SDK
+  retries. A unit test holds the rules to the same contract as the dashboard — an
+  alert naming a series no scrape exports can never fire and, unlike an empty
+  dashboard panel, nobody ever opens it.
+- **A `terminationGracePeriodSeconds` of 0 was silently ignored.** The override
+  branch was a Go-template truthiness test, and 0 reads as false — so the
+  smallest override there is fell through to the derived sum with no message.
+- **A `preStopSleepSeconds` of 0 now fails the render.** It was not in the work
+  list. A zero hold is the opt-out P11 refuses, wearing a values key: it renders,
+  installs, and leaves the drain racing the withdrawal exactly as before the hook
+  existed. Two chart tests pin the refusal.
+- **Two probe call sites were found beyond the ten.** `scripts/conformance-run.sh`
+  and `performance.sh` both waited on `/health`, and four probes in
+  `.github/workflows/test-pipeline.yml` did too. All moved.
+- **A defect that predates this work.** The demo compose health check used
+  `wget --spider`, which sends `HEAD`, and the probe route has always been `GET`
+  only — so `proxy-healthcheck` was in a restart loop against `/health` before
+  any of this. It now sends a `GET`. The probe routes were deliberately left
+  `GET`-only: that is what Kubernetes sends and what every other call site sends.
+- **`log_health_requests` no longer reaches the S3 logging middleware.** That
+  middleware skipped `/health` and `/version` by path, which is dead now that the
+  probes never reach it — and worse than dead: it would have hidden S3 traffic
+  for buckets of those names. The special case is gone and the key governs the
+  probe handlers alone.
+- **Three ADRs, not one.** ADR 0034 carries P1 to P12. ADR 0014 D11 and D14 named
+  `/health` and `/version` in the rule itself, and ADR 0029 D1 step 1 said
+  `/health` was what goes false on a drain — both are amended in place, because
+  an ADR that states a removed path as current is the defect the ground rules
+  name.
+
+**Verified on this branch:** `make test-unit` green; `make test-integration` and
+`make test-integration-tls` green (450 tests each); `make test-integration-shutdown`
+green — the process exited 268 ms after `SIGTERM` and the backend held no
+multipart upload; `make helm-test` 48/48; `make e2e-rclone` and `make e2e-s3cmd`
+green; `make helm-test` 57/57 across two chart suites; `make gosec` 0 issues;
+`go vet` over all build tags clean. The Velero suite reached 10 of its 13
+scenarios green before the run was interrupted — not a failure, but not a pass
+either; CI runs that gate. **Not verified locally:** `golangci-lint` is not
+installed on the machine this was built on.

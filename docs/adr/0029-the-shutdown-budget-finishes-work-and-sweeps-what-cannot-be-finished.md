@@ -2,7 +2,13 @@
 
 ## Status
 
-**Accepted.** Date: 2026-09-12. **Implemented on the 5.0.0 branch the same day**, and
+**Accepted.** Date: 2026-09-12. **Amended 2026-09-15**: D1 step 1 said `/health`, which was one
+endpoint serving both Kubernetes probes — so the liveness probe reported the drain and its only
+remedy, a kill, landed inside the window step 4 needs. [ADR 0034](0034-a-probe-reports-the-process-never-its-dependencies.md)
+split them: the drain is `/readyz`, and `/livez` is a constant success. The order in D1 is
+unchanged.
+
+**Implemented on the 5.0.0 branch on 2026-09-12**, and
 **corrected 2026-09-12**: the code closed the listener *before* the sweep rather than after it,
 so during step 4 a readiness probe met a connection refusal instead of the `503 shutting_down`
 step 2 exists to give it. The order in D1 is now the order in the code.
@@ -58,8 +64,10 @@ work into a state somebody can live with, instead of stopping wherever the signa
 
 **D1** The shutdown budget runs in this order, and the order is the decision:
 
-1. **Readiness goes false.** `/health` answers `503 shutting_down` from the first moment, so a
-   readiness probe takes the instance out of rotation before anything else changes.
+1. **Readiness goes false.** The readiness endpoint answers `503 shutting_down` from the first
+   moment, so a readiness probe takes the instance out of rotation before anything else changes.
+   The liveness endpoint is not that endpoint and never reports the drain: its only remedy is a
+   kill, which would destroy step 4 (ADR 0034).
 2. **No new work, and the listener stays up.** Every S3 request that arrives from now on is
    answered `503 ServiceUnavailable` with `Retry-After`. The door is not shut: a closed listener
    answers a client that arrives before a load balancer has taken this instance out of rotation
@@ -117,9 +125,10 @@ the only thing that catches those, and the operator documentation says so.
   grace period the operator already configured, and leaves nothing behind.
 * A client that reaches a draining instance gets a retryable `503` rather than a refused
   connection. Measured on 2026-09-12: every S3 route answered `503 ServiceUnavailable` with
-  `Retry-After: 1` for the whole drain, `/health` answered `503 shutting_down` beside it — it is
-  not behind the drain guard and carries no `Retry-After` — and the listener closed only after
-  both.
+  `Retry-After: 1` for the whole drain, the readiness endpoint answered `503 shutting_down` beside
+  it — it is not behind the drain guard and carries no `Retry-After` — and the listener closed only
+  after both. (That endpoint was `/health` when this was measured; it is `/readyz` since
+  ADR 0034, and the liveness endpoint beside it stays `200` throughout.)
 * Shutdown takes as long as the work does and no longer. Measured on 2026-09-12 with an 8-second
   budget: **769 µs** with nothing in flight and one multipart upload to end, and **2.78 s** when a
   1 GiB download was mid-transfer — which is what was left of that download. The same run under
@@ -160,8 +169,10 @@ and the segment chain would authenticate it perfectly.
   request gets a `503` instead of a refused connection; a busy one keeps the window for as long as
   its transfers run. That is the right trade for the instance — it is the load balancer's job to
   have stopped sending — but it does mean the `503` is a courtesy for slow rotation, not a
-  guarantee. A `preStop` sleep is what puts a floor under it, and it is not built: the chart
-  declares no such hook.
+  guarantee. A `preStop` sleep is what puts a floor under it, and the chart declares one with no
+  opt-out since 2026-09-15 (ADR 0034 D10) — so the window is now bounded below by that hold,
+  whose duration is a values key and therefore a guess about the cluster rather than a
+  measurement of it.
 * **A shutdown that overruns its drain cleans up nothing.** D3 chooses the pod's grace period over
   the cleanup, deliberately: being killed mid-abort is worse than not starting. An operator whose
   drains routinely fill the budget gets no cleanup and one warning line.

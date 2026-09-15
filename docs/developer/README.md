@@ -36,7 +36,7 @@ The contributor-facing material that is not per-subsystem — repository layout,
 the build and test matrix, continuous integration, the extension checklists, the
 conventions — is [DEVELOPER.md](../../DEVELOPER.md).
 
-Four subsystems are not covered by a page above. That is a gap, not a hidden
+Five subsystems are not covered by a page above. That is a gap, not a hidden
 document; this is where their material actually is today:
 
 | Subsystem | Where it is |
@@ -44,4 +44,5 @@ document; this is where their material actually is today:
 | SigV4 authentication, header and pre-signed | The validation story in [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md), including what is *not* verified |
 | The per-key validation rules and the bounds checked at startup | `internal/config/config.go` — `validate` and the `validate*` functions it calls, plus the two checks `Load` runs before the unmarshal (`multipart_session_max_age` refused by name, `multipart_session_idle_timeout` minimum 1). [README.md](../../README.md) carries every key and its default, [ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md) the rule that a key exists only if code reads it, and [configuration.md](configuration.md) where a value comes from |
 | The license gate | [ADR 0016](../adr/0016-the-license-is-a-startup-gate.md) for the decision, [README.md](../../README.md) for the operator view of the gate and the exit-provider exemption, [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) 7.5 for what an expiry does to a running process |
-| Monitoring and the exported metric set | [README.md](../../README.md) — the endpoint, its configuration keys, and the six `s3ep_*` series with their labels, with the Go runtime and process collectors served alongside them; the `s3ep_*` collectors themselves are `internal/monitoring/metrics.go` |
+| Monitoring, the exported metric set and the `/status` document | [README.md](../../README.md) — the endpoints, their configuration keys, and the thirteen `s3ep_*` series with their labels, with the Go runtime and process collectors served alongside them; the collectors themselves are `internal/monitoring/metrics.go`, the document `internal/monitoring/status.go`, and what every backend round trip is observed with `internal/monitoring/backend.go` |
+| What a probe may and may not report | [ADR 0034](../adr/0034-a-probe-reports-the-process-never-its-dependencies.md) for the rule, [request-paths.md](request-paths.md) for where the two routes sit, [README.md](../../README.md) for the operator view |

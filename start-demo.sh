@@ -252,7 +252,7 @@ wait_for_health() {
     log_info "Checking S3 Encryption Proxy health..."
     attempt=1
     while [ $attempt -le $max_attempts ]; do
-        if curl -sf http://localhost:8080/health >/dev/null 2>&1; then
+        if curl -sf http://localhost:8080/livez >/dev/null 2>&1; then
             log_success "S3 Encryption Proxy is healthy"
             break
         fi
@@ -268,8 +268,8 @@ wait_for_health() {
     log_info "Checking S3 Encryption Proxy TLS endpoint..."
     attempt=1
     while [ $attempt -le $max_attempts ]; do
-        if curl -sf --cacert test/ssl-setup/ca.crt https://localhost:8443/health >/dev/null 2>&1 \
-           || curl -sfk https://localhost:8443/health >/dev/null 2>&1; then
+        if curl -sf --cacert test/ssl-setup/ca.crt https://localhost:8443/livez >/dev/null 2>&1 \
+           || curl -sfk https://localhost:8443/livez >/dev/null 2>&1; then
             log_success "S3 Encryption Proxy TLS endpoint is healthy"
             return 0
         fi
@@ -350,11 +350,14 @@ main() {
             ;;
 
         "health")
-            if curl -sf http://localhost:8080/health; then
-                log_success "S3 Encryption Proxy is healthy"
-                echo "  Version info: http://localhost:8080/version"
+            # Liveness only: the S3 listener answers /livez and /readyz and
+            # nothing descriptive. Version, provider and backend observation
+            # live on the monitoring listener (ADR 0034).
+            if curl -sf http://localhost:8080/livez; then
+                log_success "S3 Encryption Proxy is alive"
+                echo "  Status document: http://localhost:9090/status"
             else
-                log_error "S3 Encryption Proxy is not healthy"
+                log_error "S3 Encryption Proxy is not alive"
                 exit 1
             fi
             ;;
@@ -373,7 +376,7 @@ main() {
             echo "  down|cleanup      Stop and remove all containers and volumes"
             echo "  status|show-status Show service status and endpoints"
             echo "  logs              Show proxy logs (follow mode)"
-            echo "  health            Check proxy health"
+            echo "  health            Check the proxy is alive (/livez)"
             echo "  help              Show this help message"
             echo
             echo "Examples:"

@@ -8,7 +8,8 @@ Accepted. Date: 2026-09-07.
 wall-clock budget on reading a request body or on writing a response body (D1), the header
 phase and the idle keep-alive phase keep the 30 and 60 seconds they had (D2, D3), the drain
 runs under `shutdown_timeout` rather than under a fixed 30 seconds of its own (D4), and the
-chart derives `terminationGracePeriodSeconds` from that same value plus five seconds (D5).
+chart derives `terminationGracePeriodSeconds` from that same value (D5; the derivation gained
+the `preStop` hold on 2026-09-15, see the amendment in D5).
 
 **The budget of D4 now covers the whole shutdown, 2026-09-12 (ADR 0029).** The drain is followed
 by the sweep that ends every multipart upload this process is holding, and the listener closes
@@ -98,8 +99,12 @@ exiting. No other fixed
 shutdown deadline exists anywhere in the process.
 
 **D5.** The Kubernetes chart derives the platform's termination grace period from the proxy's
-own budget: `terminationGracePeriodSeconds` is `shutdown_timeout` plus five seconds. The
-platform does not kill the process before that budget has expired. The shipped compose
+own budget rather than letting the two be configured apart. The platform does not kill the
+process before that budget has expired. *Amended 2026-09-15 (ADR 0034 D11): the derivation is
+the sum of the `preStop` hold, `shutdown_timeout` and five seconds, where it was
+`shutdown_timeout` plus five until then — a hold was added in front of the drain and it is part
+of the same window. An explicit override below the sum now fails the render instead of winning
+silently.* The shipped compose
 environment already stops its containers with a fixed 45-second grace period, which covers the
 default budget; it is not derived and an operator who raises `shutdown_timeout` past 40 seconds
 raises it too.
