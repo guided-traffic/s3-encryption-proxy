@@ -52,12 +52,13 @@ refined on 2026-09-15 and its shape is decided — a shared session table in an
 externally provided Valkey with Sentinel — which pulled the multipart idle clock
 off the not-scheduled list, because its throttled store looked like the lease
 heartbeat that design needs, and produced
-[041](041-the-liveness-probe-kills-the-drain.md), which runs before either. The
-clock landed in 5.0.2; a second refining round the same day found it is
-process-local and cannot be a lease value at all, which withdrew 036's failover
-decision. 041 is still ahead of 036.
-[039](039-backend-certificate-verification-failure-is-named.md) and
-[041](041-the-liveness-probe-kills-the-drain.md) are the open work lists. [040](040-managed-buckets.md) is a plan, raised
+[041](archive/041-the-liveness-probe-kills-the-drain.md), which ran before either
+and is archived. The clock landed in 5.0.2; a second refining round the same day
+found it is process-local and cannot be a lease value at all, which withdrew 036's
+failover decision. The probe work landed on 2026-09-15 and left [ADR 0034](../adr/0034-a-probe-reports-the-process-never-its-dependencies.md)
+behind, so 036 no longer waits on anything outside itself.
+[039](039-backend-certificate-verification-failure-is-named.md) is the open work
+list. [040](040-managed-buckets.md) is a plan, raised
 2026-09-14 and nothing in it decided: managed buckets, a startup readability
 verdict and a pass onto the current key encryption key. Its fourth part is
 forbidden by three accepted ADRs today, so refining answers that before anything
@@ -93,7 +94,7 @@ is estimated.
 | [038](038-s3-encryption-operator.md) | Announced 2026-09-14, **not scheduled** | A Kubernetes operator provisioning proxy instances through Custom Resources: backends, licence distribution, credential Secrets. A separate program with its own entry point and its own chart; `s3-encryption-proxy` stays the single-instance one ([ADR 0033](../adr/0033-a-proxy-instance-holds-its-uploads.md)). Independent of [036](036-high-availability.md): an operator that provisions single instances needs nothing from it. Configuration is read at start only, so a changed backend rolls the pod | — |
 | [039](039-backend-certificate-verification-failure-is-named.md) | Open (2026-09-14), **nine small items after the second pass** | The CA bundle in the image (`/etc/ssl/certs/ca-certificates.crt`, Go's root-loading rule, `SSL_CERT_FILE`) documented in `docs/developer/configuration.md`, and a backend certificate that fails verification logged at error level with its own message and an x509 `reason` instead of the generic `S3 operation failed`. Four runs against the demo MinIO under a private CA are recorded in the ticket, and a second pass on the same day added twelve findings and five further open questions, seven in total — among them whether the proxy should check its backend before it reports Ready | — |
 | [040](040-managed-buckets.md) | Raised 2026-09-14, **planning only, nothing decided** | A configured list of buckets the deployment owns; a startup verdict per bucket (reachable, permitted, every object readable) with a failure policy over it; a pass that moves a bucket onto the current key encryption key; a readiness switch and an init-phase progress line. **Its fourth part is forbidden verbatim by [ADR 0017](../adr/0017-stored-data-compatibility-is-not-owed.md) D3, [ADR 0002](../adr/0002-one-data-key-per-object.md) D7 and [ADR 0004](../adr/0004-one-local-key-provider.md) D12**, and its second falsifies ADR 0002's "the bucket is not consulted at startup and cannot be" — so amendments come first, in the session the decision is taken. The premise that a key move needs no re-upload is **refuted by measurement**: the only metadata-replace mechanism S3 has is a self-copy, which is a full server-side rewrite, and it strips Object Lock state while leaving the old wrapping on the noncurrent version. Fifteen open questions, four of them blocking | — |
-| [041](041-the-liveness-probe-kills-the-drain.md) | **Refined 2026-09-15, nothing open**, **runs before [036](036-high-availability.md)** | `/health` serves both probes and reports the drain, so a terminating pod fails its liveness probe by design and may be killed before `runShutdownTail` runs — the phase that holds the multipart sweep of [ADR 0028](../adr/0028-an-abandoned-upload-is-ended-not-forgotten.md). The chart also has no `preStop` hook, so the drain starts while the pod's endpoints are still propagating. The refining round settled all eight questions as P6-P13: three endpoints — `/livez`, `/readyz` and a status document on the monitoring listener — with `/health` and `/version` removed outright and shipped as an ordinary `feat:` without a breaking marker, by the owner's decision; no startup probe; the backend reported from observed traffic and never probed on demand; `kubeVersion: ">=1.34.0-0"` with no opt-out for the hook; a grace period that fails the render when an override undercuts `preStop + shutdown_timeout + 5`; and one integration suite that owns the stack instead of a Velero case. The probe rules it established — liveness depends on nothing outside the process, readiness is never a load signal — are what [036](036-high-availability.md) needs before it puts a session store behind readiness, and they go into an ADR. One unknown left to measure: whether kubelet acts on a liveness failure for a pod already terminating | — |
+| [041](archive/041-the-liveness-probe-kills-the-drain.md) | **Archived 2026-09-15** | One endpoint served both Kubernetes probes and reported the drain, so a terminating pod failed its liveness probe by design; the chart had no `preStop` hook, so the drain began while the pod's endpoints were still propagating. Built the same day: the serving listener answers `/livez` and `/readyz`, the monitoring listener `/livez`, `/metrics` and a `/status` document built from what the real traffic showed about the backend, and `/health`, `/version` and the `/info` stub are gone from both. The chart declares a `preStop` hold with no opt-out, derives the grace period as `preStop + shutdown_timeout + 5` and fails the render when an override undercuts it. What is durable out of it is [ADR 0034](../adr/0034-a-probe-reports-the-process-never-its-dependencies.md) — liveness is a constant success, readiness is a lifecycle signal and never a load signal, no probe depends on anything outside the process, and dependency health is reported and acted on by nobody — which is the rule [036](036-high-availability.md) needs before it puts a session store behind readiness. The one unknown was measured: kubelet does not act on a liveness failure for a pod that is already terminating | — |
 | [035](archive/035-the-pinned-defect-sweep.md) | **Archived 2026-09-14** | The pinned-defect sweep: 55 candidates across ~65 000 lines of test code, 28 refused adversarially as behaviour an ADR decides, **27 unpinned to assert the target** and the product then fixed to meet them. Every suite green on 2026-09-13 — unit, integration, integration over TLS, conformance against MinIO and LocalStack, rclone 28 of 28, s3cmd 19 of 19, Velero in CI. The rule it produced is [ADR 0031](../adr/0031-a-test-states-the-target-and-stays-red-until-the-product-meets-it.md) and `CLAUDE.md`. **Two process items went to history open**: a red test still names its rule in a source comment rather than in the failure message ([ADR 0031](../adr/0031-a-test-states-the-target-and-stays-red-until-the-product-meets-it.md) D7/D9), and the three end-to-end required checks are not pinned to the app that reports them | — |
 The `010-*` directories are in [archive/](archive/) beside the ticket they belong
 to (`010-baseline`, `010-tier1`, `010-tier1.3`, `010-tier2`, `010-tier4.1`):
@@ -113,14 +114,15 @@ which is what [017](017-filename-encryption.md) and
 opt-in and changes no stored byte, 026 lifts a `501` — and either can be picked
 up on its own.
 
-**There is an order now, and it starts outside
-[036](036-high-availability.md).** Its refining round put two files ahead of it:
-[041](041-the-liveness-probe-kills-the-drain.md), because a pod that is killed
-mid-drain never reaches the phase where a session is handed over, and the multipart
-idle clock, which 036 expected to reuse as a lease heartbeat — that one landed on
-2026-09-15, and round 2 established it serves no such purpose, leaving 041. 036
-itself is refined but not scheduled: twenty-one numbered questions are still open,
-two of them produced by round 2 withdrawing a decision of round 1.
+**The two files [036](036-high-availability.md) was waiting on are both done.**
+Its refining round put them ahead of it: the probe split and the `preStop` hook,
+because a pod that is killed mid-drain never reaches the phase where a session is
+handed over, and the multipart idle clock, which 036 expected to reuse as a lease
+heartbeat. The clock landed on 2026-09-15 and round 2 established it serves no such
+purpose; the probe work landed the same day and left [ADR 0034](../adr/0034-a-probe-reports-the-process-never-its-dependencies.md)
+behind, which is what binds whatever 036 puts behind readiness. 036 itself is
+refined but not scheduled: twenty-one numbered questions are still open, two of
+them produced by round 2 withdrawing a decision of round 1.
 
 [039](039-backend-certificate-verification-failure-is-named.md) is independent of
 all three: nine small items, none breaking.

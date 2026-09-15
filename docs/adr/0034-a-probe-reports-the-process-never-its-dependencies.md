@@ -128,9 +128,11 @@ then.
 before `SIGTERM`, long enough for the EndpointSlice withdrawal to reach kube-proxy on every node,
 so the process stops accepting connections only once the cluster has stopped sending them. Its
 duration is a deployment value, not a proxy configuration key: the propagation time is a property
-of the cluster. The hold has **no opt-out** — an opt-out switch is a silently broken drain in
-values form — and the chart declares the Kubernetes floor the native hold needs rather than
-rendering it conditionally.
+of the cluster. The hold has **no opt-out**, and a duration of zero is refused for the same
+reason: an opt-out switch and a zero hold are the same thing, one wearing a flag and the other a
+number, and both install everywhere while leaving the drain racing the withdrawal exactly as
+before. The chart declares the Kubernetes floor the native hold needs rather than rendering it
+conditionally, so a cluster too old for the hold fails the install instead of running without it.
 
 **D11. The termination grace period is the sum of the hold, the shutdown budget and a fixed
 margin, and an override below that sum fails the render.** The three phases are sequential, so a

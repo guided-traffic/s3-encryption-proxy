@@ -1,6 +1,6 @@
 # 041 — The liveness probe kills the drain, and nothing holds the pod while its endpoints go away
 
-Raised 2026-09-15 while refining [036](036-high-availability.md). Two defects in
+Raised 2026-09-15 while refining [036](../036-high-availability.md). Two defects in
 the same few lines, both reachable on every `helm upgrade` today, neither
 depending on high availability or on anything in 036.
 
@@ -11,7 +11,7 @@ left to measure rather than decide, and it is work item 11.
 **Built 2026-09-15, and item 11 measured the same day.** All eleven work items are
 done — see *What was built* at the end of this file, and *The kubelet question,
 answered* for the measurement. The decisions P1 to P12 now live in
-[ADR 0034](../adr/0034-a-probe-reports-the-process-never-its-dependencies.md).
+[ADR 0034](../../adr/0034-a-probe-reports-the-process-never-its-dependencies.md).
 Nothing durable is left in this file, so it is ready to archive.
 
 ## The shape after this work
@@ -41,20 +41,20 @@ them for a human with no Prometheus, never their replacement.
 ## What is wrong
 
 **One endpoint serves both probes, and it reports the drain.**
-[router.go:71](../../internal/proxy/router.go) registers `/health` and nothing
-else; [handler.go:69-85](../../internal/proxy/handlers/health/handler.go) knows
+[router.go:71](../../../internal/proxy/router.go) registers `/health` and nothing
+else; [handler.go:69-85](../../../internal/proxy/handlers/health/handler.go) knows
 exactly one state — `shutdownInitiated` — and answers `503 shutting_down` from
 the moment SIGTERM arrives. The chart points **both** probes at it
-([values.yaml:134-150](../../deploy/helm/s3-encryption-proxy/values.yaml)):
+([values.yaml:134-150](../../../deploy/helm/s3-encryption-proxy/values.yaml)):
 `livenessProbe` with `periodSeconds: 10` and `failureThreshold: 3`,
 `readinessProbe` with `periodSeconds: 5`.
 
 So a draining pod fails its liveness probe by design. Against a grace period of
 `shutdown_timeout + 5` — 35 s at the defaults
-([_helpers.tpl:110-118](../../deploy/helm/s3-encryption-proxy/templates/_helpers.tpl)) —
+([_helpers.tpl:110-118](../../../deploy/helm/s3-encryption-proxy/templates/_helpers.tpl)) —
 roughly 30 s of failing liveness sits inside the window the shutdown needs. A
 SIGKILL there skips `runShutdownTail` entirely
-([main.go:407-431](../../cmd/s3-encryption-proxy/main.go)), which is where the
+([main.go:407-431](../../../cmd/s3-encryption-proxy/main.go)), which is where the
 multipart sweep of ADR 0028 and ADR 0029 lives: every open upload is then left at
 the backend as an orphan rather than ended.
 
@@ -163,7 +163,7 @@ noticed after 60 s today and after roughly 17 s at `initialDelaySeconds: 2`,
 
 **The one thing that reopens P7:** any work that does network I/O before the
 listener binds. The startup readability verdict sketched in
-[040](040-managed-buckets.md) would do exactly that and would make the start time
+[040](../040-managed-buckets.md) would do exactly that and would make the start time
 depend on the backend; a startup probe is the right instrument then and is not
 built before then.
 
@@ -297,12 +297,12 @@ is committed that way.
 In the tree:
 
 * **The runtime image is `gcr.io/distroless/static-debian12:nonroot`**
-  ([Containerfile:54](../../Containerfile)). No shell and no `sleep` binary, so
+  ([Containerfile:54](../../../Containerfile)). No shell and no `sleep` binary, so
   an `exec` preStop hook is not an option at all — the native
   `lifecycle.preStop.sleep` is the only shape.
 * **The monitoring listener already serves a constant-200 `/health`** and an
   `/info` stub answering `{"service":"s3-encryption-proxy","monitoring":"enabled"}`
-  ([server.go:37-53](../../internal/monitoring/server.go)). The first is the
+  ([server.go:37-53](../../../internal/monitoring/server.go)). The first is the
   liveness handler this ticket describes, already written; the second is the
   route the status document takes over. Neither has a consumer.
 * **Ten places in the tree probe `/health` on the S3 listener**, and every one of
@@ -313,28 +313,28 @@ In the tree:
   the demo start script, two tests, three documentation passages.
 * **The startup path is local and fatal on error.** Configuration, then the
   licence verified from a JWT in process, then the providers, then the server
-  ([main.go:120-136](../../cmd/s3-encryption-proxy/main.go)) — no backend round
+  ([main.go:120-136](../../../cmd/s3-encryption-proxy/main.go)) — no backend round
   trip, and every failure is a `Fatal`. There is no half-started state, which is
   what P7 rests on.
 * **The backend HTTP client is built in exactly one place**
-  ([server.go:211](../../internal/proxy/server.go)), so one `RoundTripper`
+  ([server.go:211](../../../internal/proxy/server.go)), so one `RoundTripper`
   wrapper sees every backend round trip and can tell a transport failure from an
   answer. That is what makes P9 cheap.
 * **The shutdown tail is already pinned by five unit tests**
-  ([shutdown_test.go](../../cmd/s3-encryption-proxy/shutdown_test.go)): the sweep
+  ([shutdown_test.go](../../../cmd/s3-encryption-proxy/shutdown_test.go)): the sweep
   before the listener close, the remaining budget rather than a second full one,
   an exhausted budget that still sweeps, a failing sweep that still closes, and
   the deadline as the single anchor. What they cannot show is a real process
   under a real signal, which is what P13 adds.
 * **The chart already has a unit-test harness** — `helm unittest` through
-  `make helm-test` ([Makefile:479](../../Makefile)) with pinned assertions in
+  `make helm-test` ([Makefile:479](../../../Makefile)) with pinned assertions in
   `tests/deployment_test.yaml`.
 * **The health routes carry no middleware and the drain guard is on the S3
-  subrouter only** ([middleware_setup.go:69-93](../../internal/proxy/middleware_setup.go)),
+  subrouter only** ([middleware_setup.go:69-93](../../../internal/proxy/middleware_setup.go)),
   so a probe keeps being answered throughout the drain. Nothing in P3 needs to
   change that.
 * **The licence ends the process itself on expiry**
-  ([validator.go:191-196](../../internal/license/validator.go), ADR 0016 D4), and
+  ([validator.go:191-196](../../../internal/license/validator.go), ADR 0016 D4), and
   an unknown configuration key refuses the start (ADR 0013 D11). Those two are
   why neither can be a liveness condition (P2).
 
@@ -350,7 +350,7 @@ Upstream:
   [kubernetes#122488](https://github.com/kubernetes/kubernetes/issues/122488) for
   the message an install below the floor produces.)
 * **The Velero suite's cluster is `kindest/node:v1.36.1`**
-  ([versions.env:21](../../test/e2e/velero/versions.env)), so the hook is
+  ([versions.env:21](../../../test/e2e/velero/versions.env)), so the hook is
   exercisable there when the kubelet question of work item 11 is answered.
 
 ### The kubelet question, answered
@@ -392,18 +392,18 @@ reason the liveness endpoint does not report the drain.
 
 ## What it must not break
 
-* [ADR 0029](../adr/0029-the-shutdown-budget-finishes-work-and-sweeps-what-cannot-be-finished.md)
+* [ADR 0029](../../adr/0029-the-shutdown-budget-finishes-work-and-sweeps-what-cannot-be-finished.md)
   D1 — the listener closes **last**, so that a probe arriving during the sweep
   reads `503 shutting_down` rather than a connection refusal. That is the
   behaviour of the endpoint that keeps reporting the drain, whichever name it
   ends up with.
-* [ADR 0028](../adr/0028-an-abandoned-upload-is-ended-not-forgotten.md) — the
+* [ADR 0028](../../adr/0028-an-abandoned-upload-is-ended-not-forgotten.md) — the
   sweep has to run at all, which is the point of the fix.
-* [ADR 0018](../adr/0018-a-major-release-is-declared-by-a-label.md) D5 — not
+* [ADR 0018](../../adr/0018-a-major-release-is-declared-by-a-label.md) D5 — not
   observed here, deliberately and by the owner's decision (P6). The ADR is not
   amended and its guard is not touched; the removal of `/health` and `/version`
   simply ships without a marker.
-* [ADR 0030](../adr/0030-the-network-boundary-belongs-to-the-administrator.md) —
+* [ADR 0030](../../adr/0030-the-network-boundary-belongs-to-the-administrator.md) —
   nothing here adds anything the chart has to defend.
 
 ## Open questions
@@ -452,9 +452,9 @@ is already terminating. It is work item 11.
    anything outside the process. 036 depends on these and a ticket is not a
    source of a rule (ADR 0022).
 10. **Documentation.** The chart README's probe rows,
-    [README.md](../../README.md), [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md)
+    [README.md](../../../README.md), [SECURITY_ARCHITECTURE.md](../../../SECURITY_ARCHITECTURE.md)
     — the probe paragraph and the monitoring-listener paragraph both name
-    `/health` — and [docs/developer/](../developer/).
+    `/health` — and [docs/developer/](../../developer/).
 11. **Measure the one unknown.** Whether kubelet acts on a liveness failure for a
     pod that is already terminating, answered once against `make e2e-up` and
     written into this file before it is archived. **Done 2026-09-15: it does
