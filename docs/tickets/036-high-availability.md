@@ -32,9 +32,308 @@ the key means something different under the same name and value, which is the
 kind of change that needs a major and a new name.
 
 
+## Refining round, 2026-09-15 — what was decided
+
+Worked through with the owner, question by question, against the running scenario
+below. **What is written as decided is decided**; everything else says that it is
+not. Two things were settled that are not among the thirty-three questions: the
+release constraint, and a defect that left in a ticket of its own.
+
+### The release constraint that governs every answer below
+
+**No work on this ticket may produce a commit carrying a breaking marker, and
+ADR 0018 is not amended.** The product stays on the 5.x line. That is a design
+constraint, not a commit convention: ADR 0018 D1 computes the version from the
+commit headers and D3 fails a pull request that carries a marker without the
+`release:major` label, and D5 forbids softening a marker to route around the
+guard. So an option that changes stored data, an existing configuration or a
+client-visible answer has to be replaced by the variant that buys the same thing
+additively — and twice below it could be, which is why the constraint is cheap
+here rather than crippling.
+
+### The decisions
+
+**1. Where the shared state lives (questions 1, 2, 24).** A **shared session
+table in an externally provided Valkey with Sentinel.** The store is never part
+of the `s3-encryption-proxy` chart; an operator provides it, which is the same
+division ADR 0030 D1 already draws for the network boundary.
+
+Three shapes were weighed and rejected. *Sticky routing* — ADR 0033's
+Alternatives already rejects it on three grounds and SECURITY_ARCHITECTURE.md
+§1.2 rule 2 adds a fourth. *Refusing client-driven multipart in a multi-instance
+deployment* — honest and free, and it takes Velero, rclone and s3cmd with it,
+because every SDK uploader switches to multipart above a threshold; dead as an end
+state under ADR 0006. *Owner-routing with a proxy-minted upload id and a
+byte-faithful forward* — it dissolves roughly a third of the open questions and
+needs no store at all, but it delivers no failover of an upload whose instance is
+gone, which is the property the title of this ticket promises.
+
+**Why Valkey rather than etcd or Consul**, stated because it is the whole reason
+the shared-table shape is affordable at all: a quorum-committed write is the
+10-40 % per part this ticket measures against the smallest streamed part, while a
+primary write to Valkey is the sub-millisecond class the same paragraph prices at
+1-3 %. The *Performance* section's verdict on a shared table was a verdict on
+Raft, not on shared state as such.
+
+**Why Sentinel rather than Valkey Cluster:** Sentinel keeps one keyspace. The
+atomic script a part needs — raise the part size, compute the offset, record the
+row — touches several keys of one session, and under Cluster those keys would have
+to be forced into one slot by hash tags, with every mistake surfacing as a
+`CROSSSLOT` error at runtime. Sentinel makes the problem not exist. Its native key
+expiry also answers question 16 for free: a row nobody renews disappears.
+
+**2. Three forms of deployment, not two (question 2).**
+
+| Configuration | Meaning |
+|---|---|
+| no coordination block | in-process session table — **exactly today's behaviour**, no store, no new dependency |
+| store configured, one replica | sessions outlive the process: a `helm upgrade` stops killing in-flight uploads |
+| store configured, N replicas | high availability |
+
+The middle row is the one that was nearly missed, and it is free — the adoption
+path is the same one HA needs. It also matters more than it sounds: the Deployment
+declares no `strategy:`, so every configuration edit rolls the pod through
+`checksum/config`, and **today that kills every upload in flight**.
+
+Two consequences. The store is not "the HA feature"; it is *sessions outlive the
+process*, and HA is one consequence of that — the documentation has to say it that
+way round or the middle row gets shipped untested. And ADR 0033's refusal stops
+being a guess about the image: the rule becomes **`replicaCount > 1` is permitted
+if and only if a coordination store is configured**, which is a values check the
+chart can really perform. The leftover case, a new chart against an old image,
+resolves itself cleanly — the old image does not define the key, `ErrorUnused`
+refuses the start (ADR 0013 D11), and the pod crash-loops loudly instead of
+producing an intermittent `404 NoSuchUpload` in the data path.
+
+**3. The session layer becomes one interface with two implementations — never two
+code paths.** In-process and Valkey, the way `KeyEncryptor` already has several
+providers behind one interface. `if store != nil` branches in the orchestration
+would be two products in one binary.
+
+**And the interface is made of operations, not of storage.** This is the part that
+decides whether it works: `partSize` is a read-modify-max *and* the offset
+computation in one critical section, so an interface cut as
+`GetSession`/`PutSession` leaks the atomicity out to the caller, where the
+in-process mutex covers it by accident and the store does not. The shape is
+`RaisePartSizeAndComputeOffset(...)`, `RecordPartIfCurrent(...)` — a mutex around
+a map on one side, a Lua script on the other, and the caller cannot tell.
+
+**4. The part size is pinned, and the refusal stays where it is (question 8).**
+The first part that could be a middle part fixes `partSize`; it is immutable
+afterwards and may therefore be cached locally, which turns every later offset
+into local arithmetic. Coordination drops from two round trips per part to one.
+
+**The early refusal that pinning makes possible is deliberately not taken.**
+ADR 0011 D2's check at Complete stays the refusal point, so no client-visible
+answer changes. It costs nothing: once the inferred maximum rises after any part
+has been sealed the upload is already doomed, because Complete checks every part
+against the final inference — so a pin condemns exactly the same set of uploads,
+at exactly the same moment. Refusing earlier is a separate, later decision.
+
+**5. The held short part never leaves the owner's memory (question 7).** It stays
+as plaintext in the process that received it, as today, and `CompleteMultipartUpload`
+is **forwarded to that owner** over the peer leg when it lands elsewhere. The
+forward carries the client's own SigV4 and a small XML document, so no client
+plaintext and no key material ever crosses between instances.
+
+Rejected: sealing the held part under the object's data key and parking it in the
+store. It would have bought complete failover — every other field is in the row —
+at the price of a new AEAD construction to specify and review, and of chunking the
+value, because a single write of up to `multipart_short_part_buffer_size` bytes
+crosses Valkey's default `client-output-buffer-limit replica` soft limit and costs
+a replica disconnect and full resynchronisation. Also rejected: parking it at the
+backend, which has no reserved object-key namespace to park it in.
+
+**The pin this creates is narrow, and that is what makes the decision cheap.** An
+upload is bound to an instance only from the arrival of a held part, and only that
+upload. Every SDK uploader produces the short part *last*, so the window is the
+tail of the upload — the last part plus Complete — and everything before it stays
+freely servable by any instance.
+
+**6. Ungraceful failover is in scope (question 24, second half).** An upload whose
+instance is SIGKILLed is adoptable once the lease expires, not after the idle
+hour. The lease is **bounded from below by the Sentinel failover window, not by
+the duration of a part** — roughly 90 s — because a TTL inside the failover window
+would have a live owner's upload adopted while it is healthy.
+
+That works because the heartbeat is [029](029-multipart-idle-clock.md)'s throttled
+touch: one store write per second per part in flight, which is a 2600-fold
+reduction against a 64 KiB read loop at the measured 162.5 MiB/s. It is also how a
+5 GiB part on a slow link survives, which is 029's own remaining fix. **It is not
+the per-iteration progress deadline ADR 0015 rejected** — once a second is not per
+iteration, so the objection recorded there does not reach this construction.
+
+**7. A defect found on the way out left in its own ticket:
+[041](041-the-liveness-probe-kills-the-drain.md).** `/health` serves both probes
+and reports the drain, so a terminating pod fails liveness by design and may be
+killed before `runShutdownTail` runs — which is where the sweep, and under this
+design the lease release, live. The chart also has no `preStop` hook, so the drain
+begins while the pod's endpoints are still propagating. Neither depends on
+anything here, and 041 is scheduled ahead of this ticket.
+
+### The reference scenario
+
+**Every remaining question is answered against this, not in the abstract.**
+
+Velero writes a backup of some tens of gigabytes through the proxy.
+`aws-sdk-go-v2`'s uploader sends 5 MiB parts, five concurrently — and 5 MiB is
+exactly 80 segments of 64 KiB, so **every part but the last is middle-part
+capable**: aligned, and above the backend's 5 MiB minimum. The last part is
+whatever the object size leaves over, practically never a multiple of 64 KiB, so
+it is **held** under ADR 0011 D5. Three pods, a store configured, and a compatible
+image update rolled through the API server.
+
+**Phase 0 — before the rollout.** The row in Valkey carries the upload id, the
+wrapped data key, the key-encryption fingerprint, the object key, the pinned part
+size and the part rows. **The upload has no owner.** Parts are independent
+(ADR 0011 D1), so every pod seals whichever part kube-proxy hands it, and the five
+in flight spread across all three. This is 99 % of the upload.
+
+**Phase 1 — the new pod joins first.** The chart declares no `strategy:`, so
+Kubernetes' default applies: at three replicas that is `maxSurge 1` and
+`maxUnavailable 0`, so a **new** pod becomes Ready before any old one is
+terminated. It reads the row, learns the pinned part size and serves parts of an
+upload the old version created. That is where "compatible image" does real work —
+and where a **schema version in the row** earns its keep, because today the
+compatibility is an assumption with no mechanism behind it.
+
+**Phase 2 — an old pod is terminated.**
+1. SIGTERM. The drain begins; see 041 for what is wrong with this moment today.
+2. The in-flight middle part finishes: sealed, stored, its row written, `200` to
+   Velero. **That part is safe.**
+3. The other four in-flight parts have their connections closed, the SDK retries
+   them, and they land on another pod. A retried part replaces its own backend
+   part and draws fresh nonces (ADR 0011 D1), so this is invisible to Velero.
+4. The shutdown tail. *Today:* `AbandonAllSessions` aborts every open upload at
+   the backend and **the backup dies here**. *Under this design:* the pod owns
+   nothing — the held part is the last one and the upload is somewhere in its
+   middle — so it releases its lease and goes.
+
+**Phases 3 and 4** repeat for the remaining two pods. The backup runs through.
+
+### What the scenario exposed
+
+**1. Today this exact rollout kills the backup, at one replica as well as three.**
+Kubernetes surges at `replicaCount: 1` too, the old pod drains, the sweep aborts,
+and Velero's next part is answered `404 NoSuchUpload`. The `checksum/config`
+annotation triggers the same roll on *any* configuration edit. This is the
+concrete case for the whole ticket and it is not hypothetical.
+
+**2. The pin window is about a second in an upload of minutes**, which is what
+makes question 6 decidable rather than alarming. It is only dangerous when the
+arrival of the held part falls inside a drain.
+
+**3. The duplicate part stops being unlucky and becomes ordinary.** A part times
+out on the terminating pod, the SDK retries it elsewhere, and the original backend
+`UploadPart` may still land. S3 keeps the last part written; the table keeps the
+last row written; the two orders are independent because the backend call runs
+unlocked between them. When they disagree Complete sends an entity tag that is not
+live, the backend answers `InvalidPart`, and `complete.go:296` **aborts the whole
+upload**. This race exists in a single process today — the rollout only makes a
+retry onto another instance certain. It is what the compare-and-set in *Races
+between two instances* is for, and "which entity tag is live" becomes a decision
+of its own.
+
+**4. The peer leg needs its own listener, closed after the client-facing one.**
+This follows from decision 5 and from 041 together, and nothing else in this
+ticket would have found it. Once a `preStop` hook withdraws the endpoints before
+SIGTERM, a client's `Complete` no longer reaches the draining owner through the
+Service — it reaches another pod, which forwards it to the owner by pod address.
+But `http.Server.Shutdown` refuses new connections from SIGTERM onward, so a
+freshly opened peer connection is rejected in exactly the phase the forward exists
+for. `runShutdownTail` already closes the client listener last, after the sweep;
+the peer listener has to close behind that one.
+
+### Proposed in this round, not decided
+
+Each of these was raised with its reasoning and none was put to the owner as a
+question yet. They are recorded so the reasoning is not re-derived.
+
+* **Extend ADR 0001 to the store.** Row schema rule: a field is either something
+  the backend already sees, or it is sealed under the object's data key; the data
+  key itself travels only wrapped. Valkey alone is then useless, because the
+  key-encryption key never leaves the proxy. Two fields fail that rule as the
+  session stands: `sessionPart.sum` is a **plaintext** CRC32C, which
+  SECURITY_ARCHITECTURE.md §6.4a names as a confirmation oracle in so many words,
+  and the object key is the client's cleartext name, which after
+  [017](017-filename-encryption.md) the backend no longer sees — so the row must
+  carry the *stored* name and the receiver re-derive, or ADR 0023 D8's "exactly
+  one boundary" becomes two.
+* **Enforce store TLS in code, not in documentation.** The precedent exists: an
+  `http://` backend endpoint is refused at startup under a provider that encrypts.
+  The same rule for the store URL. Note that the trust store itself does not exist
+  yet — `ca_file`, `RootCAs`, `ClientCAs` have no non-test hit anywhere in
+  `internal/`, `pkg/` or `cmd/` — which is the same missing mechanism
+  [039](039-backend-certificate-verification-failure-is-named.md) needs for the
+  backend leg. Deciding one without the other is how the two drift.
+* **The store credential and the Sentinel address list are plural from the first
+  release.** There is no configuration reload anywhere, so rotating either is a
+  restart of every instance and a restart ends every upload it holds
+  (ADR 0029 D2). Singular-to-plural afterwards is the shape change ADR 0013 D11
+  makes expensive, and this repository has paid it once with `s3_backend`. Both
+  fields must also be added to the hand-maintained `${VAR}` allowlist in
+  `envexpand.go`, or the proxy starts successfully and uses the literal
+  placeholder text as its secret.
+* **Neither probe ever depends on the store.** Reads, single-request PUTs and the
+  internal producer need no coordination; a readiness gate on the store would make
+  the majority of the traffic less available than the single instance it replaces.
+  A store outage refuses multipart with `503 SlowDown` and leaves the pod Ready.
+  Written into [041](041-the-liveness-probe-kills-the-drain.md) as well, because
+  that is where the probes are built.
+* **Sentinel's own failure modes need two answers the proxy can enforce.**
+  Acknowledged rows can be lost on a failover, because replication is
+  asynchronous — that is **fail-closed**, since `VerifyClientParts` demands an
+  exact two-way match and a missing row is `400 InvalidPart`, never a corrupt
+  object, but it blames a correct client and has to be documented rather than
+  discovered. And split brain lets two sweepers both believe they hold the lease,
+  where the primitive at the end is a real `AbortMultipartUpload` against someone
+  else's live upload; `min-replicas-to-write` is the setting that closes it, it
+  lives in Valkey's configuration rather than the proxy's, and the proxy can read
+  it at startup and refuse rather than leave the control in a document
+  (SECURITY_ARCHITECTURE.md §1.2 rule 2).
+* **Persistence off.** Everything in the store is in flight, so there is nothing
+  to back up — which has to be *stated*, or an operator will build a backup and
+  turn the row set into a durable record of every object name written through the
+  proxy (question 27).
+
+### Where the open questions stand after this round
+
+**Answered above:** 1, 2, 7, 8, 17, 24. Question 16 is answered in part — the
+store's key expiry deletes the row, but what *ends* an upload whose owner was
+SIGKILLed, and on whose clock, is still open.
+
+**Reshaped rather than answered:** 4 (the short-part budget stays per instance,
+because under decision 5 the held bytes never leave the process — what is still
+open is the read-then-reserve ordering of correction 9); 9 (every immutable field
+falls out of the consistency problem, so the question narrows to the part rows and
+the lease); 11 (a Sentinel failover is 10-30 s of write unavailability, which is
+the textbook case for `503 SlowDown` and makes the question concrete rather than
+theoretical); 12 (a forward exists after all, for exactly one verb, so its cost is
+paid and its listener ordering is finding 4 above); 14 (the upload id stays the
+backend's own — with a shared table the state does not have to move, so nothing
+needs minting); 20 (with a store, `RollingUpdate` becomes right rather than
+dangerous, so `strategy: Recreate` is not the answer); 21 and 33 (moot under the
+release constraint: nothing here may be breaking).
+
+**Untouched and still open:** 3, 5, 6, 10, 13, 15, 18, 19, 22, 23, 25, 26, 27, 28,
+29, 30, 31, 32 — and the new one this round produced, *which entity tag is live
+after a duplicate part*.
+
+### What this round changed outside the ticket
+
+* **[029](029-multipart-idle-clock.md) is no longer optional and is no longer
+  "not scheduled".** Its remaining fix — the `atomic.Int64` clock the part body
+  touches as bytes arrive — is the shape this design's lease heartbeat needs.
+  Landing it first hands this ticket a designed and tested heartbeat; landing this
+  first means 029's fix is designed twice. It was found moved into `archive/` in
+  the working tree with that fix unimplemented — `lastTouched` is still a
+  `time.Time` written under the session mutex, and `idleFor` still takes that mutex
+  to measure — and was moved back.
+* **[041](041-the-liveness-probe-kills-the-drain.md) is new and runs first.**
+
 Raised 2026-09-14 by the owner: *several s3-proxy instances side by side share the
 workload and synchronise with each other so that they cooperate on multipart
-uploads too.* **Announced, NOT SCHEDULED, no work started.**
+uploads too.* **Refined 2026-09-15 — see the round above. Not scheduled, no code written.**
 
 ## Second pass, 2026-09-14 — what the first pass got wrong
 
@@ -1100,6 +1399,13 @@ onwards are new.
 
 Split by what each item depends on, so the cheap half is not hostage to the
 expensive half (open question 23 decides whether that split becomes two tickets).
+
+**The refining round of 2026-09-15 settled part of the second block** — questions
+1, 2, 7, 8, 17 and 24 are answered there and the boxes below that depend on them
+are answered with them. Two further items now live elsewhere:
+[041](041-the-liveness-probe-kills-the-drain.md) carries the probe split and the
+`preStop` hook, and [029](029-multipart-idle-clock.md) carries the throttled clock
+this design reuses as its lease heartbeat. Both run before any code here.
 
 **Needs no design decision — could ship in 5.x:**
 

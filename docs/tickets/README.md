@@ -19,7 +19,7 @@ This page carries the [index](#index) of what exists and the
 [label index](#label-index) for the finding labels older ticket text still
 cites.
 
-**State (2026-09-14, after the 5.0.0 merge).** Eleven live ticket files; everything
+**State (2026-09-15).** Twelve live ticket files; everything
 the release carried is in [archive/](archive/). The bundle merged on 2026-09-14
 and `5.0.0` was cut, so the nine files that were its work list went with it:
 [023](archive/023-major-v5.md), the scope list itself, and
@@ -44,13 +44,17 @@ are both unblocked and additive — their own status blocks still say "blocked" 
 "after 013", which is stale. [025](025-tink-kms-hcvault.md), Vault as a key
 provider, is parked by owner decision.
 [027](027-whole-object-read-first-window.md) is an evaluation, not work, and
-[029](029-multipart-idle-clock.md) and
-[033](033-out-of-band-recovery-path.md) are decided not to be scheduled.
-[036](036-high-availability.md), [037](037-multiple-backends.md) and
-[038](038-s3-encryption-operator.md) are announcements so that 5.0.0's
-configuration does not foreclose them; nothing is built.
-[039](039-backend-certificate-verification-failure-is-named.md) is the one open
-work list, two small items. [040](040-managed-buckets.md) is a plan, raised
+[033](033-out-of-band-recovery-path.md) is decided not to be scheduled.
+[037](037-multiple-backends.md) and [038](038-s3-encryption-operator.md) are
+announcements so that 5.0.0's configuration does not foreclose them; nothing is
+built. **[036](036-high-availability.md) is no longer one of them**: it was
+refined on 2026-09-15 and its shape is decided — a shared session table in an
+externally provided Valkey with Sentinel — which pulled
+[029](029-multipart-idle-clock.md) off the not-scheduled list, because its
+throttled clock is the lease heartbeat that design needs, and produced
+[041](041-the-liveness-probe-kills-the-drain.md), which runs before either.
+[039](039-backend-certificate-verification-failure-is-named.md) and
+[041](041-the-liveness-probe-kills-the-drain.md) are the open work lists. [040](040-managed-buckets.md) is a plan, raised
 2026-09-14 and nothing in it decided: managed buckets, a startup readability
 verdict and a pass onto the current key encryption key. Its fourth part is
 forbidden by three accepted ADRs today, so refining answers that before anything
@@ -74,18 +78,19 @@ is estimated.
 | [024](archive/024-coverage-round-findings.md) | **Archived 2026-09-13** | The coverage round of 2026-09-06 and the defect list it produced. Wave 2 closed every open row but one: **S-3**, the unauthenticated monitoring listener. That is answered — [ADR 0014](../adr/0014-authentication-is-sigv4-no-rate-limiting.md) D11 is the rule, the owner decision of 2026-09-12 dropped `licensed_to` and `company` from the scrape and adds no `NetworkPolicy` as the answer (the chart's optional one stays off by default, `networkPolicy.enabled: false`, and the network boundary is the administrator's), and `SECURITY_ARCHITECTURE.md` states the posture. `ListParts` is named there for continuity and belongs to [013](archive/013-storage-format-v2.md) | C-1, C-2, I-1, I-2, S-1 to S-6, A-1 to A-3, P-1 to P-3, X-1, X-2; the decisions it produced are ADRs now |
 | [026](026-sse-c-passthrough.md) | Open, **additive since 2026-09-11** | SSE-C (customer-provided keys) forwarded on every verb — PUT, GET, ranged GET, HEAD, multipart create and parts — with the response echo, never logged or stored. Both preconditions are met: the format change removed the copy-source plumbing it would have owed, and the storage-header decision shipped, so the three customer-key headers are refused `501 NotImplemented` today ([ADR 0007](../adr/0007-forward-it-or-refuse-it.md) D6). Until that refusal existed this ticket was a breaking change parked in an open ticket; it is now what it was written to be — lifting a refusal | — |
 | [028](archive/028-upload-and-read-performance-round.md) | **Archived 2026-09-14** | The upload and read performance round after wave 7: the comparison stopped measuring its own harness, four costs came off the read and write paths, a client part is forwarded while it is received (ADR 0024 D1), and an upload that can no longer be finished is ended rather than abandoned (ADR 0028, ADR 0029). The analytical half of the round — the crypto floor and its headroom, the measured price of the tail-first read's second request, three falsified suspicions and the two-transport caveat on the published comparison — is in [docs/developer/performance.md](../developer/performance.md); ticket 027 was corrected directly, because it was still asking a question this round had answered | — |
-| [029](029-multipart-idle-clock.md) | Open, **not scheduled (2026-09-12)** | The multipart idle clock moves only at part boundaries, so one part slower than `multipart_session_idle_timeout` is expired and ended at the backend while it is still arriving. Owner decision: rare enough to live with, and an operator can raise the timeout. The mitigation is usable now — a swept upload is logged at `Info` with the idle time, the configured timeout and the name of the knob. What is left is the real fix: an `atomic.Int64` clock the part body touches as bytes arrive | — |
+| [029](029-multipart-idle-clock.md) | Open, **pulled back in 2026-09-15 by [036](036-high-availability.md)** | The multipart idle clock moves only at part boundaries, so one part slower than `multipart_session_idle_timeout` is expired and ended at the backend while it is still arriving. Owner decision: rare enough to live with, and an operator can raise the timeout. The mitigation is usable now — a swept upload is logged at `Info` with the idle time, the configured timeout and the name of the knob. What is left is the real fix: an `atomic.Int64` clock the part body touches as bytes arrive — and 036's refining round made it a dependency rather than a nicety, because a throttled touch is exactly the shape a lease heartbeat needs and building 036 first would design it twice | — |
 | [025](025-tink-kms-hcvault.md) | Parked | Vault as a key provider: the five decisions still to make, the rotation findings worth keeping, and what must be verified against a running Vault before any code. Not in the next major release | — |
 | [027](027-whole-object-read-first-window.md) | Open, **evaluation only (2026-09-11)** | How large the first read of a whole-object `GET` should be. The tail-first read of [ADR 0003](../adr/0003-objects-are-an-authenticated-segment-chain.md) D14 costs a second backend request above 64 KiB. Five options are written down with what each costs; option C — issue the second request on the first answer's headers — shipped with [028](archive/028-upload-and-read-performance-round.md), so the round trip now overlaps the first read and the 1.2 ms and 40 % this ticket measures predate it. The question, and the window, are unchanged. Explicitly **not** in 5.0.0 | — |
 | [030](archive/030-test-suite-audit.md) | **Archived 2026-09-14** | The test suite read against what the product promises: 71 findings raised, 62 surviving a second reader, four of them mutation-proven to pass with the guard they exist for deleted. Every row was worked, and five defects in the product came out of it, not in its tests — the unpinned end-relative ranged reads, an orphaned backend upload after a shutdown, `os.Exit` from the monitoring goroutine, [ADR 0011](../adr/0011-the-proxy-owns-the-part-layout.md) D5's missing global short-part budget, and three responses that did not answer what S3 answers | — |
 | [031](archive/031-short-part-budget-starvation.md) | **Archived 2026-09-14** | One client-driven upload holding one short part of `optimizations.multipart_short_part_buffer_size` keeps every other upload in the process from holding its last part — `503 SlowDown` until that session ends, and its owner decides when. The global bound of [ADR 0011](../adr/0011-the-proxy-owns-the-part-layout.md) D5 is strictly better for the process than the per-session cap it replaced; what is new is the effect on other clients. **Its A/B decision was never taken and the cross-client consequence is in no document** — no `H-12` in `SECURITY_ARCHITECTURE.md` section 8, no bullet in 4.2, no sentence in ADR 0011 | — |
 | [033](033-out-of-band-recovery-path.md) | Open, **not scheduled (2026-09-12)** | A deliberate out-of-band tool that decrypts an object whose metadata or stored bytes are damaged, under the owner's explicit risk. The proxy must never do this — it may not serve an unauthenticated byte. Raised out of the discussion behind [ADR 0002](../adr/0002-one-data-key-per-object.md) D13; the requirement and what the format already gives it are recorded, the design is not started | — |
 | [034](archive/034-etag-form-and-the-last-chance-sweep.md) | **Archived 2026-09-14** | The last-chance sweep: what only a major can change. The entity tag stopped being the backend's ciphertext MD5 in the shape of a content digest and became a change token with a `-0` marker ([ADR 0032](../adr/0032-the-entity-tag-is-a-change-token-never-a-content-digest.md)), decided on the evidence of the two new client suites; `UploadPart` under the exit provider is forwarded while it arrives instead of read whole; and of six major-only tightenings, four shipped — strict provider `config:` blocks, one licence environment variable, the cleanup-interval minimum, and `optimizations.multipart_part_size`. Two were left: `description` as a declared annotation key, and the chart's dead `logging.*` values | — |
-| [036](036-high-availability.md) | Announced 2026-09-14, **not scheduled** | Several proxies sharing a workload and cooperating on client-driven multipart uploads. Announced so that 5.0.0's configuration does not foreclose it; nothing is built. The chart it would change now installs one instance and refuses a second ([ADR 0033](../adr/0033-a-proxy-instance-holds-its-uploads.md)), and a coordination block needs no key reserved, because a key the proxy defines later refuses no existing file | — |
+| [036](036-high-availability.md) | **Refined 2026-09-15**, not scheduled | Several proxies sharing a workload and cooperating on client-driven multipart uploads. The refining round decided the shape: a shared session table in an externally provided Valkey with Sentinel, three deployment forms (no store, store at one replica so sessions outlive the process, store at N for HA), one session-store interface with two implementations, a pinned part size whose refusal stays at Complete, and a held short part that never leaves its owner's memory. It carries a reference scenario — Velero backing up through a rolling image update — that every remaining question is answered against. Eighteen questions still open; nothing is built. The chart it would change now installs one instance and refuses a second ([ADR 0033](../adr/0033-a-proxy-instance-holds-its-uploads.md)), and a coordination block needs no key reserved, because a key the proxy defines later refuses no existing file | — |
 | [037](037-multiple-backends.md) | Announced 2026-09-14, **shape built, feature not** | Several backends kept in sync, with a fallback to another copy when an object does not authenticate. The configuration shape landed in 5.0.0 because it is the only breaking part: `s3_backends` is a list and this release reads exactly one entry. The feature — write policy, read order, what counts as a fallback trigger — is open. The request-path consequences were surveyed on 2026-09-14 and written into the ticket: 66 backend call sites, 27 write verbs, and the finding that only a `before_response` refusal can fall back at all — a rewritten segment is found mid-stream, after the 200. Nineteen open questions, none decided | — |
 | [038](038-s3-encryption-operator.md) | Announced 2026-09-14, **not scheduled** | A Kubernetes operator provisioning proxy instances through Custom Resources: backends, licence distribution, credential Secrets. A separate program with its own entry point and its own chart; `s3-encryption-proxy` stays the single-instance one ([ADR 0033](../adr/0033-a-proxy-instance-holds-its-uploads.md)). Independent of [036](036-high-availability.md): an operator that provisions single instances needs nothing from it. Configuration is read at start only, so a changed backend rolls the pod | — |
 | [039](039-backend-certificate-verification-failure-is-named.md) | Open (2026-09-14), **nine small items after the second pass** | The CA bundle in the image (`/etc/ssl/certs/ca-certificates.crt`, Go's root-loading rule, `SSL_CERT_FILE`) documented in `docs/developer/configuration.md`, and a backend certificate that fails verification logged at error level with its own message and an x509 `reason` instead of the generic `S3 operation failed`. Four runs against the demo MinIO under a private CA are recorded in the ticket, and a second pass on the same day added twelve findings and five further open questions, seven in total — among them whether the proxy should check its backend before it reports Ready | — |
 | [040](040-managed-buckets.md) | Raised 2026-09-14, **planning only, nothing decided** | A configured list of buckets the deployment owns; a startup verdict per bucket (reachable, permitted, every object readable) with a failure policy over it; a pass that moves a bucket onto the current key encryption key; a readiness switch and an init-phase progress line. **Its fourth part is forbidden verbatim by [ADR 0017](../adr/0017-stored-data-compatibility-is-not-owed.md) D3, [ADR 0002](../adr/0002-one-data-key-per-object.md) D7 and [ADR 0004](../adr/0004-one-local-key-provider.md) D12**, and its second falsifies ADR 0002's "the bucket is not consulted at startup and cannot be" — so amendments come first, in the session the decision is taken. The premise that a key move needs no re-upload is **refuted by measurement**: the only metadata-replace mechanism S3 has is a self-copy, which is a full server-side rewrite, and it strips Object Lock state while leaving the old wrapping on the noncurrent version. Fifteen open questions, four of them blocking | — |
+| [041](041-the-liveness-probe-kills-the-drain.md) | Open (2026-09-15), **runs before [036](036-high-availability.md)** | `/health` serves both probes and reports the drain, so a terminating pod fails its liveness probe by design and may be killed before `runShutdownTail` runs — the phase that holds the multipart sweep of [ADR 0028](../adr/0028-an-abandoned-upload-is-ended-not-forgotten.md). The chart also has no `preStop` hook, so the drain starts while the pod's endpoints are still propagating. One open question: whether the split is additive or renames what `/health` answers. Whether kubelet acts on a liveness failure for a pod already terminating is unverified and needs a real cluster | — |
 | [035](archive/035-the-pinned-defect-sweep.md) | **Archived 2026-09-14** | The pinned-defect sweep: 55 candidates across ~65 000 lines of test code, 28 refused adversarially as behaviour an ADR decides, **27 unpinned to assert the target** and the product then fixed to meet them. Every suite green on 2026-09-13 — unit, integration, integration over TLS, conformance against MinIO and LocalStack, rclone 28 of 28, s3cmd 19 of 19, Velero in CI. The rule it produced is [ADR 0031](../adr/0031-a-test-states-the-target-and-stays-red-until-the-product-meets-it.md) and `CLAUDE.md`. **Two process items went to history open**: a red test still names its rule in a source comment rather than in the failure message ([ADR 0031](../adr/0031-a-test-states-the-target-and-stays-red-until-the-product-meets-it.md) D7/D9), and the three end-to-end required checks are not pinned to the app that reports them | — |
 The `010-*` directories are in [archive/](archive/) beside the ticket they belong
 to (`010-baseline`, `010-tier1`, `010-tier1.3`, `010-tier2`, `010-tier4.1`):
@@ -105,18 +110,24 @@ which is what [017](017-filename-encryption.md) and
 opt-in and changes no stored byte, 026 lifts a `501` — and either can be picked
 up on its own.
 
-[039](039-backend-certificate-verification-failure-is-named.md) is the only file
-here with outstanding work in the product: two small items, neither breaking.
+**There is an order now, and it starts outside
+[036](036-high-availability.md).** Its refining round put two files ahead of it:
+[041](041-the-liveness-probe-kills-the-drain.md), because a pod that is killed
+mid-drain never reaches the phase where a session is handed over, and
+[029](029-multipart-idle-clock.md), whose remaining fix is the throttled clock
+036's lease heartbeat reuses. Both are small and neither is breaking. 036 itself
+is refined but not scheduled: eighteen questions are still open.
+
+[039](039-backend-certificate-verification-failure-is-named.md) is independent of
+all three: nine small items, none breaking.
 
 The rest are parked by decision, not by dependency:
 [025](025-tink-kms-hcvault.md) until Vault is wanted,
 [027](027-whole-object-read-first-window.md) because it is an evaluation rather
-than work, [029](029-multipart-idle-clock.md) and
-[033](033-out-of-band-recovery-path.md) because the owner decided not to
-schedule them, and [036](036-high-availability.md),
-[037](037-multiple-backends.md) and [038](038-s3-encryption-operator.md) because
-they are announcements — written so that 5.0.0's configuration does not
-foreclose them, with nothing built.
+than work, [033](033-out-of-band-recovery-path.md) because the owner decided not
+to schedule it, and [037](037-multiple-backends.md) and
+[038](038-s3-encryption-operator.md) because they are announcements — written so
+that 5.0.0's configuration does not foreclose them, with nothing built.
 
 ## Label index
 
