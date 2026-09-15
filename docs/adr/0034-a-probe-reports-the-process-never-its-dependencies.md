@@ -206,11 +206,15 @@ front of the person who can act on it.
 
 ## Residual risks
 
-* **Whether kubelet acts on a liveness failure for a pod that is already terminating was not
-  verified against a real cluster** at the time this record was written. If it does not, the
-  defect that produced this record was the probe semantics alone; if it does, the shutdown budget
-  was a fiction on every rollout. The decision does not depend on the answer — a liveness probe
-  that reports the drain is wrong either way — but the severity of what preceded it does.
+* **Measured 2026-09-15 on kubelet v1.36.1: kubelet does not act on a liveness failure for a pod
+  that is already terminating — it stops probing it altogether.** A pod deleted with a
+  permanently failing liveness endpoint was left alone for the whole of its 123-second grace
+  period, with no unhealthy event and no restart, where the identical pod not terminating was
+  marked for restart within two seconds. So the defect that produced this record was the probe
+  semantics alone: the shutdown budget was not in fact being cut short. That is measured kubelet
+  behaviour on one version, **not a guarantee read out of the API contract** — a kubelet that
+  changed its mind would make the old design dangerous again, which is one more reason the
+  liveness endpoint does not report the drain.
 * **The hold's duration is a guess about the cluster, not a measurement of it.** Propagation is
   well under a second in a small cluster and a few seconds in a large one; nothing in the chart
   measures it, and a cluster slower than the configured hold still has the race this record

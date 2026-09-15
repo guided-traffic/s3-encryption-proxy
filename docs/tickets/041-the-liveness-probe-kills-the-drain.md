@@ -8,11 +8,11 @@ depending on high availability or on anything in 036.
 written.** The decisions are P1 to P13 under *Refining round*; one unknown is
 left to measure rather than decide, and it is work item 11.
 
-**Built 2026-09-15.** Work items 1 to 10 are done and verified — see *What was
-built* at the end of this file. Item 11 is the only one outstanding, and it is a
-measurement against a real cluster, not a change to the tree. The decisions P1
-to P12 now live in [ADR 0034](../adr/0034-a-probe-reports-the-process-never-its-dependencies.md);
-this file is a work list again and is archived when item 11 is answered.
+**Built 2026-09-15, and item 11 measured the same day.** All eleven work items are
+done — see *What was built* at the end of this file, and *The kubelet question,
+answered* for the measurement. The decisions P1 to P12 now live in
+[ADR 0034](../adr/0034-a-probe-reports-the-process-never-its-dependencies.md).
+Nothing durable is left in this file, so it is ready to archive.
 
 ## The shape after this work
 
@@ -58,9 +58,10 @@ SIGKILL there skips `runShutdownTail` entirely
 multipart sweep of ADR 0028 and ADR 0029 lives: every open upload is then left at
 the backend as an orphan rather than ended.
 
-**How bad this is turns on one unverified fact** — whether kubelet acts on a
-liveness failure for a pod that is already terminating. See *Still unverified*
-below; it is the only thing the refining round could not settle from the tree.
+**How bad this is turns on one fact, measured 2026-09-15: kubelet does not act.**
+It stops liveness-probing a pod the moment termination begins, so the failing
+probe never shortened the shutdown budget. The defect was the probe semantics
+alone. See *The kubelet question, answered* below.
 
 **There is no `preStop` hook.** `grep -rn "preStop\|lifecycle"` over
 `deploy/helm/` finds nothing. SIGTERM therefore starts `http.Server.Shutdown` —
@@ -352,12 +353,42 @@ Upstream:
   ([versions.env:21](../../test/e2e/velero/versions.env)), so the hook is
   exercisable there when the kubelet question of work item 11 is answered.
 
-### Still unverified, and it is a measurement, not a decision
+### The kubelet question, answered
 
-**Whether kubelet acts on a liveness failure for a pod that is already
-terminating.** If it does not, today's defect is the dead probe semantics alone;
-if it does, the shutdown budget is a fiction on every rollout. The answer needs a
-real cluster and is work item 11.
+**Measured 2026-09-15 against kubelet v1.36.1 in the Velero e2e kind cluster.
+kubelet does not act on a liveness failure for a pod that is already
+terminating — it stops probing it altogether.**
+
+The experiment, in its own namespace, twice with the identical pod spec:
+
+* A container serving a file over `httpd`, with a liveness probe on that file at
+  `periodSeconds: 1`, `failureThreshold: 1`. It ignores `SIGTERM` and loops
+  forever, so it cannot exit on its own inside the grace period — that is what
+  makes any restart attributable to kubelet and to nothing else. A `preStop` hook
+  removes the file, so the probe target is gone before `SIGTERM` and stays gone.
+  `terminationGracePeriodSeconds: 120`.
+* **Control, not terminating.** The file is removed by hand. Two seconds later:
+  `Unhealthy: Liveness probe failed: HTTP probe failed with statuscode: 404` and
+  `Killing: Container app failed liveness probe, will be restarted`.
+* **Measurement, terminating.** `kubectl delete pod`. `Killing: Stopping
+  container app` at once, then **nothing for the whole 123 seconds** until the
+  pod went away at grace expiry: no `Unhealthy`, no restart event,
+  `restartCount` 0, `started` still true. The probe target was confirmed to be
+  returning 404 from inside the container 64 seconds into that window, so the
+  probe would have failed on every one of its 120 attempts had kubelet made
+  them.
+
+**What this changes:** the *severity* of what preceded this work, not the work.
+The shutdown budget was never actually cut short by the failing liveness probe on
+this kubelet, so no upload was stranded by that mechanism. A liveness probe that
+reports the drain is still wrong — it says the process should be killed while the
+process is doing the one thing a kill must not interrupt — and the `preStop`
+defect beside it was real and unconditional.
+
+**What it does not establish:** this is measured kubelet behaviour on one
+version, not a guarantee read out of the Kubernetes API contract. A kubelet that
+changed its mind would make the old design dangerous again, which is one more
+reason the liveness endpoint does not report the drain.
 
 ## What it must not break
 
@@ -426,7 +457,8 @@ is already terminating. It is work item 11.
     `/health` — and [docs/developer/](../developer/).
 11. **Measure the one unknown.** Whether kubelet acts on a liveness failure for a
     pod that is already terminating, answered once against `make e2e-up` and
-    written into this file before it is archived.
+    written into this file before it is archived. **Done 2026-09-15: it does
+    not.**
 
 ## Done when
 
@@ -443,7 +475,7 @@ is already terminating. It is work item 11.
 - [x] `make helm-test` pins the probe wiring, the hook and the arithmetic.
 - [x] The shutdown suite shows a SIGTERMed container finishing its sweep — no
       multipart upload left at the backend — and leaves the stack usable.
-- [ ] The kubelet question is answered against a real cluster and written down
+- [x] The kubelet question is answered against a real cluster and written down
       here.
 - [x] P2, P4 and P5 are in an ADR.
 
