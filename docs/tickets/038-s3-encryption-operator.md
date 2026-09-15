@@ -27,6 +27,12 @@ template. That is a design input for the CR, not a defect.
 rather than a hard-coded `dev`, so a CR status has something honest to report
 without the operator having to read a metric.
 
+**The tree was gone over a second time the same day**, after ADR 0033 and the
+`s3_backends` list had landed. What that found is under *Second pass* and is
+lettered A-J; open questions 7-13 come out of it and cite those letters. Two
+claims in *What the tree looks like today* were stale by then and have been
+corrected in place rather than left standing.
+
 
 Raised 2026-09-14 by the owner, **announced only**. **Not scheduled, no work
 started, nothing designed.** It is written down today because 5.0.0 is being cut
@@ -71,20 +77,25 @@ Verified in this repo on 2026-09-14.
   viper `WatchConfig` anywhere in the tree. **An operator cannot change a
   backend, a credential or a provider without restarting the pod.** Every
   reconcile that touches configuration is a rollout.
-- **`${VAR}` expansion happens at that same load**, over exactly seven places:
-  the four `s3_backend` fields, `s3_clients[].access_key_id` / `secret_key`, and
-  every string under `encryption.providers[].config`
-  (`internal/config/envexpand.go:51-103`). So a rotated Secret reaches a running
-  proxy through nothing at all.
+- **`${VAR}` expansion happens at that same load**, and nowhere else: the four
+  fields of **every** `s3_backends` entry, `s3_clients[].access_key_id` /
+  `secret_key` per entry, and every string under `encryption.providers[].config`
+  (`internal/config/envexpand.go:45-104`). An unset or empty variable refuses the
+  start, naming the field. So a rotated Secret reaches a running proxy through
+  nothing at all — the variable is read once, into a value that never changes
+  again.
 - **A client-driven multipart session is process-local.** It is filed in an
   in-memory map on the manager (`internal/orchestration/segmented_session.go:181-189`)
   and no other replica can adopt it
   ([docs/developer/multipart.md](../developer/multipart.md), "Shutdown ends what it
   is still holding"); a part arriving at another pod is answered `404 NoSuchUpload`
   (`internal/proxy/handlers/multipart/upload.go:162`). No `sessionAffinity` is set
-  anywhere under `deploy/`, and `values-production.yaml:27-32` enables autoscaling
-  from 3 to 20 replicas. *Scaling instances is not the same thing as scaling
-  replicas*, and the operator has to know which one a CR means.
+  anywhere under `deploy/`. Since ADR 0033 the chart refuses `replicaCount` above 1
+  and refuses autoscaling outright (`templates/_helpers.tpl:204-211`), and the
+  production profile installs one instance with no budget
+  (`values-production.yaml:15,34-41`) — so *scaling instances is not the same thing
+  as scaling replicas* is now enforced rather than assumed, and the operator still
+  has to know which one a CR means.
 - **The proxy has no API-server footprint.** The chart's ServiceAccount sets
   `automountServiceAccountToken: false` (`templates/serviceaccount.yaml:12`) and
   no Role or ClusterRole exists under `deploy/`. An operator introduces the first
@@ -99,9 +110,11 @@ Verified in this repo on 2026-09-14.
   an argument **for** an operator, not against it.
 - **Nothing reports what a proxy loaded.** `/health` answers `{"status":"healthy"}`
   as soon as the listener is up and `503` only during shutdown
-  (`internal/proxy/handlers/health/handler.go:60-87`); `/version` answers a
-  hard-coded `"dev"` (`handler.go:114`); the monitoring listener's `/info` is a
-  fixed string (`internal/monitoring/server.go:47-53`). No metric names a provider
+  (`internal/proxy/handlers/health/handler.go:49-95`); `/version` answers the real
+  version, commit and build time since 2026-09-14 (`handler.go:98-140`), which is
+  the one honest thing an operator can read without the monitoring listener; the
+  monitoring listener's `/info` is still a fixed string
+  (`internal/monitoring/server.go:47-53`). No metric names a provider
   alias, a KEK fingerprint or the backend's reachability, and `monitoring.enabled`
   defaults to `false` (`internal/config/config.go:395`).
 - **Nothing counts instances.** The licence carries a `k8s_cluster_id` claim
@@ -113,13 +126,14 @@ Verified in this repo on 2026-09-14.
 Per item: the key as it is today, the shape the feature would need, whether
 changing it later breaks a running deployment.
 
-**1. `s3_backend:` — one endpoint per process.** A single struct,
-`internal/config/config.go:29-35`. "Configures the backends" is either one CR per
-backend (no change) or several backends per process, which makes `s3_backend` a
-list or a map — **breaking later**, because every deployment writes this key. The
-shape itself belongs to [037](037-multiple-backends.md); what this ticket adds is
-that an operator is the party that would make several backends worth having.
-*5.0.0 could do*: nothing on this ticket's account.
+**1. `s3_backends:` is a list already, and this stopped being a cost on
+2026-09-14.** `Config.S3Backends []S3BackendConfig` (`internal/config/config.go:167`);
+[037](037-multiple-backends.md) took the shape change into 5.0.0 for exactly the
+reason this ticket was written, and everything *inside* an entry stays additive
+afterwards. So "several backends per process" no longer forces a 6.0.0 and needs
+nothing reserved here. What an operator must know instead: **this release reads
+one entry and refuses a second by a message of its own**, so a CR naming two
+backends does not start. *5.0.0 does*: nothing further on this ticket's account.
 
 **2. There is no file form for a secret value.** `license_file`
 (`config.go:169`) is the only key that names a file; `s3_backend.secret_key`,
@@ -165,17 +179,125 @@ immutability, wherever this is taken up.
 ## What 5.0.0 could do now, and what it costs
 
 - **Serve the real build information from `/version`** instead of the literal
-  `"dev"` (`handler.go:114`). The process already holds version, commit and build
-  time and hands them to the metrics package. It is a client-visible answer, so it
-  carries a breaking marker (ADR 0018 D5) — which is exactly why the major is the
-  cheap place for it. Small, and it gives an operator one thing to read that does
-  not require the monitoring listener.
+  `"dev"` — **done 2026-09-14** (`handler.go:98-140`). The process already held
+  version, commit and build time; it is a client-visible answer, so it carried a
+  breaking marker (ADR 0018 D5), which is why the major was the cheap place for it.
+  It gives an operator one thing to read that does not require the monitoring
+  listener, and it opens a question that had no subject while the answer was
+  `"dev"` — see G and open question 11.
 - **Settle the four Helm-named environment variables** (finding 5): rename, drop
   or keep deliberately. Free today, breaking after.
-- **Everything else: nothing worth doing.** The two shapes a future operator might
-  want — `s3_backend` as a list, `tls:` as a list of listeners — are changes to keys
-  every deployment writes, for a feature with no design and no schedule. A shape
-  adopted "just in case" is usually the wrong shape.
+- **Everything else: nothing worth doing.** One of the two shapes a future
+  operator might want — `s3_backends` as a list — landed on its own ticket's
+  account. The other, `tls:` as a list of listeners, is a change to a key every
+  deployment writes, for a feature with no design and no schedule. A shape adopted
+  "just in case" is usually the wrong shape.
+- **Not a configuration shape, and cheaper than any of them: give the backend
+  credential an external-Secret path in the chart** (second pass, A). Additive,
+  breaks nothing, and it is the first thing an operator needs that does not exist.
+
+## Second pass, 2026-09-14: what else an operator inherits
+
+Verified against the branch the same day, after ADR 0033 and the `s3_backends`
+list had landed. Nothing here is decided either — it is what the next reader needs
+in front of them before the first design session.
+
+**A. The backend credential has no external-Secret path, and it is the first
+thing an operator needs.** `secrets.encryption.existingSecret` and
+`license.existingSecret` both exist; `secrets.s3` has neither
+(`values.yaml:266-282`, `templates/secret.yaml:9-14`), so the backend access key
+and secret reach the pod only through a Secret the chart renders from a plaintext
+values field. A CR may not carry that value
+([ADR 0021](../adr/0021-key-material-is-generated-never-committed.md)), so today
+an operator would have to create the Secret itself and inject the pair through
+`env`, going around `secrets.s3` entirely. Closing it in the chart is additive and
+breaks nothing; whether the chart or the operator closes it is open.
+
+**B. Three environment-variable names are an unwritten contract between the chart
+and the configuration blob.** The pod is given `S3_ACCESS_KEY_ID`, `S3_SECRET_KEY`
+and `S3EP_AES_KEY` (`templates/deployment.yaml:87-110`), and the shipped `config`
+references exactly those three by name (`values.yaml:236-260`). Nothing checks the
+pairing: a configuration naming a fourth variable renders, installs, and fails at
+pod start with `environment variable ${...} is not set or empty`. An operator that
+renders the configuration either adopts these three names as part of its own API
+or validates the pairing at admission — which is open question 2 arriving through
+the back door.
+
+**C. The shipped default gives one key pair two roles, in every profile including
+production.** `s3_backends[0]` and `s3_clients[0]` both read `${S3_ACCESS_KEY_ID}`
+/ `${S3_SECRET_KEY}` in `values.yaml:236-245`, `values-production.yaml:125-131`,
+`values-development.yaml:58-64` and `values-monitoring.yaml:97-103`. The chart
+README carries it as known limitation 3 with the right consequence — a client
+holding the backend key reaches the bucket directly, where it can write
+unencrypted objects and delete stored ones without the proxy ever seeing the
+request. A CR that defaults the way the chart defaults inherits exactly that.
+Whether the operator *mints* the client credential rather than templating it is
+worth deciding early: it is the one credential in this product that has no other
+owner.
+
+**D. A licence that lapses while the proxy runs ends the process.** The runtime
+monitor calls a shutdown that exits 1 (`internal/license/validator.go:244-259`),
+and the startup gate then refuses the restart
+([ADR 0016](../adr/0016-the-license-is-a-startup-gate.md)) — so a pod does not
+degrade, it crash-loops. With one token across a fleet, every instance does it
+inside the same minute. What says why: the pod log, and
+`s3ep_license_expiry_timestamp`, which is set once at startup and only when
+`monitoring.enabled` is true (`internal/monitoring/metrics.go:164-181`). An
+operator turns expiry from a per-pod surprise into a fleet event something could
+warn about beforehand — an argument for the status of open question 6, and the
+reason the licence question (4) is not only about distribution.
+
+**E. Every reconcile that rolls a pod aborts the uploads that pod is holding.**
+`Manager.Shutdown` sweeps the sessions it cannot finish and completes nothing
+([docs/developer/multipart.md](../developer/multipart.md), *Shutdown ends what it
+is still holding*; ADR 0029, ADR 0011). So the most useful day-one feature —
+watch a Secret, roll the Deployment (open question 5) — turns a credential
+rotation into a failed upload for every client that was mid-upload, and the client
+sees `404 NoSuchUpload` on its next part rather than anything explaining it.
+Whether the operator may roll on its own schedule, or may only *mark* an instance
+as needing a roll, has to be decided before any watch is built.
+
+**F. Readiness says nothing about whether the instance can do its job.** `/health`
+answers 200 as soon as the listener is up, and 503 only during shutdown
+(`internal/proxy/handlers/health/handler.go:49-95`): no backend reachability, no
+provider, no KEK, no bucket. A CR status mirroring the Deployment's readiness
+therefore reports "the listener answered", which is not what anyone reads a status
+for. The verdict that would make Ready mean something is
+[040](040-managed-buckets.md)'s startup readability check — the two tickets are
+independent and meet exactly here.
+
+**G. `/health` and `/version` are unauthenticated on the S3 listener**, matched
+ahead of the authentication middleware by a matcher that takes any unsigned
+request with no query (`internal/proxy/router.go:65-72`, `:167`). Since 2026-09-14
+`/version` answers the real version, commit and build time. That is what makes it
+useful to an operator with no monitoring listener, and it is also a precise build
+identifier served to anyone who can reach the S3 port. ADR 0030 D4 decided what an
+unauthenticated *scrape* may carry; the same question for this endpoint has not
+been asked. An operator would be the first consumer to depend on the answer being
+"everything".
+
+**H. No configuration scopes an instance to a bucket.** `ListBuckets` is forwarded
+as it stands (`internal/proxy/handlers/root/handler.go:66-109`) and no key
+restricts what a client may reach. So "a proxy per team" is a credential boundary
+onto the whole backend account, not a tenancy boundary: what separates tenants is
+the backend's own IAM, and the operator would be provisioning a boundary this
+product does not enforce. [040](040-managed-buckets.md) opens the nearest thing to
+it.
+
+**I. One instance is one Deployment, one Service, one ConfigMap, one Secret — and
+TLS doubles it.** ADR 0033 fixes a chart install at one process, and `tls:` is one
+struct with one listener (`internal/config/config.go:140`,
+`internal/proxy/server.go:247-270`), so an instance asked to serve both plaintext
+and TLS is two of everything, as the demo stack already is. Whatever "instance"
+turns out to mean in the CR, the object count behind one is known today.
+
+**J. The listener certificate is loaded once — now read in the code rather than
+inferred.** `ServeTLS(listener, certFile, keyFile)` at
+`internal/proxy/server.go:263`, and the serving path builds no `tls.Config` with a
+`GetCertificate` callback anywhere. A renewed cert-manager Secret is therefore not
+served until the pod restarts, and the pod template hashes only what the chart
+renders (`templates/deployment.yaml:19-29`), which that Secret is not. Still not
+verified *by experiment*; the code leaves no other reading.
 
 ## Open questions — all undecided
 
@@ -214,6 +336,44 @@ immutability, wherever this is taken up.
    it may name — a provider alias, a KEK fingerprint, a licensee — is a security
    decision, not an API design one.
 
+7. **What does deleting the custom resource delete?** If the operator creates the
+   Secret holding the KEK and gives it an `ownerReference` on the CR, removing the
+   CR removes the key, and every object that instance wrote stops being readable.
+   That is not the compatibility ADR 0017 declines to owe — it is data loss with no
+   proxy involved. The safe shapes are a Secret the operator never owns, or a
+   finalizer that refuses the delete while objects exist, and the second cannot be
+   answered without knowing which buckets belong to the instance
+   ([040](040-managed-buckets.md)).
+8. **May the operator restart a running proxy on its own?** Everything useful it
+   could do to a running instance is a rollout, and a rollout ends the
+   client-driven uploads that instance is holding (second pass, E). The candidates
+   are a policy field on the CR, a maintenance window, a condition it only reports
+   and leaves to a human, or a held-upload count it waits on — and the last needs a
+   number no endpoint reports today.
+9. **Does the operator mint credentials, or only carry them?** The client
+   credential in `s3_clients` has no other owner (C), the KEK must never be in a CR
+   (ADR 0021), and the backend credential has no external-Secret path at all (A).
+   "Generates a Secret" and "references a Secret" are different products with
+   different blast radii, and the answer may differ per credential.
+10. **Which image does a CR name, and who guarantees it matches the operator?**
+    The strict loader turns a version skew into a crash loop (*What it must not
+    break*), and the chart defaults the tag to the chart's `appVersion`. An
+    operator that renders configuration for an image it did not choose has to pin
+    the pair, refuse the CR, or carry a compatibility range it can state.
+11. **What may an unauthenticated endpoint of a provisioned instance carry?**
+    ADR 0030 D4 answers it for the scrape only; `/version` now answers a precise
+    build and needs no signature (G). Whatever the operator surfaces as status is
+    drawn from these, so this answer bounds the CR's status as well.
+12. **Is a custom resource a tenant?** Nothing in the proxy scopes an instance to a
+    bucket (H). If the pitch is one proxy per team, the isolation that claim rests
+    on lives in the backend's IAM — say so, or build the scope.
+13. **Where does the operator live, and what does that cost the release?** The
+    header leaves the repository open. In this tree it shares the version, the
+    pipeline and every release gate of the proxy, and a CRD becomes part of what
+    5.x means; in its own it needs a second pipeline, a second licence story and a
+    stated compatibility range against proxy images. Neither is free and the
+    difference is not cosmetic.
+
 ## What it must not break
 
 - **The strict loader.** A key the proxy does not define refuses the start, and
@@ -234,6 +394,13 @@ immutability, wherever this is taken up.
   [ADR 0017](../adr/0017-stored-data-compatibility-is-not-owed.md)).
 - **The scrape names no licensee** (ADR 0030 D4) — including any status the
   operator surfaces from it.
+- **An upload in flight.** A rollout the operator triggers ends every
+  client-driven upload the pod is holding, and nothing is completed at shutdown
+  (ADR 0029, ADR 0011). A reconcile is therefore never free, whatever triggered it.
+- **Key material outlives the resource that provisioned it.** No deletion path of
+  any custom resource may remove a key that stored objects still name (ADR 0021),
+  and no reconcile may change a KEK fingerprint or the metadata prefix of a live
+  instance (ADR 0009).
 
 ## Done when
 
@@ -245,4 +412,13 @@ immutability, wherever this is taken up.
 - [ ] The operator's Kubernetes privileges are in `SECURITY_ARCHITECTURE.md` as a
       trust boundary before any code exists.
 - [ ] Replica-versus-instance is answered against the process-local multipart session.
+- [ ] The restart policy is decided: whether the operator may roll a running
+      instance on its own, and what is owed to the uploads it ends.
+- [ ] What deleting a custom resource does to key material is decided and recorded.
+- [ ] The credential model is decided per credential — backend, client, KEK,
+      licence — as generated or referenced.
+- [ ] What an instance's `Ready` claims is decided against what `/health` actually
+      proves.
+- [ ] What an unauthenticated endpoint of a provisioned instance may carry is
+      decided, `/version` included.
 - [ ] This ticket is archived, its decisions extracted into ADRs first.
