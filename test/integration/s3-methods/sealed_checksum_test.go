@@ -70,17 +70,14 @@ func TestCksEveryWritePathSealsTheSameChecksum(t *testing.T) {
 	for name, size := range sizes {
 		t.Run(name, func(t *testing.T) {
 			payload := CksPayload(size)
-			key := "cks-" + integration.RandomString(10)
-			t.Cleanup(func() { CksDelete(tc, key) })
-
-			_, err := tc.ProxyClient.PutObject(ctx, &s3.PutObjectInput{
-				Bucket: aws.String(tc.TestBucket),
-				Key:    aws.String(key),
-				Body:   bytes.NewReader(payload),
+			CksCheckWritePath(t, ctx, tc, "cks-", payload, func(key string) {
+				_, err := tc.ProxyClient.PutObject(ctx, &s3.PutObjectInput{
+					Bucket: aws.String(tc.TestBucket),
+					Key:    aws.String(key),
+					Body:   bytes.NewReader(payload),
+				})
+				require.NoError(t, err, "PUT through the proxy")
 			})
-			require.NoError(t, err, "PUT through the proxy")
-
-			CksAssertServedChecksum(t, ctx, tc, key, payload)
 		})
 	}
 
@@ -90,46 +87,75 @@ func TestCksEveryWritePathSealsTheSameChecksum(t *testing.T) {
 		// and is held until Complete, where the trailer rides on it.
 		const partSize = 5 * 1024 * 1024
 		payload := CksPayload(2*partSize + 4096)
-		key := "cks-mpu-" + integration.RandomString(10)
-		t.Cleanup(func() { CksDelete(tc, key) })
 
-		created, err := tc.ProxyClient.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
-			Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
-		})
-		require.NoError(t, err, "CreateMultipartUpload")
-		uploadID := aws.ToString(created.UploadId)
-
-		var completed []types.CompletedPart
-		for i := 0; i*partSize < len(payload); i++ {
-			end := min((i+1)*partSize, len(payload))
-			part, uerr := tc.ProxyClient.UploadPart(ctx, &s3.UploadPartInput{
-				Bucket:     aws.String(tc.TestBucket),
-				Key:        aws.String(key),
-				UploadId:   aws.String(uploadID),
-				PartNumber: aws.Int32(int32(i + 1)),
-				Body:       bytes.NewReader(payload[i*partSize : end]),
+		CksCheckWritePath(t, ctx, tc, "cks-mpu-", payload, func(key string) {
+			created, err := tc.ProxyClient.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+				Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
 			})
-			require.NoErrorf(t, uerr, "UploadPart %d", i+1)
-			completed = append(completed, types.CompletedPart{
-				PartNumber: aws.Int32(int32(i + 1)), ETag: part.ETag,
+			require.NoError(t, err, "CreateMultipartUpload")
+			uploadID := aws.ToString(created.UploadId)
+
+			var completed []types.CompletedPart
+			for i := 0; i*partSize < len(payload); i++ {
+				end := min((i+1)*partSize, len(payload))
+				part, uerr := tc.ProxyClient.UploadPart(ctx, &s3.UploadPartInput{
+					Bucket:     aws.String(tc.TestBucket),
+					Key:        aws.String(key),
+					UploadId:   aws.String(uploadID),
+					PartNumber: aws.Int32(int32(i + 1)),
+					Body:       bytes.NewReader(payload[i*partSize : end]),
+				})
+				require.NoErrorf(t, uerr, "UploadPart %d", i+1)
+				completed = append(completed, types.CompletedPart{
+					PartNumber: aws.Int32(int32(i + 1)), ETag: part.ETag,
+				})
+			}
+
+			_, err = tc.ProxyClient.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+				Bucket:          aws.String(tc.TestBucket),
+				Key:             aws.String(key),
+				UploadId:        aws.String(uploadID),
+				MultipartUpload: &types.CompletedMultipartUpload{Parts: completed},
 			})
-		}
-
-		_, err = tc.ProxyClient.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
-			Bucket:          aws.String(tc.TestBucket),
-			Key:             aws.String(key),
-			UploadId:        aws.String(uploadID),
-			MultipartUpload: &types.CompletedMultipartUpload{Parts: completed},
+			require.NoError(t, err, "CompleteMultipartUpload")
 		})
-		require.NoError(t, err, "CompleteMultipartUpload")
-
-		CksAssertServedChecksum(t, ctx, tc, key, payload)
 	})
 }
 
-// CksAssertServedChecksum is the shared check: GET and HEAD agree with each
-// other and with the CRC32C of the plaintext, a ranged read carries none, and
-// the value is nowhere in the stored bytes.
+// CksCheckWritePath drives one write path twice, under two keys, and runs both
+// halves of the check: what the reads serve for a stored object, and that the
+// sealed checksum is nowhere in the clear at rest. The second copy is what makes
+// the at-rest half decidable — see CksAssertChecksumSealed.
+func CksCheckWritePath(
+	t *testing.T, ctx context.Context, tc *integration.TestContext,
+	prefix string, payload []byte, store func(key string),
+) {
+	t.Helper()
+	want := CksExpected(payload)
+
+	var stored [2][]byte
+	for i := range stored {
+		key := prefix + integration.RandomString(10)
+		t.Cleanup(func() { CksDelete(tc, key) })
+		store(key)
+
+		if i == 0 {
+			CksAssertServedChecksum(t, ctx, tc, key, payload)
+		}
+
+		raw, meta := CksStored(t, ctx, tc, key)
+		stored[i] = raw
+		for name, value := range meta {
+			assert.NotContains(t, value, want, "the checksum leaked into metadata key %q", name)
+		}
+	}
+
+	CksAssertChecksumSealed(t, payload, stored[0], stored[1])
+}
+
+// CksAssertServedChecksum is the shared read check: GET and HEAD agree with
+// each other and with the CRC32C of the plaintext, and a ranged read carries
+// none. What is at rest is CksAssertChecksumSealed.
 func CksAssertServedChecksum(
 	t *testing.T, ctx context.Context, tc *integration.TestContext, key string, payload []byte,
 ) {
@@ -166,9 +192,14 @@ func CksAssertServedChecksum(
 	_, _ = io.Copy(io.Discard, ranged.Body)
 	require.NoError(t, ranged.Body.Close())
 	assert.Empty(t, aws.ToString(ranged.ChecksumCRC32C), "a ranged read must carry no checksum")
+}
 
-	// At rest the value is sealed inside the trailer, never beside it: a
-	// cleartext checksum of a small object is a guessing oracle for the backend.
+// CksStored reads an object as the backend holds it: the stored bytes and the
+// metadata beside them.
+func CksStored(
+	t *testing.T, ctx context.Context, tc *integration.TestContext, key string,
+) ([]byte, map[string]string) {
+	t.Helper()
 	stored, err := tc.MinIOClient.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(tc.TestBucket), Key: aws.String(key),
 	})
@@ -176,14 +207,55 @@ func CksAssertServedChecksum(
 	raw, err := io.ReadAll(stored.Body)
 	require.NoError(t, err)
 	require.NoError(t, stored.Body.Close())
+	return raw, stored.Metadata
+}
+
+// CksAssertChecksumSealed proves the plaintext CRC32C is sealed inside the
+// trailer and never lies beside the ciphertext, where it would be a guessing
+// oracle for a small or low-entropy object (ADR 0012 D9).
+//
+// Searching a single stored object for the four checksum bytes cannot prove
+// that. The ciphertext is indistinguishable from random, so the four bytes turn
+// up by chance in roughly len(stored)/2^32 of all objects — 0.3% for the 13 MiB
+// case here, which reddens a release gate about once in a hundred runs and is
+// still no evidence either way when it does.
+//
+// Two copies of the same plaintext carry the same checksum under two
+// independent data keys, and the object key goes into the associated data on
+// top of that. A leak is deterministic and lands at the same offset in both
+// copies; a chance hit is at an independent offset. Requiring a shared offset
+// makes a false alarm about as likely as len(stored)^2/2^64 — never — and turns
+// a hit into actual evidence.
+func CksAssertChecksumSealed(t *testing.T, payload, first, second []byte) {
+	t.Helper()
 
 	var plain [4]byte
 	binary.BigEndian.PutUint32(plain[:], crc32.Checksum(payload, crc32.MakeTable(crc32.Castagnoli)))
-	assert.NotContains(t, string(raw), string(plain[:]),
-		"the plaintext checksum is readable in the stored bytes")
-	for name, value := range stored.Metadata {
-		assert.NotContains(t, value, want, "the checksum leaked into metadata key %q", name)
+
+	inFirst := CksOffsets(first, plain[:])
+	var shared []int
+	for offset := range CksOffsets(second, plain[:]) {
+		if _, ok := inFirst[offset]; ok {
+			shared = append(shared, offset)
+		}
 	}
+
+	assert.Emptyf(t, shared,
+		"the plaintext checksum is readable at offset %v of two independently keyed copies", shared)
+}
+
+// CksOffsets reports every offset at which needle occurs in haystack.
+func CksOffsets(haystack, needle []byte) map[int]struct{} {
+	out := make(map[int]struct{})
+	for at := 0; at <= len(haystack)-len(needle); {
+		i := bytes.Index(haystack[at:], needle)
+		if i < 0 {
+			break
+		}
+		out[at+i] = struct{}{}
+		at += i + 1
+	}
+	return out
 }
 
 // TestCksSuffixRangeLargerThanTheObject pins what a backend answers when a
