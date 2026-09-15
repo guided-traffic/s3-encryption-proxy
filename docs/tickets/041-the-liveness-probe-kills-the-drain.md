@@ -511,7 +511,8 @@ Items 1 to 10, in one change. What is worth knowing beyond the work list:
 green — the process exited 268 ms after `SIGTERM` and the backend held no
 multipart upload; `make helm-test` 48/48; `make e2e-rclone` and `make e2e-s3cmd`
 green; `make helm-test` 57/57 across two chart suites; `make gosec` 0 issues;
-`go vet` over all build tags clean. The Velero suite reached 10 of its 13
-scenarios green before the run was interrupted — not a failure, but not a pass
-either; CI runs that gate. **Not verified locally:** `golangci-lint` is not
+`go vet` over all build tags clean; `make e2e-velero` 13 of 13 in 589 s against a
+kind cluster that installed the changed chart — the API server accepted
+`lifecycle.preStop.sleep`, the rendered grace period was 40, and the two probes
+pointed at different endpoints. **Not verified locally:** `golangci-lint` is not
 installed on the machine this was built on.
