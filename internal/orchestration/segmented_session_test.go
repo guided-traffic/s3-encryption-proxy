@@ -543,9 +543,7 @@ func TestSegmentedSessionEveryPartMovesTheIdleClock(t *testing.T) {
 			require.NoError(t, err)
 
 			// Long enough ago that the next sweep would end it.
-			session.mu.Lock()
-			session.lastTouched = time.Now().Add(-2 * idle)
-			session.mu.Unlock()
+			session.lastTouched.Store(int64(sinceStart() - 2*idle))
 			require.Greater(t, session.idleFor(), idle, "the fixture must start past the timeout")
 
 			arrive(t, m, session)
@@ -572,9 +570,7 @@ func TestSegmentedSessionEveryPartMovesTheIdleClock(t *testing.T) {
 		_, err = session.SealPart(1, segPlaintext(t, 4096), m.ShortPartBufferSize())
 		require.NoError(t, err)
 
-		session.mu.Lock()
-		session.lastTouched = time.Now().Add(-2 * idle)
-		session.mu.Unlock()
+		session.lastTouched.Store(int64(sinceStart() - 2*idle))
 
 		require.Equal(t, 1, m.CleanupExpiredSegmentedSessions(context.Background(), idle))
 		assert.Equal(t, []string{"bucket/bucket/object#upload-stale"}, abandoned,
@@ -645,4 +641,150 @@ func TestSegmentedSessionAlignedLastPartOutOfOrderIsRefused(t *testing.T) {
 			assert.Equal(t, 4, final.PartNumber, "the trailer is a part of its own behind three full parts")
 		})
 	}
+}
+
+// slowReader hands a part out over a fixed stretch of time, in ten pieces,
+// whatever size its consumer asks for: the segment codec reads a segment at a
+// time and io.ReadAll reads into a growing buffer, and the pace has to be the
+// same for both or the test measures the consumer instead of the clock.
+type slowReader struct {
+	src       io.Reader
+	size      int64
+	chunk     int64
+	over      time.Duration
+	started   time.Time
+	delivered int64
+}
+
+func slowlyOver(src []byte, over time.Duration) *slowReader {
+	return &slowReader{
+		src:   bytes.NewReader(src),
+		size:  int64(len(src)),
+		chunk: int64(len(src))/10 + 1,
+		over:  over,
+	}
+}
+
+func (s *slowReader) Read(p []byte) (int, error) {
+	if s.started.IsZero() {
+		s.started = time.Now()
+	}
+	due := time.Duration(float64(s.delivered) / float64(s.size) * float64(s.over))
+	if wait := due - time.Since(s.started); wait > 0 {
+		time.Sleep(wait)
+	}
+	if int64(len(p)) > s.chunk {
+		p = p[:s.chunk]
+	}
+	n, err := s.src.Read(p)
+	s.delivered += int64(n)
+	return n, err
+}
+
+// ADR 0028 D1 promises that an upload still moving bytes is never abandoned, and
+// until this test it held only between parts: the clock stood still for the whole
+// of one part, so a part slower than optimizations.multipart_session_idle_timeout
+// was ended at the backend under the request that was writing it, and everything
+// after it answered NoSuchUpload.
+//
+// Both shapes a part can have are fed here more slowly than the timeout, with the
+// real sweeper running against the upload the whole time, and each upload has to
+// survive and complete to the bytes that were sent.
+func TestSegmentedSessionASlowPartOutlivesTheIdleTimeout(t *testing.T) {
+	// Each part arrives over two and a half times the timeout, in ten pieces: the
+	// sweeper gets a whole timeout's worth of window while the part is still
+	// moving. A piece every 250ms against a clock stored at most every
+	// touchResolution leaves the gap that would expire one of these uploads —
+	// idle minus touchResolution — nearly four times what the pace here is.
+	const (
+		idle    = time.Second
+		arrival = 2500 * time.Millisecond
+	)
+
+	// sweep runs the real sweeper against m until the returned stop is called,
+	// and reports how many uploads it ended.
+	sweep := func(m *Manager) (stop func() int) {
+		m.SetMultipartAbandoner(func(context.Context, string, string, string) error { return nil })
+		done, swept := make(chan struct{}), make(chan int, 1)
+		go func() {
+			removed := 0
+			for {
+				select {
+				case <-done:
+					swept <- removed
+					return
+				case <-time.After(touchResolution / 2):
+					removed += m.CleanupExpiredSegmentedSessions(context.Background(), idle)
+				}
+			}
+		}()
+		return func() int { close(done); return <-swept }
+	}
+
+	t.Run("a part the backend pulls slowly", func(t *testing.T) {
+		t.Parallel()
+		m := segManager(t)
+		stop := sweep(m)
+		session, err := segRegisteredSession(t, m, "upload-slow-stream")
+		require.NoError(t, err)
+
+		plaintext := segPlaintext(t, segPartSize)
+		started := time.Now()
+		part, err := session.SealStreamingPart(1, segPartSize, session.TouchWhileReading(slowlyOver(plaintext, arrival)))
+		require.NoError(t, err)
+		body, err := part.Body()
+		require.NoError(t, err)
+		stored, err := io.ReadAll(body)
+		require.NoError(t, err)
+		require.Greater(t, time.Since(started), 2*idle,
+			"the part has to outlast the timeout by a clear margin, or this test proves nothing")
+		sum, ok := part.Checksum()
+		require.True(t, ok, "a fully pulled part has its checksum")
+		session.RecordStreamedPart(1, part.Offset(), sum)
+		session.RecordETag(1, "etag")
+
+		assert.Zero(t, stop(), "an upload whose part is still arriving must not be ended (ADR 0028 D1)")
+		assert.Equal(t, plaintext, segCompleted(t, m, "upload-slow-stream", session, stored))
+	})
+
+	t.Run("a part the proxy reads slowly", func(t *testing.T) {
+		t.Parallel()
+		m := segManager(t)
+		stop := sweep(m)
+		session, err := segRegisteredSession(t, m, "upload-slow-held")
+		require.NoError(t, err)
+
+		plaintext := segPlaintext(t, 512<<10)
+		started := time.Now()
+		read, err := io.ReadAll(session.TouchWhileReading(slowlyOver(plaintext, arrival)))
+		require.NoError(t, err)
+		require.Greater(t, time.Since(started), 2*idle,
+			"the part has to outlast the timeout by a clear margin, or this test proves nothing")
+		held, err := session.SealPart(1, read, segShortBuffer)
+		require.NoError(t, err)
+		require.Nil(t, held, "a part shorter than one segment is held until Complete")
+
+		assert.Zero(t, stop(), "an upload whose part is still arriving must not be ended (ADR 0028 D1)")
+		assert.Equal(t, plaintext, segCompleted(t, m, "upload-slow-held", session, nil))
+	})
+}
+
+// segCompleted closes an upload the manager must still hold and returns the
+// plaintext the stored object reads back to: what the backend already holds,
+// plus the part Complete produces.
+func segCompleted(t *testing.T, m *Manager, uploadID string, session *SegmentedSession, stored []byte) []byte {
+	t.Helper()
+
+	_, alive := m.SegmentedSession(uploadID)
+	require.True(t, alive, "the session must still be there")
+
+	final, err := session.Complete()
+	require.NoError(t, err)
+	object := append(append([]byte{}, stored...), final.Body...)
+
+	reader, err := m.OpenSegmented("bucket/object", session.Upload.Metadata(), bytes.NewReader(object))
+	require.NoError(t, err)
+	got, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	return got
 }

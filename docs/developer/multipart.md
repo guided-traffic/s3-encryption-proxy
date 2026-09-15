@@ -247,20 +247,22 @@ goroutine every `multipart_session_cleanup_interval` seconds. Three things about
 it are worth knowing:
 
 - **It measures inactivity, not age** (ADR 0028 D1). Sizing
-  `multipart_session_idle_timeout` is sizing the longest gap between parts a client
-  may leave, not the longest upload it may take. It used to be the other way round,
-  and an upload larger than the link could carry in an hour could not finish. But
-  `lastTouched` moves when a part is *sealed*, not while its body is in flight — a
-  held part touches it once the whole body has been read, a streamed one when the
-  seal starts — so **one part that takes longer than the timeout to arrive is swept
-  while it is still arriving**: the backend upload is aborted under the request
-  writing to it, and everything after it answers `404 NoSuchUpload`. ADR 0028 D1
-  says a transfer still moving bytes is never abandoned; that holds between parts,
-  not within one. Every ended upload is logged at `info` with its upload id,
-  bucket, key and the idle time measured, because from the client's side this is
-  a `404 NoSuchUpload` with nothing to correlate it against — that line is what
-  tells an operator to raise the timeout. Moving the clock during a part is not
-  built.
+  `multipart_session_idle_timeout` is sizing the longest pause a client may leave,
+  not the longest upload it may take. It used to be the other way round, and an
+  upload larger than the link could carry in an hour could not finish.
+  `lastTouched` moves with the bytes: `SegmentedSession.TouchWhileReading` wraps
+  the part body in `UploadHandler`, on the held path and on the streamed one, so
+  a part that takes longer than the timeout to arrive keeps its own upload alive
+  while it arrives. Until 2026-09-15 the clock moved only where a part was
+  *sealed*, and such a part was swept under the request writing it. The field is
+  an `atomic.Int64` of the monotonic time since process start, outside the session
+  mutex: a per-`Read` touch that took the lock would deadlock inside a seal, which
+  holds it, and would contend with the sweeper on the hottest path there is. A
+  store is skipped while the last one is younger than `touchResolution` (100 ms),
+  so the touch is a load and a branch. Every ended upload is logged at `info` with
+  its upload id, bucket, key and the idle time measured, because from the client's
+  side this is a `404 NoSuchUpload` with nothing to correlate it against — that
+  line is what tells an operator to raise the timeout.
 - **It ends the upload at the backend before it forgets it** (ADR 0028 D2). The
   abort goes through `Manager.SetMultipartAbandoner`, which `NewServer` wires to
   the backend client — orchestration owns no S3 client. A backend that refuses the

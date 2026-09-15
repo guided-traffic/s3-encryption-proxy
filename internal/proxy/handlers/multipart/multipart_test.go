@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -1481,4 +1482,106 @@ func (m *MockS3Backend) PutObjectLegalHold(ctx context.Context, params *s3.PutOb
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*s3.PutObjectLegalHoldOutput), args.Error(1)
+}
+
+// pacedBody hands a part out over a fixed stretch of time, in ten pieces,
+// whatever size its consumer asks for — the segment codec reads a segment at a
+// time, a held part is read into a growing buffer — and calls midway once half
+// of it has been delivered.
+type pacedBody struct {
+	payload   []byte
+	over      time.Duration
+	midway    func()
+	started   time.Time
+	delivered int
+}
+
+func (b *pacedBody) Read(p []byte) (int, error) {
+	if b.started.IsZero() {
+		b.started = time.Now()
+	}
+	due := time.Duration(float64(b.delivered) / float64(len(b.payload)) * float64(b.over))
+	if wait := due - time.Since(b.started); wait > 0 {
+		time.Sleep(wait)
+	}
+	if b.delivered >= len(b.payload) {
+		return 0, io.EOF
+	}
+	piece := len(b.payload)/10 + 1
+	if piece > len(p) {
+		piece = len(p)
+	}
+	n := copy(p, b.payload[b.delivered:min(b.delivered+piece, len(b.payload))])
+	b.delivered += n
+	if b.midway != nil && 2*b.delivered >= len(b.payload) {
+		midway := b.midway
+		b.midway = nil
+		midway()
+	}
+	return n, nil
+}
+
+// TestUploadHandlerASlowPartKeepsItsUploadAlive pins that the handler moves the
+// idle clock while a part is arriving and not only once it has arrived
+// (ADR 0028 D1). The orchestration layer cannot pin it: dropping the wrapper
+// from this handler leaves every session test green, and the upload is then
+// ended at the backend under the request that is writing it.
+//
+// The sweeper runs from inside the body, past the timeout and with half the part
+// still to come, and has to find the upload alive.
+func TestUploadHandlerASlowPartKeepsItsUploadAlive(t *testing.T) {
+	// Half of the part arrives after 600ms, against a 400ms timeout. The clock
+	// is stored at most every 100ms, so what the sweeper sees can be 100ms plus
+	// one piece behind — well inside the timeout.
+	const (
+		idle    = 400 * time.Millisecond
+		arrival = 1200 * time.Millisecond
+	)
+
+	// A part that covers whole segments and clears the 5 MiB minimum is streamed
+	// to the backend; anything else is held until Complete. Both read the body,
+	// and each reads it its own way.
+	parts := map[string]int{
+		"a part the proxy streams to the backend": 5 << 20,
+		"a part the proxy holds until Complete":   64 << 10,
+	}
+
+	for name, size := range parts {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			encMgr, mockS3Backend, logger, xmlWriter, errorWriter, requestParser := setupMultipartTestEnv(t)
+			mockS3Backend.On("CreateMultipartUpload", mock.Anything, mock.Anything).Return(
+				&s3.CreateMultipartUploadOutput{UploadId: aws.String("slow-upload")}, nil)
+			mockS3Backend.On("UploadPart", mock.Anything, mock.Anything).Return(
+				&s3.UploadPartOutput{ETag: aws.String(`"an-etag"`)}, nil)
+
+			createReq := mux.SetURLVars(httptest.NewRequest("POST", "/bucket/key?uploads", nil),
+				map[string]string{"bucket": "bucket", "key": "key"})
+			createW := httptest.NewRecorder()
+			NewCreateHandler(mockS3Backend, encMgr, logger, xmlWriter, errorWriter, requestParser).
+				Handle(createW, createReq)
+			require.Equal(t, http.StatusOK, createW.Code)
+
+			swept := 0
+			body := &pacedBody{
+				payload: bytes.Repeat([]byte("s3ep"), size/4),
+				over:    arrival,
+				midway: func() {
+					swept = encMgr.CleanupExpiredSegmentedSessions(context.Background(), idle)
+				},
+			}
+
+			req := mux.SetURLVars(
+				httptest.NewRequest("PUT", "/bucket/key?partNumber=1&uploadId=slow-upload", body),
+				map[string]string{"bucket": "bucket", "key": "key"})
+			req.ContentLength = int64(size)
+
+			w := httptest.NewRecorder()
+			NewUploadHandler(mockS3Backend, encMgr, logger, xmlWriter, errorWriter, requestParser).
+				Handle(w, req)
+
+			assert.Zero(t, swept, "an upload whose part is still arriving must not be ended (ADR 0028 D1)")
+			assert.Equal(t, http.StatusOK, w.Code, "the part has to be accepted")
+		})
+	}
 }

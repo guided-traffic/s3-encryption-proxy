@@ -4,7 +4,7 @@
 
 **Evaluation only. Nothing here is scheduled, and none of it is in 5.0.0.**
 Owner decision, 2026-09-11: the question is worth answering but not worth
-holding the release for, so it leaves the bundle ([023](023-major-v5.md)) and
+holding the release for, so it leaves the bundle ([023](archive/023-major-v5.md)) and
 becomes this file. The work is to find out whether the change is worth making at
 all — not to make it.
 

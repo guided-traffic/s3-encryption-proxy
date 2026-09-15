@@ -1,5 +1,20 @@
 # 029 — The multipart idle clock moves only at part boundaries
 
+## Archived 2026-09-15
+
+Closed. The clock is an `atomic.Int64` of the monotonic time since process start,
+outside the session mutex, throttled to one store per 100 ms, and the part body
+is wrapped on both upload paths — so an upload whose part is still arriving is
+never ended under the request writing it. The wall-clock basis the first draft
+used is not usable: two wall samples can tie or run backwards, and a sweep at a
+zero timeout then finds nothing.
+
+What outlives this file: the residual risk in ADR 0028 is marked closed, and
+`README.md` and `docs/developer/multipart.md` now size the timeout against a
+pause rather than a transfer. Two tests pin it, each proven to fail without the
+fix — one in the orchestration package for both part shapes, one at the handler,
+because dropping the wrapper there leaves every session test green.
+
 A client-driven multipart upload is expired and ended at the backend while one of
 its parts is still arriving, if that part takes longer than
 `optimizations.multipart_session_idle_timeout`.
@@ -93,6 +108,7 @@ configuration. What is left is only the real fix.
       `AbortMultipartUpload` needs and the reason. **Done 2026-09-12.**
 - [x] The timeout's real meaning is documented where an operator reads it.
       **Done 2026-09-12.**
-- [ ] A slow part does not expire, `go test -race` is clean, and the sweeper no
-      longer takes the session mutex to measure.
-- [ ] Deleted, and `git grep` shows nothing outside `docs/tickets/`.
+- [x] A slow part does not expire, `go test -race` is clean, and the sweeper no
+      longer takes the session mutex to measure. **Done 2026-09-15.**
+- [x] Deleted, and `git grep` shows nothing outside `docs/tickets/`.
+      **Done 2026-09-15.**

@@ -19,7 +19,7 @@ attributes, so that half of the dependency is discharged. What remains of it is
 the format work 013 still owes.
 
 The original status, kept: created on the owner's request
-during the v5 decision round ([023](023-major-v5.md) decision 5, D-35). D-35
+during the v5 decision round ([023](archive/023-major-v5.md) decision 5, D-35). D-35
 makes the proxy forward every storage header a PUT carries — except the three
 SSE-C headers, which it **refuses** with `501 NotImplemented` until this ticket
 lands. The reason is a trap, not a policy: today no read path forwards the

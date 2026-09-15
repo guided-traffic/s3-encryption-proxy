@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -24,13 +25,19 @@ type SegmentedSession struct {
 	Bucket    string
 	CreatedAt time.Time
 
+	// lastTouched is how far into this process's life this upload last moved
+	// bytes. The sweeper measures against it rather than against CreatedAt: an
+	// upload that is still moving bytes is not abandoned, however long it has
+	// been running, and an upload nobody is feeding is abandoned whether it
+	// started an hour ago or a minute ago.
+	//
+	// Atomic and deliberately outside mu: the reader that wraps a part body
+	// touches it per Read, and mu is held across a seal, so a touch that took
+	// the lock would deadlock (sync.Mutex is not reentrant) and would contend
+	// with the sweeper and ListParts on the hottest path there is.
+	lastTouched atomic.Int64
+
 	mu sync.Mutex
-	// lastTouched is when this upload last received a part. The sweeper measures
-	// against it rather than against CreatedAt: an upload that is still moving
-	// bytes is not abandoned, however long it has been running, and an upload
-	// nobody is feeding is abandoned whether it started an hour ago or a minute
-	// ago.
-	lastTouched time.Time
 	// abandonFailures counts how often the backend refused to be told this upload
 	// is over. It bounds the retrying, so a backend that never accepts an abort
 	// cannot pin a session in memory for good.
@@ -166,16 +173,16 @@ func (m *Manager) NewSegmentedSession(
 		return nil, err
 	}
 
-	now := time.Now()
-	return &SegmentedSession{
-		Upload:      upload,
-		ObjectKey:   objectKey,
-		Bucket:      bucket,
-		CreatedAt:   now,
-		lastTouched: now,
-		parts:       make(map[int]sessionPart),
-		mgr:         m,
-	}, nil
+	session := &SegmentedSession{
+		Upload:    upload,
+		ObjectKey: objectKey,
+		Bucket:    bucket,
+		CreatedAt: time.Now(),
+		parts:     make(map[int]sessionPart),
+		mgr:       m,
+	}
+	session.lastTouched.Store(int64(sinceStart()))
+	return session, nil
 }
 
 // RegisterSegmentedSession files a prepared session under the backend's upload id.
@@ -282,14 +289,67 @@ func (m *Manager) ShortPartBytesHeld() int64 {
 	return m.shortPartHeld
 }
 
-// touchLocked records that this upload just received a part. The caller holds mu.
-func (s *SegmentedSession) touchLocked() { s.lastTouched = time.Now() }
+// sessionClock is this process's reference point for the idle clock, and
+// sinceStart is the monotonic time since it. An upload's clock may not be a wall
+// instant: two wall samples can be equal or run backwards, so a gap measured
+// between them is the machine's clock as much as the upload's silence.
+var sessionClock = time.Now()
 
-// idleFor reports how long this upload has gone without a part.
+func sinceStart() time.Duration { return time.Since(sessionClock) }
+
+// touchResolution is how coarse the idle clock is kept. Every store is skipped
+// while the last one is younger than this, so touching per Read costs a load and
+// a branch instead of a write to a shared cache line. It is a tenth of the
+// smallest idle timeout the loader accepts, so the coarseness can never be what
+// expires an upload.
+const touchResolution = 100 * time.Millisecond
+
+// touch records that this upload is moving bytes. It is safe from any goroutine
+// and from inside a region that holds mu.
+func (s *SegmentedSession) touch() {
+	now := int64(sinceStart())
+	if now-s.lastTouched.Load() < int64(touchResolution) {
+		return
+	}
+	s.lastTouched.Store(now)
+}
+
+// idleFor reports how long this upload has gone without moving bytes.
 func (s *SegmentedSession) idleFor() time.Duration {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return time.Since(s.lastTouched)
+	return sinceStart() - time.Duration(s.lastTouched.Load())
+}
+
+// TouchWhileReading wraps a part body so the idle clock moves while the part is
+// arriving, not only once it has arrived. Without it the clock measures the gap
+// between parts alone, and a single part slower than
+// optimizations.multipart_session_idle_timeout is ended at the backend under the
+// request that is still writing it — which ADR 0028 D1 says must never happen to
+// a transfer that is moving bytes.
+//
+// It returns an io.ReadCloser so it can stand in for a request body; Close
+// forwards to src when src has one.
+func (s *SegmentedSession) TouchWhileReading(src io.Reader) io.ReadCloser {
+	return &touchingReader{src: src, session: s}
+}
+
+type touchingReader struct {
+	src     io.Reader
+	session *SegmentedSession
+}
+
+func (t *touchingReader) Read(p []byte) (int, error) {
+	n, err := t.src.Read(p)
+	if n > 0 {
+		t.session.touch()
+	}
+	return n, err
+}
+
+func (t *touchingReader) Close() error {
+	if c, ok := t.src.(io.Closer); ok {
+		return c.Close()
+	}
+	return nil
 }
 
 // AbandonAllSessions ends every upload this process still holds and reports how
@@ -424,10 +484,8 @@ func (m *Manager) CleanupExpiredSegmentedSessions(ctx context.Context, idle time
 
 		// At Info, one line per upload, because from the client's side this is a
 		// 404 NoSuchUpload with no explanation and there is nothing else to
-		// correlate it with. The clock moves when a part arrives, not while one
-		// is arriving, so a single part slower than the timeout ends up here
-		// too — and then this line is the only thing that says which knob to
-		// turn.
+		// correlate it with, and this line is the only thing that says which
+		// knob to turn.
 		m.logger.WithFields(logrus.Fields{
 			"upload_id":    c.uploadID,
 			"bucket":       c.session.Bucket,
@@ -479,7 +537,7 @@ func (s *SegmentedSession) SealPart(partNumber int, plaintext []byte, shortBuffe
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.touchLocked()
+	s.touch()
 
 	// A part can be stored where it lies only if it can be a middle part: it has
 	// to cover whole segments, because a short segment inside a chain writes
@@ -589,7 +647,7 @@ func (s *SegmentedSession) SealStreamingPart(partNumber int, plaintextLen int64,
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.touchLocked()
+	s.touch()
 
 	if plaintextLen > s.partSize {
 		s.partSize = plaintextLen
@@ -605,7 +663,7 @@ func (s *SegmentedSession) SealStreamingPart(partNumber int, plaintextLen int64,
 func (s *SegmentedSession) RecordStreamedPart(partNumber int, offset int64, sum dataencryption.Checksum) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.touchLocked()
+	s.touch()
 	// A client may send any part number again with different bytes. When the
 	// part it replaces is the one being held, the held copy is no longer part of
 	// this object: leaving it would have Complete store those bytes under this
@@ -629,7 +687,7 @@ func (s *SegmentedSession) RecordStreamedPart(partNumber int, offset int64, sum 
 func (s *SegmentedSession) RecordETag(partNumber int, etag string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.touchLocked()
+	s.touch()
 	if part, ok := s.parts[partNumber]; ok {
 		part.etag = etag
 		s.parts[partNumber] = part

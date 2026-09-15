@@ -61,12 +61,17 @@ fall back *to*.
 
 ## What the tree looks like today
 
-Verified in this repository on 2026-09-14, on `feat/major-v5`.
+The bullets below were verified on 2026-09-14 against `feat/major-v5`, and
+re-verified on 2026-09-14 on `feat/eraly-testing` after 5.0.0 shipped. The one that
+changed is the first, and it changed because the shape landed.
 
-- **`s3_backend:` is one struct with five fields, and `Config` holds it as a value,
-  not a slice.** `internal/config/config.go:29-34` (`target_endpoint`, `region`,
-  `access_key_id`, `secret_key`, `insecure_skip_verify`) and
-  `internal/config/config.go:162`.
+- **`s3_backends:` is a list of five-field entries and the loader reads exactly
+  one.** `internal/config/config.go:28-34` is the entry, `:167` the slice,
+  `resolveBackends` at `:449` refuses a second by a message of its own, and
+  `Config.Backend()` at `:472` is the accessor everything else calls. It has only
+  four callers — `server.go:108`, `bucket/operations.go:156`, `config.go:485` and
+  `config.go:570/590` — so *choosing* a backend is a four-site change at the
+  configuration layer. The 66 sites below are where it gets expensive.
 - **One SDK client is built once at startup and is the only backend anything sees.**
   `internal/proxy/server.go:104` and `:112`, behind the single interface at
   `internal/proxy/interfaces/s3_backend.go:11`. Every handler struct holds exactly
@@ -102,13 +107,279 @@ Verified in this repository on 2026-09-14, on `feat/major-v5`.
   never calls the backend; readiness reports shutdown state only.
 - **There is no write fan-out and no retry-elsewhere anywhere.** One `PutObject`
   (`object/operations.go:470`), one `CompleteMultipartUpload` (`:1242`).
-- **`${VAR}` expansion is written out field by field** for exactly the four
-  `s3_backend` strings, `internal/config/envexpand.go:51-74`.
+- **`${VAR}` expansion already loops over every entry** and already names
+  `s3_backends[i].<field>` in its refusal, `internal/config/envexpand.go:51-74`.
+  This is the one part of the loader that needs nothing: N entries with N
+  credential pairs expand and refuse correctly today.
+- **Startup validation, by contrast, is written for entry zero and says so.**
+  `validate` at `internal/config/config.go:485`, `backendUsesTLS` at `:540-557`
+  and `validateBackendTransport` at `:560-592` spell `s3_backends[0]` into every
+  message. Per backend each has to name the entry — and once an entry carries an
+  operator-chosen name, the message should name *that*, not an index the operator
+  did not write.
 
 Not verified: whether any backend this product is aimed at replicates ciphertext
 byte-for-byte between endpoints. It decides open question 4 and was not investigated.
 
+## What the feature costs the request path
+
+Added 2026-09-14, on `feat/eraly-testing`, by reading the request path rather than
+the configuration. Everything here is verified in the tree unless it says
+otherwise. None of it is a decision; each item either sizes the work or raises an
+open question, and the questions are numbered from 10 below.
+
+### The surface is 66 call sites, not one client
+
+`S3BackendInterface` carries **52 methods**
+([interfaces/s3_backend.go](../../internal/proxy/interfaces/s3_backend.go)) and is
+reached from **66 call sites across 27 files** — 15 files under
+`internal/proxy/handlers/bucket/`, 5 under `object/`, 5 under `multipart/`, plus
+`root/handler.go` and `server.go`. Every handler holds the interface as a struct
+field, so "which backend serves this request" has no place to live today. Two
+shapes, and the choice is question 10:
+
+- **A fan-out client that implements the same 52 methods** and hides the set
+  behind the interface handlers already hold. Nothing above it changes shape — but
+  the policy then lives where no handler can see it, and a per-verb policy
+  (a `GetObject` may fall back, a `PutObject` must fan out, a `ListObjectsV2` must
+  pick one) becomes 52 special cases inside one type.
+- **A backend set the handlers see**, which touches all 66 sites and makes the
+  policy explicit at each one.
+
+### Only a `before_response` refusal can fall back at all
+
+This is the finding that most changes what the feature is worth, and the metric's
+existing `phase` label already draws the line.
+
+On a whole-object GET the trailer is opened inside the tail read
+([tail.go:123-136](../../internal/proxy/handlers/object/tail.go#L123)) — so
+`foreign_object`, `key_material`, `stored_length` and a **trailer** authentication
+failure are all known before the status line. Everything else is streamed:
+`OpenSegmented` returns a reader and the plaintext goes straight into the response
+([operations.go:121-146](../../internal/proxy/handlers/object/operations.go#L121)),
+so a **segment** that does not authenticate is found `mid_stream`, the 200 is
+already out, and the body is cut (ADR 0003 D15).
+
+A fallback cannot reach that. And a rewritten segment is precisely the attack this
+feature is aimed at.
+
+The one mitigation the tree already gives for free: an object of at most one
+segment is entirely inside the tail buffer (`coversWholeObject()`,
+[tail.go:59](../../internal/proxy/handlers/object/tail.go#L59)), so for objects up
+to 64 KiB every failure is `before_response` and a fallback covers all four
+reasons. Above that the coverage is partial, and it is partial in the direction
+that matters.
+
+**Question 11: is a partial fallback the feature, or does it have to cover a
+mid-stream fault?** Covering it means not streaming — verify the whole object
+before the status line — which is goal 3 traded away for goal 1. Not covering it
+means the honest claim is "a damaged *header* of an object falls back; a damaged
+*body* still cuts the response", and `SECURITY_ARCHITECTURE.md` has to say exactly
+that.
+
+### Conditional requests, entity tags and timestamps are backend-local
+
+- The client's conditional headers ride along to the backend
+  ([tail.go:73](../../internal/proxy/handlers/object/tail.go#L73)).
+- The prefix read pins `IfMatch` on the tail answer's ETag
+  ([operations.go:89](../../internal/proxy/handlers/object/operations.go#L89)).
+- Under independent proxy writes the stored bytes differ per backend (the nonce
+  finding above), so the backend ETag differs, and so does `LastModified`.
+
+Consequences: a client holding an ETag from a read that backend A answered gets
+`412` from backend B; `If-Modified-Since` flaps with whichever backend answered.
+rclone syncs on size and modtime and Velero compares entity tags — both are
+release gates here (ADR 0019), so this is an e2e-visible behaviour change, not a
+theoretical one. **Question 12: what does a fallback do with a client's
+conditional headers — drop them, re-evaluate them per backend, or refuse to fall
+back on a conditional read?** It is the same question ADR 0032 answered for one
+backend, asked again across a set.
+
+### A client-supplied `VersionId` exists on exactly one backend
+
+Forwarded verbatim on every object verb —
+[tail.go:70](../../internal/proxy/handlers/object/tail.go#L70),
+[range.go:253](../../internal/proxy/handlers/object/range.go#L253), `:363`,
+`:418`, [operations.go:84](../../internal/proxy/handlers/object/operations.go#L84),
+`:162`, `:521`, `:573`. Under independent writes there is no shared version id, so
+a versioned read cannot fall back and a versioned delete addresses one copy.
+**Question 13: are versioned buckets supported under several backends, refused, or
+supported only when the backends replicate (question 4 answered "backend-side")?**
+
+### A delete that reaches one backend and a read that falls back to another serves deleted data
+
+`handleDeleteObject` is a single call
+([operations.go:524](../../internal/proxy/handlers/object/operations.go#L524)) and
+`DeleteObjects` a single batch (`:769`). If a delete is not held to the same
+policy as a write, the fallback resurrects objects the client deleted — worse than
+a missing copy, because the operator believes the data is gone. This belongs in
+the write policy of question 3, and in `SECURITY_ARCHITECTURE.md`: a second copy
+makes deletion a distributed operation, and ADR 0001 D9 currently puts deletion
+out of scope (question 7).
+
+### The write policy governs 27 verbs at 36 call sites, not two
+
+`Put`/`Delete`/`Create` against the backend appear at 26 call sites in the
+handlers; `UploadPart` (5), `AbortMultipartUpload` (3) and
+`CompleteMultipartUpload` (2) add ten more. They are not all object writes:
+
+| Group | Verbs |
+|---|---|
+| Object | `PutObject`, `DeleteObject`, `DeleteObjects` |
+| Object sub-resource | `PutObjectTagging`, `DeleteObjectTagging`, `PutObjectRetention`, `PutObjectLegalHold` |
+| Multipart | `CreateMultipartUpload` (2 sites), `UploadPart`, `CompleteMultipartUpload`, `AbortMultipartUpload` |
+| Bucket lifecycle | `CreateBucket`, `DeleteBucket` |
+| Bucket sub-resource | `PutBucketAcl`, `PutBucketCors`, `DeleteBucketCors`, `PutBucketTagging`, `DeleteBucketTagging`, `PutBucketPolicy`, `DeleteBucketPolicy`, `PutBucketVersioning`, `PutBucketLifecycleConfiguration`, `DeleteBucketLifecycle`, `PutBucketNotificationConfiguration`, `PutBucketLogging` (2 sites), `DeleteBucketReplication`, `DeleteBucketWebsite` |
+
+**Question 14: does the write policy cover bucket and object sub-resources, or
+only object bytes?** Either answer costs something. Fan them out and a partial
+success is the same ADR 0007 D1 problem the object policy has, on fifteen more
+verbs. Do not, and the backends diverge in lifecycle, versioning, policy and
+retention — so the copy that answers a read is governed by rules the client never
+set on it, and a lifecycle rule on one backend can delete the copy the other was
+going to fall back to.
+
+### Reads that are not object reads still come from one backend
+
+`ListObjectsV2` / `ListObjects`
+([bucket/listing.go:75](../../internal/proxy/handlers/bucket/listing.go#L75)),
+`ListBuckets` ([root/handler.go:96](../../internal/proxy/handlers/root/handler.go#L96)),
+`HeadBucket` ([bucket/operations.go:139](../../internal/proxy/handlers/bucket/operations.go#L139))
+and every bucket sub-resource `Get*`. A listing has no integrity verdict to
+trigger a fallback on, so it simply comes from whichever backend is asked.
+
+That matters more than it sounds: `rclone sync` deletes on the destination what a
+listing omits. A listing served by a lagging copy can drive a client to delete
+data that exists. And reconciling two listings is not cheap — the continuation
+token is backend-local, so a merged listing means merging two paginated streams
+under one synthetic token, while ADR 0010 forbids the per-object round trip that
+would make the merge exact. **Question 15: which backend answers a listing, and
+what does a divergence between two listings mean — a merge, a preferred backend,
+or a refusal?**
+
+### The multipart upload id handed to the client is the backend's
+
+The client is told `result.UploadId`
+([multipart/create.go:117](../../internal/proxy/handlers/multipart/create.go#L117),
+`:133`), the session map is keyed by it
+([segmented_session.go:182](../../internal/orchestration/segmented_session.go#L182)),
+and the shutdown sweeper aborts by it through one closure over one client
+([server.go:132-145](../../internal/proxy/server.go#L132)). N backends means N
+upload ids per logical upload, so either
+
+- the proxy mints its own id and maps it — and then `ListMultipartUploads`, which
+  is forwarded, lists backend ids no client has ever seen, and `ListParts` under
+  the exit provider is forwarded too; or
+- multipart stays single-backend and the object is replicated after
+  `CompleteMultipartUpload` — which leaves a window where one copy exists.
+
+This refines the ticket's own question 5; the abandoner closure and the two
+listing verbs are the parts it did not name.
+
+### One seal or N seals, and both cost something
+
+The write fan-out is a performance decision before it is a correctness one, and it
+runs straight into goal 3 (small memory footprint):
+
+- **Seal once, send to N backends.** The ciphertext is produced on the fly and
+  each `PutObject` wants its own reader. A tee makes the slowest backend set the
+  pace for every other, or it buffers the difference — unbounded, per request.
+- **Seal N times.** N different data keys, N different nonces, N ciphertexts (and
+  N different ETags, which is question 12 again), at N times the CPU.
+
+And `optimizations.multipart_short_part_buffer_size` is a process-wide budget
+(ADR 0011 D5): fan-out either multiplies what one open upload holds by N, or the
+key means something different under the same name and value. **Question 16: which
+of the two, and is the short-part budget still per process or now per process per
+backend?** This is the first thing to measure (ADR 0020) — it decides whether the
+feature is affordable at all, and the answer is a number, not an opinion.
+
+### A failed read attempt is a discarded transfer, not just a round trip
+
+The prefix `GetObject` is issued from a goroutine while the tail is still arriving
+and is always collected, or its body leaks
+([operations.go:78-104](../../internal/proxy/handlers/object/operations.go#L78)).
+Under a fallback each abandoned attempt leaves an in-flight body the size of the
+object that has to be closed, and a closed-early body drops the connection instead
+of pooling it. On a large object the cost of trying the wrong backend first is a
+discarded transfer. This sharpens question 2 rather than answering it.
+
+### A write policy needs a backend health notion; a read fallback does not
+
+`internal/proxy/handlers/health/handler.go` never calls the backend — readiness
+reports shutdown state only. A read fallback reacts to a verdict and needs no
+health check. "How many backends a 200 requires" (question 3) cannot be answered
+without knowing which are reachable, and a readiness probe that stays green while
+a backend is unreachable makes the chart's rollout lie. **Question 17: does
+readiness gain a backend dimension, and does an unreachable backend make the pod
+unready, or only change what a write answers?**
+
+### The metric surface is wider than the one counter
+
+No metric carries a backend label, and `s3ep_requests_total`
+([metrics.go:76](../../internal/monitoring/metrics.go#L76)) has none either. So a
+fallback that silently rescues every read would be invisible: the only signal
+would be latency. A fallback that *works* is exactly the thing an operator must
+see, because it means a copy is damaged and nobody is repairing it. **Question 18:
+which metric shows a fallback — a label on the integrity counter, a counter of its
+own, or both?** The constraint at the top of this ticket holds for whichever wins:
+the label value is an operator-chosen name, never an endpoint (ADR 0030 D4).
+
+### Smaller things that are still work
+
+- **`ExpectedBucketOwner` is forwarded from the client** on every verb. Two
+  backends in two accounts cannot both satisfy one `x-amz-expected-bucket-owner`.
+- **One region answers `HeadBucket`**
+  ([bucket/operations.go:156](../../internal/proxy/handlers/bucket/operations.go#L156)
+  reads `h.config.Backend().Region`). The call site exists and takes exactly one
+  value — question 9 has to produce one.
+- **The provider is global, not per backend.** `IsExitProvider()` has 10 call
+  sites and reads the active provider, not a backend. "Backend A encrypting,
+  backend B exit" is not expressible today, and **question 19: is that a
+  non-goal?** Saying so now is cheaper than discovering it during the design.
+- **The Helm chart carries exactly one backend credential.**
+  `templates/secret.yaml` has a single `access-key-id` / `secret-key` pair and
+  `values.yaml` a single `secrets.s3.*` block. N backends is a chart values-shape
+  change — breaking for chart users even though the proxy's own key shape is
+  already right. The chart README's NetworkPolicy guidance names
+  `s3_backends[0].target_endpoint` too.
+- **The demo stack runs one MinIO** (`docker-compose.demo.yml:3`), and every
+  integration suite points at it. A second backend there is part of the work
+  (ADR 0019), and so is deciding what the second one *is*: a second MinIO proves
+  fan-out, two different implementations prove the thing conformance exists to
+  prove (ADR 0027).
+- **Adding `name:` inside an entry owes `make test-conformance`.**
+  `scripts/conformance-run.sh` writes its own proxy configuration and is the one
+  configuration `TestCfgShippedExamplesCarryNoUnknownKeys` cannot see.
+
+## Neighbouring tickets, and where they collide
+
+- **[039](039-backend-certificate-verification-failure-is-named.md)** makes a
+  backend certificate failure nameable. With several backends the log line has to
+  say *which* backend — so 039 should either land first, or design its fields with
+  the name key of this ticket in mind. Cheap to coordinate, expensive to redo.
+- **[040](040-managed-buckets.md)** asks in its question 13 whether its bucket
+  list is top-level or lives inside an `s3_backends[]` entry. If backends are
+  symmetric and hold the same objects, the list is deployment-wide — but the
+  re-wrap pass 040 describes would have to run per backend, and its "read the
+  object back and compare the CRC32C" verification would have to say which copy it
+  read. The two tickets must not answer this differently.
+- **[036](036-high-availability.md)** is orthogonal until both exist, and then it
+  is not: two instances could pick different backends for the two halves of one
+  read, or fall back differently on the same object. The shared session table 036
+  needs would have to carry the backend identity per upload (see the upload-id
+  finding above). ADR 0033 keeps this dormant today.
+- **[033](033-out-of-band-recovery-path.md)** gets easier and stays necessary: a
+  second copy is a better answer than recovery for the damage this ticket covers,
+  and no answer at all for damage inside `s3ep-encrypted-dek`, which 033 already
+  records as unrecoverable.
+
 ## What it would need from the configuration
+
+**Historical as of 5.0.0.** The first row landed — `s3_backends` is the list — and
+the blast radius below was paid. The rest of the table still stands as the list of
+keys the feature has to add *inside* an entry, and every one of them is additive.
+Kept because it is the argument for why the shape moved when it did.
 
 | Key today | Shape the feature needs | Breaking later? |
 |---|---|---|
@@ -167,7 +438,10 @@ Candidates, none of them decided here:
 
 ## Open questions
 
-Each is undecided. No option below is preferred by this ticket.
+Each is undecided. No option below is preferred by this ticket. **Questions 10-19
+are raised in *What the feature costs the request path* above**, next to the
+evidence that produced them; 1-9 are the original set, and 1, 2, 5 and 9 are
+sharpened by findings there.
 
 1. **Which refusal is a fallback trigger?** Four exist today.
    `stored_length` and `authentication` are stored bytes that do not open — the
@@ -232,19 +506,56 @@ Each is undecided. No option below is preferred by this ticket.
 - **Integration and e2e suites are the product** and are never skipped
   ([ADR 0019](../adr/0019-integration-and-e2e-tests-are-the-product.md)): a second
   backend in the demo stack is part of the work, not an optional extra.
+- **Uploads stream and the memory footprint stays small** (the project's third
+  goal). A fan-out that buffers an object to feed N writers, or a fallback that
+  buffers one to verify it before the status line, has traded that away — and if
+  either is the answer, it is a decision with a number attached, not a side
+  effect (ADR 0020).
+- **A claim describes what the code verifies** (ADR 0001 D10). "Survives a
+  manipulated copy" may not be written down until the fallback and the delete
+  policy both exist, and it has to name the mid-stream gap (question 11) if that
+  gap survives the design.
+- **Nothing on the unauthenticated scrape identifies a host** (ADR 0030 D4). The
+  backend label is an operator-chosen name, and that holds for every metric the
+  feature adds, not only the integrity counter.
 
 ## Done when
 
-- [ ] The open questions above are answered in an ADR, before any code
-- [ ] The shape of `s3_backend` is decided, and if it changes, the major that
-      carries it is named
-- [ ] Every place listed under *blast radius* is updated in the same change
-- [ ] A backend carries a name, and it appears in the log field and the metric label
-- [ ] `s3ep_object_integrity_failures_total` distinguishes the backend that refused
-- [ ] The write policy is implemented and a partial write is not a 200
-- [ ] The fallback path is measured before and after (ADR 0020)
+- [ ] All nineteen open questions are answered in an ADR, before any code
+- [x] The shape of `s3_backends` is decided and shipped (5.0.0); additions go
+      *inside* an entry
+- [x] Every place listed under *blast radius* was updated in that change
+- [ ] The fan-out write is measured first, before anything else is built
+      (ADR 0020): one seal teed to N backends against N seals, and what each does
+      to throughput and to resident memory. It decides whether the feature is
+      affordable (question 16)
+- [ ] A backend carries a name, and it appears in the log field and the metric
+      label — never its endpoint (ADR 0030 D4)
+- [ ] Startup validation names the backend that failed, not `s3_backends[0]`
+- [ ] `s3ep_object_integrity_failures_total` distinguishes the backend that refused,
+      and a fallback that succeeded is visible in its own right (question 18)
+- [ ] The write policy is implemented and a partial write is not a 200 — and it
+      states whether it covers delete, bucket sub-resources and object
+      sub-resources (questions 3, 14) or deliberately does not
+- [ ] A delete cannot be undone by a fallback: either it is held to the write
+      policy, or the ticket records why resurrection is acceptable
+- [ ] The listing answer is decided and implemented (question 15)
+- [ ] Conditional requests, `VersionId` and the client-visible ETag have a stated
+      behaviour across backends (questions 12, 13), asserted in the rclone and
+      s3cmd suites because both clients act on them
+- [ ] The fallback path is measured before and after (ADR 0020), including the
+      cost of an abandoned attempt on a large object
+- [ ] Readiness states what an unreachable backend means (question 17)
+- [ ] The Helm chart carries N backend credentials, and its NetworkPolicy guidance
+      stops naming `s3_backends[0]`
 - [ ] The demo stack runs a second backend and the integration suite exercises a
-      manipulated copy
+      manipulated copy — including a manipulation *inside a segment* of a
+      multi-segment object, which is the case a fallback may not be able to cover
+- [ ] `make test-conformance` is run for the entry's new keys
 - [ ] `SECURITY_ARCHITECTURE.md` states what a second copy defends against and what
-      it does not
+      it does not — explicitly including the mid-stream gap of question 11, and
+      only claiming what the code verifies (ADR 0001 D10)
+- [ ] ADR 0001 D9 is amended rather than quietly outgrown (question 7)
+- [ ] `docs/developer/request-paths.md` and `multipart.md` describe how a backend
+      is chosen
 - [ ] This ticket is archived, with its decisions extracted into ADRs first
