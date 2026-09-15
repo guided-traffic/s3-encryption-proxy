@@ -1,3 +1,46 @@
+## [5.0.2](https://github.com/guided-traffic/s3-encryption-proxy/compare/v5.0.1...v5.0.2) (2026-09-15)
+
+
+## 📊 Quality Metrics
+
+![Coverage](https://img.shields.io/badge/coverage-95.2%25-brightgreen)
+![Go Version](https://img.shields.io/github/go-mod/go-version/guided-traffic/s3-encryption-proxy?logo=go)
+![Security](https://img.shields.io/badge/security-✅%20passed-green)
+![Linting](https://img.shields.io/badge/linting-✅%20passed-green)
+
+**Test Coverage**: 95.2% of code is covered by tests
+
+
+### Bug Fixes
+
+* add future tickets ([16045be](https://github.com/guided-traffic/s3-encryption-proxy/commit/16045be117f03a99d27fb5e22ee3353c1ab393a1))
+* **deps:** Update aws-sdk-go-v2 monorepo ([#349](https://github.com/guided-traffic/s3-encryption-proxy/issues/349)) ([39ff348](https://github.com/guided-traffic/s3-encryption-proxy/commit/39ff348dd24f3d344777ed469ce450b518e18f8a))
+* multipart clock ([#350](https://github.com/guided-traffic/s3-encryption-proxy/issues/350)) ([7c76216](https://github.com/guided-traffic/s3-encryption-proxy/commit/7c762162bfeb359c67bfa47358c6e2c220d7b64f))
+* **multipart:** the idle clock moves while a part arrives ([025afb9](https://github.com/guided-traffic/s3-encryption-proxy/commit/025afb9716bdd40c311d5790c3685bfde3361aff))
+
+
+## 🐳 Docker Images
+
+This release is available as a Docker image:
+
+```bash
+# Latest version
+docker pull guidedtraffic/s3-encryption-proxy:latest
+
+# Specific version
+docker pull guidedtraffic/s3-encryption-proxy:5.0.2
+```
+
+**Supported platforms:** linux/amd64
+
+## 📥 Download Assets
+
+Pre-built binaries and coverage reports are attached to this release:
+- `s3-encryption-proxy-v5.0.2-linux-amd64` - Main proxy binary
+- `s3ep-keygen-v5.0.2-linux-amd64` - Key generation utility
+- `coverage-v5.0.2.out` - Coverage profile (Go format)
+- `coverage-v5.0.2.txt` - Coverage report (human readable)
+
 ## [5.0.1](https://github.com/guided-traffic/s3-encryption-proxy/compare/v5.0.0...v5.0.1) (2026-09-14)
 
 
