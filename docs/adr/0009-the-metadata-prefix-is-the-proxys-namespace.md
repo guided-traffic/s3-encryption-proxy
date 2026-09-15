@@ -211,7 +211,8 @@ upon. The prefix was documented as a namespace and enforced as nothing.
   configuration refuses to start
 - ADR 0017 — Stored data compatibility is not owed; a major release may break the format
 - ADR 0020 — Performance is measured before and after, never asserted
-- [README.md](../../README.md) — the `encryption.metadata_key_prefix` reference and the
-  operator-facing note on what an invalid prefix used to do
+- [README.md](../../README.md) — the `encryption.metadata_key_prefix` key reference
+- [docs/operations/integrity.md](../operations/integrity.md) — the four metadata keys as a client meets
+  them, and what an invalid prefix used to do
 - [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — what is written into object
   metadata, what is never written, and what is filtered out of client responses

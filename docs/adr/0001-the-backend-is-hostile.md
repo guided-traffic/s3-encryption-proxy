@@ -295,4 +295,4 @@ the code the chain lets us delete. Rejected in ADR 0003.
 - ADR 0020 — Performance is measured before and after, never asserted
 - ADR 0023 — Filename encryption, if it ships, encrypts directory segments only
 - [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — the threat model in operator form, the trust boundaries, and the hardening checklist
-- [README.md](../../README.md) — what the product claims about backend trust and about what it verifies before it serves a byte
+- [docs/operations/integrity.md](../operations/integrity.md) — what the product claims about backend trust and about what it verifies before it serves a byte

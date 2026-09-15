@@ -268,8 +268,8 @@ references that outlive the ticket, and they are the ones that made deletion imp
 * ADR 0019 — Integration and end-to-end tests are the product; they are never skipped
 * ADR 0020 — Performance is measured before and after, never asserted
 * This directory's [README.md](README.md) — the ADR format, the ground rules and the index
-* [README.md](../../README.md) — user-facing reference; the destination for the operator-facing
-  half of a closing ticket
+* [docs/operations/](../operations/) — the destination for the operator-facing half of a closing ticket
+* [README.md](../../README.md) — the product's front page and the configuration key reference
 * [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — threat model and hardening
   checklist; the destination for the security-facing half
 * [CLAUDE.md](../../CLAUDE.md) — project conventions, including this lifecycle as a working rule

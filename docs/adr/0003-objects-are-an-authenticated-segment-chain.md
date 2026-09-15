@@ -546,7 +546,9 @@ already gives.
 - ADR 0020 — Performance is measured before and after, never asserted
 - ADR 0024 — An upload forwards while it receives
 - ADR 0025 — Leaving is a supported mode
-- [README.md](../../README.md) — user-facing reference: ranged reads, the error the proxy answers
-  for a foreign object, the storage overhead, and the migration procedure
+- [docs/operations/s3-api.md](../operations/s3-api.md) — ranged reads and what a read costs
+- [docs/operations/integrity.md](../operations/integrity.md) — the storage overhead and the error the
+  proxy answers for a foreign object
+- [docs/operations/upgrading.md](../operations/upgrading.md) — the migration procedure
 - [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — threat model, what the stored
   format guarantees, and the residual risks above from the operator's side

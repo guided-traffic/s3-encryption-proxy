@@ -287,7 +287,8 @@ shipped binary accepts, which makes it a stronger credential than any token it w
   one-token rule and the consequences of losing the signing key.
 - ADR 0019 — *Integration and end-to-end tests are the product; they are never skipped* — why
   the fixtures are generated rather than deleted.
-- [README.md](../../README.md) — key generation, the environment references in the
-  configuration reference, and the demo and end-to-end bring-up steps.
+- [README.md](../../README.md) — key generation and the demo bring-up steps
+- [docs/operations/configuration.md](../operations/configuration.md) — the `${VAR}` references and the
+  variables the shipped image reads.
 - [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — the published chart default,
   and what an operator does if a deployment ran under it.

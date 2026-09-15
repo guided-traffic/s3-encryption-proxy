@@ -225,5 +225,6 @@ documented configuration that nothing here runs.
 - ADR 0019 — Integration and end-to-end tests are the product; they are never skipped
 - ADR 0023 — Filename encryption, if it ships, encrypts directory segments only
 - ADR 0025 — Leaving is a supported mode
-- [README.md](../../README.md) — user-facing reference, client usage and the documented limits
+- [README.md](../../README.md) — the product's front page and the supported clients
+- [docs/operations/clients/](../operations/clients/) — the settings each supported client needs, and the documented limits
 - [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — threat model, trust boundaries, residual risks

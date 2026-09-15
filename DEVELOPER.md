@@ -1,7 +1,8 @@
 # Developer guide
 
-For people changing this code. [README.md](README.md) is for operators and
-clients, [SECURITY_ARCHITECTURE.md](SECURITY_ARCHITECTURE.md) is the threat model
+For people changing this code. [README.md](README.md) is the product's front
+page, [docs/operations/](docs/operations/) is what an operator or a client needs,
+[SECURITY_ARCHITECTURE.md](SECURITY_ARCHITECTURE.md) is the threat model
 and the residual risks, and this page is the contributor's entry point: where
 things live, how to build and test them, what continuous integration gates, and
 the conventions that are not obvious from the tree.
@@ -192,8 +193,13 @@ read.
 | `coverage` | unit-test coverage report |
 | `test-unit-coverage`, `coverage-integration-collect`, `coverage-report` | the combined unit + integration flow, with `GOCOVER=1` on the stack |
 
-Three rules that are not obvious and have each cost a day:
+Four rules that are not obvious and have each cost a day:
 
+- **`staticcheck` here means the linter inside golangci-lint**, configured in
+  [.golangci.yml](.golangci.yml), not a separately installed binary. A standalone
+  `staticcheck` has to be built with this module's Go version or it cannot analyze
+  the tree at all; `make lint` is the way in, and `make tools` installs the same
+  pinned golangci-lint coordinate CI uses.
 - **`make lint` sees the tagged trees too, since 2026-09-13.** `LINT_TAGS` in the
   Makefile is `integration,conformance,e2e,perf`, and both `go vet` and
   golangci-lint run once without it and once with it. Before that a change that
@@ -368,7 +374,7 @@ waits on a check that never reports.
   [docs/tickets/](docs/tickets/) while work is outstanding and is closed by
   **moving the file to [docs/tickets/archive/](docs/tickets/archive/)**. Move
   anything durable out of it first: the decision into an ADR, the user-facing
-  consequence into `README.md` or `SECURITY_ARCHITECTURE.md`. The extraction is
+  consequence into `docs/operations/`, `README.md` or `SECURITY_ARCHITECTURE.md`. The extraction is
   the close; an archived file is history, never a source of a current rule.
 - **Nothing outside `docs/tickets/` may reference a ticket** — not a code
   comment, not a commit message, not a pull request. Cite the ADR instead. `git

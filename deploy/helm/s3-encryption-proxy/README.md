@@ -516,7 +516,7 @@ failures, the backend observation (last response, last failure by class, whether
 anything was observed, and the two counters an alert reads) and the active
 encryption provider — plus the Go runtime and process collectors (`go_*`,
 `process_*`). The full table with labels is in the
-[project README](../../../README.md#metrics).
+[docs/operations/monitoring.md](../../../docs/operations/monitoring.md#metrics).
 
 **The bundled dashboard draws all five of its panels** — request rate, request
 latency, active connections, licence status and days to expiry — and a unit test

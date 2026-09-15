@@ -22,7 +22,7 @@ algorithm names — is not a code reference and must be exact.
 exists while work is outstanding, and it is closed by **moving the file to
 `docs/tickets/archive/`** when the work lands. Before moving it, move anything
 durable out of it: the decision into an ADR, the user-facing consequence into
-`README.md` or `SECURITY_ARCHITECTURE.md`. Finish, document, archive — a backlog
+`docs/operations/`, `README.md` or `SECURITY_ARCHITECTURE.md`. Finish, document, archive — a backlog
 that outlives its work costs focus. **The extraction is the close**, not the
 move: an archived file is history and is never a source of a current rule, so a
 rule found there is the same process defect as a rule found in a live ticket
@@ -36,6 +36,30 @@ anywhere. A code comment that has to point at a pending change points at its ADR
 ticket, `git grep` for its number and clear whatever is left — archiving does not
 soften this, an archived ticket is as uncitable as a deleted one.
 
+## Documentation has five homes, and a statement goes to exactly one
+
+The rule is [ADR 0035](docs/adr/0035-the-readme-advertises-the-reference-lives-under-docs.md).
+
+| Kind | Home |
+|---|---|
+| A decision — what the product does and why, what was rejected | an [ADR](docs/adr/), with no references into the code |
+| How a subsystem works, an invariant, a hard-won detail | [docs/developer/](docs/developer/) |
+| What an operator or a client needs — configuration, deployment, S3 API behaviour, integrity, monitoring, upgrading, per-client notes | [docs/operations/](docs/operations/) |
+| The threat model and residual risks | [SECURITY_ARCHITECTURE.md](SECURITY_ARCHITECTURE.md); its **closed** hardening items are [docs/security/hardening-history.md](docs/security/hardening-history.md) |
+| Work still outstanding | a [ticket](docs/tickets/), archived when the work lands |
+
+**`README.md` is the front page and carries the configuration key reference.**
+Pitch, features, naming conventions, the documentation map, the fast start, the
+providers, the supported clients, the installation paths, the complete
+configuration key block, a monitoring summary, a security summary, development,
+licence. Nothing else. If you catch yourself *explaining* something there, the
+explanation belongs in the page you are linking to. **The key reference lives
+in the README and nowhere else** — a page under `docs/operations/` explains a
+setting and never restates the key list.
+
+Each supported client gets one page under `docs/operations/clients/`; adding a
+client adds a page, never a section to another client's.
+
 ## Developer documentation lives in `docs/developer/`
 
 Overviews for people changing the code — the package map, the storage format and
@@ -47,19 +71,9 @@ Start at [docs/developer/README.md](docs/developer/README.md).
 same change** when you move what it describes. Unlike an ADR, a page here points
 at files and functions on purpose, so it goes stale when the tree moves.
 
-Where a durable insight belongs:
-
-| Kind | Home |
-|---|---|
-| A decision — what the product does and why, what was rejected | an [ADR](docs/adr/), with no references into the code |
-| How a subsystem works, an invariant, a hard-won detail | [docs/developer/](docs/developer/) |
-| What an operator or a client needs | [README.md](README.md) |
-| The threat model and residual risks | [SECURITY_ARCHITECTURE.md](SECURITY_ARCHITECTURE.md) |
-| Work still outstanding | a [ticket](docs/tickets/), archived when the work lands |
-
-Do not let implementation detail accumulate in `README.md`; that page is for
-operators and clients. If you catch yourself explaining the code there, the
-explanation belongs in `docs/developer/`.
+A page here is for somebody changing the code. What somebody *running* the proxy
+needs is [docs/operations/](docs/operations/), and the difference is the reader,
+not the depth: both may name files and functions.
 
 ## Start with the knowledge graph (graphify)
 
@@ -118,7 +132,10 @@ two multipart paths, the error conventions, the test layers and the performance
 rules live in [docs/developer/](docs/developer/) — start at its
 [README](docs/developer/README.md). The contributor guide — repository layout,
 the build/test/lint matrix, continuous integration, the extension checklists and
-the project conventions — is [DEVELOPER.md](DEVELOPER.md). The threat model is
+the project conventions — is [DEVELOPER.md](DEVELOPER.md). What an operator or a
+client meets — configuration, deployment, S3 API behaviour, the integrity
+guarantees, monitoring, upgrading, the per-client notes — is
+[docs/operations/](docs/operations/). The threat model is
 [SECURITY_ARCHITECTURE.md](SECURITY_ARCHITECTURE.md). **Read the page for a
 subsystem before you change it, and update it in the same change.**
 
@@ -563,6 +580,7 @@ type reads, and `validateProviderConfig` refuses the rest (ADR 0013 D11).
 - End-to-end suites: one package per client under `test/e2e/<client>/`, tag `//go:build e2e`, an `e2e-up.sh`/`e2e-down.sh` pair and a `versions.env` beside the tests; shared helpers in `test/e2e/harness/`
 - Config examples: `config/{provider}-example.yaml` (aes-example.yaml, aes-tls-example.yaml, multi-example.yaml, exit-example.yaml)
 - ADRs: `docs/adr/NNNN-<kebab-title>.md`, index in `docs/adr/README.md` — permanent
+- Operator pages: `docs/operations/<subject>.md`, one client per file under `docs/operations/clients/`, index in `docs/operations/README.md`
 - Tickets: `docs/tickets/NNN-<slug>.md` — work lists, moved to `docs/tickets/archive/` when the work lands, referenced from nowhere else
 
 ## Common Development Tasks
@@ -612,7 +630,8 @@ no proxy code talks to it — it is there for the KMS work that is not built
 - **The codec**: `pkg/encryption/dataencryption/segmented_gcm.go` (+ `_io.go`, `_range.go`)
 - **KEK registry**: `pkg/encryption/factory/factory.go`
 - **Test helpers**: `test/integration/minio_test_helper.go`; `test/e2e/harness/` for the e2e suites
-- **Security design**: `SECURITY_ARCHITECTURE.md` (threat model, H-1..H-n hardening list)
+- **Security design**: `SECURITY_ARCHITECTURE.md` (threat model, the open H-items; the closed ones are `docs/security/hardening-history.md`)
+- **Operator and client reference**: `docs/operations/` (configuration guide, deployment, S3 API behaviour, integrity, monitoring, upgrading, `clients/`)
 
 ## Where the flows are written down
 

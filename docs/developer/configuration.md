@@ -173,7 +173,7 @@ security controls above.
 
 ## Related
 
-- [README: the container's own configuration](../../README.md#the-containers-own-configuration) — the operator-facing variable table
-- [README: complete configuration file structure](../../README.md#complete-configuration-file-structure) — every key and its default
+- [docs/operations/configuration.md](../operations/configuration.md#the-containers-own-configuration) — the operator-facing variable table, the `${VAR}` mechanism and the shipped examples
+- [README: the configuration key reference](../../README.md#configuration) — every key and its default
 - [ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md) — a key exists only if code reads it, and an unknown one refuses the start
 - [ADR 0021](../adr/0021-key-material-is-generated-never-committed.md) — key material is generated, never committed

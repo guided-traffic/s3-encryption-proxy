@@ -315,9 +315,9 @@ stored data unreadable is the definition of a major.
   major is declared, and why the current line carries none of this work.
 - ADR 0019 — *Integration and end-to-end tests are the product; they are never skipped* —
   the suites that run alongside the rehearsal of D6.
-- [README.md](../../README.md) — the operator-facing upgrade section: which release lines
-  stop being readable, which configuration keys are gone, and the meaning of the refusal an
-  old object answers with.
+- [docs/operations/upgrading.md](../operations/upgrading.md) — the operator-facing upgrade guide: which
+  release lines stop being readable, which configuration keys are gone, and the meaning of the refusal
+  an old object answers with.
 - [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — the threat model rule that
   the stored format may change without a migration path, and key rotation as the same
   re-upload story one layer down.

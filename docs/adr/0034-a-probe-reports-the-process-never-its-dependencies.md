@@ -244,6 +244,6 @@ front of the person who can act on it.
   out, and why each is already answered without a probe.
 * [ADR 0018](0018-a-major-release-is-declared-by-a-label.md) — weighed and not observed for the
   endpoint removal, by the owner's decision.
-* [README.md](../../README.md) — the endpoints as an operator meets them.
+* [docs/operations/monitoring.md](../operations/monitoring.md) — the endpoints as an operator meets them.
 * [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — the unauthenticated surface these
   endpoints form.

@@ -337,7 +337,7 @@ refusal says so honestly.
 * ADR 0017 — Stored data compatibility is not owed; a major release may break the format
 * ADR 0019 — Integration and end-to-end tests are the product; they are never skipped
 * ADR 0020 — Performance is measured before and after, never asserted
-* [README.md](../../README.md) — S3 API behaviour worth knowing: the copy refusals, multipart part
-  sizes, and the migration note for the major release
+* [docs/operations/s3-api.md](../operations/s3-api.md) — the copy refusals and the multipart part sizes
+* [docs/operations/upgrading.md](../operations/upgrading.md) — the migration note for the major release
 * [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — why an operation refuses instead of
   pretending, and what the backend is trusted with

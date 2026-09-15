@@ -452,8 +452,9 @@ a silent drop. That asymmetry, not policy, is what earns the refusal.
   unmeasured forwarding cost has to meet)
 - ADR 0023 — Filename encryption, if it ships, encrypts directory segments only (what the
   backend learns regardless, which forwarded tags add to)
-- [README.md](../../README.md) — the operations the proxy refuses, sub-resource by
-  sub-resource, and the checksum and versioning behaviour a client sees today
+- [docs/operations/s3-api.md](../operations/s3-api.md) — the operations the proxy refuses, sub-resource by
+  sub-resource, and the versioning behaviour a client sees today
+- [docs/operations/integrity.md](../operations/integrity.md) — the checksum behaviour
 - [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — what the backend learns
   anyway, the handlers that refuse rather than pretend, and the trust boundary the
   forwarding decision is measured against

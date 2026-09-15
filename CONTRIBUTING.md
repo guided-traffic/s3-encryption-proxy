@@ -180,8 +180,11 @@ body, which is what the marker inspection above judges.
 |---|---|
 | A decision — what the product does and why, what was rejected | an [ADR](docs/adr/), carrying no references into the code |
 | How a subsystem works, an invariant, a hard-won detail | [docs/developer/](docs/developer/) |
-| What an operator or a client needs | [README.md](README.md) |
+| What an operator or a client needs | [docs/operations/](docs/operations/); the configuration **key reference** itself stays in [README.md](README.md) |
 | The threat model and residual risks | [SECURITY_ARCHITECTURE.md](SECURITY_ARCHITECTURE.md) |
+
+The README is the product's front page and carries nothing else
+([ADR 0035](docs/adr/0035-the-readme-advertises-the-reference-lives-under-docs.md)).
 
 Work still outstanding lives in a work list that is archived when the work lands,
 and nothing outside that directory may reference one — cite the ADR instead (ADR
