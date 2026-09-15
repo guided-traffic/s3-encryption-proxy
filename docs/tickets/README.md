@@ -19,7 +19,7 @@ This page carries the [index](#index) of what exists and the
 [label index](#label-index) for the finding labels older ticket text still
 cites.
 
-**State (2026-09-15).** Twelve live ticket files; everything
+**State (2026-09-15).** Eleven live ticket files; everything
 the release carried is in [archive/](archive/). The bundle merged on 2026-09-14
 and `5.0.0` was cut, so the nine files that were its work list went with it:
 [023](archive/023-major-v5.md), the scope list itself, and
@@ -50,9 +50,10 @@ announcements so that 5.0.0's configuration does not foreclose them; nothing is
 built. **[036](036-high-availability.md) is no longer one of them**: it was
 refined on 2026-09-15 and its shape is decided — a shared session table in an
 externally provided Valkey with Sentinel — which pulled
-[029](029-multipart-idle-clock.md) off the not-scheduled list, because its
+[029](archive/029-multipart-idle-clock.md) off the not-scheduled list, because its
 throttled clock is the lease heartbeat that design needs, and produced
-[041](041-the-liveness-probe-kills-the-drain.md), which runs before either.
+[041](041-the-liveness-probe-kills-the-drain.md), which runs before either. 029 is
+built and archived since 2026-09-15; 041 is still ahead of 036.
 [039](039-backend-certificate-verification-failure-is-named.md) and
 [041](041-the-liveness-probe-kills-the-drain.md) are the open work lists. [040](040-managed-buckets.md) is a plan, raised
 2026-09-14 and nothing in it decided: managed buckets, a startup readability
@@ -78,7 +79,7 @@ is estimated.
 | [024](archive/024-coverage-round-findings.md) | **Archived 2026-09-13** | The coverage round of 2026-09-06 and the defect list it produced. Wave 2 closed every open row but one: **S-3**, the unauthenticated monitoring listener. That is answered — [ADR 0014](../adr/0014-authentication-is-sigv4-no-rate-limiting.md) D11 is the rule, the owner decision of 2026-09-12 dropped `licensed_to` and `company` from the scrape and adds no `NetworkPolicy` as the answer (the chart's optional one stays off by default, `networkPolicy.enabled: false`, and the network boundary is the administrator's), and `SECURITY_ARCHITECTURE.md` states the posture. `ListParts` is named there for continuity and belongs to [013](archive/013-storage-format-v2.md) | C-1, C-2, I-1, I-2, S-1 to S-6, A-1 to A-3, P-1 to P-3, X-1, X-2; the decisions it produced are ADRs now |
 | [026](026-sse-c-passthrough.md) | Open, **additive since 2026-09-11** | SSE-C (customer-provided keys) forwarded on every verb — PUT, GET, ranged GET, HEAD, multipart create and parts — with the response echo, never logged or stored. Both preconditions are met: the format change removed the copy-source plumbing it would have owed, and the storage-header decision shipped, so the three customer-key headers are refused `501 NotImplemented` today ([ADR 0007](../adr/0007-forward-it-or-refuse-it.md) D6). Until that refusal existed this ticket was a breaking change parked in an open ticket; it is now what it was written to be — lifting a refusal | — |
 | [028](archive/028-upload-and-read-performance-round.md) | **Archived 2026-09-14** | The upload and read performance round after wave 7: the comparison stopped measuring its own harness, four costs came off the read and write paths, a client part is forwarded while it is received (ADR 0024 D1), and an upload that can no longer be finished is ended rather than abandoned (ADR 0028, ADR 0029). The analytical half of the round — the crypto floor and its headroom, the measured price of the tail-first read's second request, three falsified suspicions and the two-transport caveat on the published comparison — is in [docs/developer/performance.md](../developer/performance.md); ticket 027 was corrected directly, because it was still asking a question this round had answered | — |
-| [029](029-multipart-idle-clock.md) | Open, **pulled back in 2026-09-15 by [036](036-high-availability.md)** | The multipart idle clock moves only at part boundaries, so one part slower than `multipart_session_idle_timeout` is expired and ended at the backend while it is still arriving. Owner decision: rare enough to live with, and an operator can raise the timeout. The mitigation is usable now — a swept upload is logged at `Info` with the idle time, the configured timeout and the name of the knob. What is left is the real fix: an `atomic.Int64` clock the part body touches as bytes arrive — and 036's refining round made it a dependency rather than a nicety, because a throttled touch is exactly the shape a lease heartbeat needs and building 036 first would design it twice | — |
+| [029](archive/029-multipart-idle-clock.md) | **Archived 2026-09-15** | The multipart idle clock moved only at part boundaries, so one part slower than `multipart_session_idle_timeout` was ended at the backend while it was still arriving. Fixed: the clock is a throttled `atomic.Int64` on a monotonic basis, outside the session mutex, and the part body is wrapped on the held path and the streamed one, so ADR 0028 D1 now holds within a part as well as between two — its residual risk there is marked closed. The heartbeat shape [036](036-high-availability.md) wanted exists with it | — |
 | [025](025-tink-kms-hcvault.md) | Parked | Vault as a key provider: the five decisions still to make, the rotation findings worth keeping, and what must be verified against a running Vault before any code. Not in the next major release | — |
 | [027](027-whole-object-read-first-window.md) | Open, **evaluation only (2026-09-11)** | How large the first read of a whole-object `GET` should be. The tail-first read of [ADR 0003](../adr/0003-objects-are-an-authenticated-segment-chain.md) D14 costs a second backend request above 64 KiB. Five options are written down with what each costs; option C — issue the second request on the first answer's headers — shipped with [028](archive/028-upload-and-read-performance-round.md), so the round trip now overlaps the first read and the 1.2 ms and 40 % this ticket measures predate it. The question, and the window, are unchanged. Explicitly **not** in 5.0.0 | — |
 | [030](archive/030-test-suite-audit.md) | **Archived 2026-09-14** | The test suite read against what the product promises: 71 findings raised, 62 surviving a second reader, four of them mutation-proven to pass with the guard they exist for deleted. Every row was worked, and five defects in the product came out of it, not in its tests — the unpinned end-relative ranged reads, an orphaned backend upload after a shutdown, `os.Exit` from the monitoring goroutine, [ADR 0011](../adr/0011-the-proxy-owns-the-part-layout.md) D5's missing global short-part budget, and three responses that did not answer what S3 answers | — |
@@ -114,9 +115,9 @@ up on its own.
 [036](036-high-availability.md).** Its refining round put two files ahead of it:
 [041](041-the-liveness-probe-kills-the-drain.md), because a pod that is killed
 mid-drain never reaches the phase where a session is handed over, and
-[029](029-multipart-idle-clock.md), whose remaining fix is the throttled clock
-036's lease heartbeat reuses. Both are small and neither is breaking. 036 itself
-is refined but not scheduled: eighteen questions are still open.
+[029](archive/029-multipart-idle-clock.md), whose throttled clock 036's lease
+heartbeat reuses — that one landed on 2026-09-15 and is archived, leaving 041.
+036 itself is refined but not scheduled: eighteen questions are still open.
 
 [039](039-backend-certificate-verification-failure-is-named.md) is independent of
 all three: nine small items, none breaking.

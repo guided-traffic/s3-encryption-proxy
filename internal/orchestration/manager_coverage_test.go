@@ -331,17 +331,15 @@ func TestOrcMgrIdleClockFollowsTheLastPart(t *testing.T) {
 	// Started two hours ago, last part a moment ago.
 	session.mu.Lock()
 	session.CreatedAt = time.Now().Add(-2 * time.Hour)
-	session.lastTouched = time.Now()
 	session.mu.Unlock()
+	session.lastTouched.Store(int64(sinceStart()))
 
 	assert.Equal(t, 0, m.CleanupExpiredSegmentedSessions(context.Background(), time.Hour),
 		"an upload still receiving parts is not abandoned for having started long ago")
 	assert.Equal(t, 1, orcMgrSessionCount(m))
 
 	// The same session, now idle.
-	session.mu.Lock()
-	session.lastTouched = time.Now().Add(-2 * time.Hour)
-	session.mu.Unlock()
+	session.lastTouched.Store(int64(sinceStart() - 2*time.Hour))
 
 	assert.Equal(t, 1, m.CleanupExpiredSegmentedSessions(context.Background(), time.Hour),
 		"an upload nobody is feeding is abandoned")

@@ -137,12 +137,15 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	// has to bound the read as well: reading first and refusing afterwards means
 	// any part a client cares to send is buffered in full before the proxy
 	// decides it may not keep it (ADR 0011 D5).
-	bodyData, bodyOK := h.readHeldPart(w, r, h.encryptionMgr.ShortPartBufferSize())
+	//
+	// The session is looked up before the read so the idle clock can move while
+	// the part arrives, and an upload this proxy does not have is still answered
+	// after the read, the way it always was.
+	session, ok := h.encryptionMgr.SegmentedSession(uploadID)
+	bodyData, bodyOK := h.readHeldPart(w, r, session, h.encryptionMgr.ShortPartBufferSize())
 	if !bodyOK {
 		return
 	}
-
-	session, ok := h.encryptionMgr.SegmentedSession(uploadID)
 	if !ok {
 		h.noSuchUpload(w, bucket, key, uploadID, partNumber)
 		return
@@ -182,7 +185,15 @@ func (h *UploadHandler) readUndeclaredPart(w http.ResponseWriter, r *http.Reques
 // readHeldPart reads a part the proxy has to keep until Complete, refusing one
 // larger than the short-part budget before its bytes are in memory rather than
 // after.
-func (h *UploadHandler) readHeldPart(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, bool) {
+func (h *UploadHandler) readHeldPart(
+	w http.ResponseWriter, r *http.Request, session *orchestration.SegmentedSession, limit int64,
+) ([]byte, bool) {
+	if session != nil && r.Body != nil {
+		// The whole part is read here, so without this the idle clock stands
+		// still for the entire read and a part slower than the timeout is swept
+		// under this request (ADR 0028 D1).
+		r.Body = session.TouchWhileReading(r.Body)
+	}
 	bodyData, err := h.requestParser.ReadBodyLimited(r, limit)
 	if errors.Is(err, request.ErrBodyTooLarge) {
 		h.logger.WithField("limit", limit).
@@ -232,7 +243,11 @@ func (h *UploadHandler) uploadStreamedPart(
 		return
 	}
 
-	part, err := session.SealStreamingPart(partNumber, plaintextLen, body)
+	// The backend pulls this body, and that pull is the part arriving: the clock
+	// has to move with it, or a part slower than the idle timeout is ended under
+	// this request (ADR 0028 D1). The unwrapped reader is what Verdict is asked
+	// about below.
+	part, err := session.SealStreamingPart(partNumber, plaintextLen, session.TouchWhileReading(body))
 	if err != nil {
 		if errors.Is(err, orchestration.ErrPartNumberReserved) {
 			h.errorWriter.WriteGenericError(w, http.StatusBadRequest, "InvalidArgument", err.Error())

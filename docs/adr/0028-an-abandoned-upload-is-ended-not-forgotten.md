@@ -120,15 +120,15 @@ change and it is exactly the silent behaviour change ADR 0013 exists to prevent.
   caps them across all sessions at `optimizations.multipart_short_part_buffer_size`, a short part
   that does not fit beside what other uploads hold answers `SlowDown` and one larger than the whole
   budget `EntityTooLarge` — but the session count is not, and this decision does not change that.
-* **The idle clock moves when a part arrives, never while one is arriving.** Recorded 2026-09-12.
-  It is written when a part is handed to the session and again when a stored part is entered in the
-  part table, so a single part that takes longer than `optimizations.multipart_session_idle_timeout`
-  to transfer looks idle: the sweeper ends its upload at the backend while the body is still being
-  written, and the client's next request is answered `NoSuchUpload`. D1 holds between parts and not
-  within one. Every upload the sweeper ends is logged at Info with its upload id, bucket, key and
-  how long it had been idle, and the line names `optimizations.multipart_session_idle_timeout`: the
-  line is the only thing that says which knob to turn, and the only thing the client's unexplained
-  `NoSuchUpload` can be correlated with.
+* ~~**The idle clock moves when a part arrives, never while one is arriving.**~~ Recorded
+  2026-09-12, **closed 2026-09-15**. A single part that took longer than
+  `optimizations.multipart_session_idle_timeout` to transfer looked idle, and the sweeper ended its
+  upload at the backend while the body was still being written; D1 held between parts and not
+  within one. The part body is now wrapped on both upload paths and the clock moves with the bytes,
+  so D1 holds within a part as well and the timeout sizes a pause rather than a transfer. Every
+  upload the sweeper ends is still logged at Info with its upload id, bucket, key and how long it
+  had been idle, and the line names `optimizations.multipart_session_idle_timeout`: it is the only
+  thing the client's unexplained `NoSuchUpload` can be correlated with.
 * **The cleanup interval is not range-checked.** `multipart_session_cleanup_interval` takes any
   value, and 0 disables the sweeper altogether: for as long as the process runs, an idle upload is
   then neither ended nor forgotten (ADR 0013 records the same gap for other keys). A signalled
