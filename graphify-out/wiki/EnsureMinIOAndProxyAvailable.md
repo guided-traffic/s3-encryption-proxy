@@ -1,33 +1,33 @@
 # EnsureMinIOAndProxyAvailable()
 
-> God node · 88 connections · `test/integration/minio_test_helper.go`
+> God node · 122 connections · `test/integration/minio_test_helper.go`
 
-**Community:** [Object Sub-Resource Refusals](Object_Sub-Resource_Refusals.md)
+**Community:** [Ranged Read and Passthrough Tests](Ranged_Read_and_Passthrough_Tests.md)
 
 ## Connections by Relation
 
 ### calls
 - TestEncEveryPutPathStoresCiphertext() `EXTRACTED`
 - TestEncAWSChunkedFramingStoresCiphertext() `EXTRACTED`
+- TestSegmentChainRefusesTamperedBytes() `EXTRACTED`
 - TestEncClientDrivenMultipartStoresCiphertext() `EXTRACTED`
 - TestMpuThreePartRoundTrip() `EXTRACTED`
 - TestComprehensiveMultipartUpload() `EXTRACTED`
-- TestMpuCompleteWithPartsOutOfOrder() `EXTRACTED`
+- TestEncClientMetadataInsideThePrefixIsRefused() `EXTRACTED`
 - TestMpuPartsUploadedOutOfOrder() `EXTRACTED`
 - TestComprehensiveSinglePartUpload() `EXTRACTED`
 - TestDelBatchDeleteThreeExistingKeys() `EXTRACTED`
 - TestEncCopyObjectNeverStoresPlaintext() `EXTRACTED`
-- TestEncForgedEnvelopeMetadataCannotProduceWrongPlaintext() `EXTRACTED`
+- TestMpuHeldPartResentAtStreamingSize() `EXTRACTED`
 - TestSinglePartUploadCornerCases() `EXTRACTED`
-- TestDelBatchDeleteIntegrityHeaderNotEnforced() `EXTRACTED`
+- TestDelBatchDeleteIntegrityHeaderIsEnforced() `EXTRACTED`
 - TestDelBatchDeleteKeysNeedingXMLEscaping() `EXTRACTED`
 - TestDelBatchDeleteMixOfExistingAndMissingKeys() `EXTRACTED`
 - TestDelBatchDeleteQuietMode() `EXTRACTED`
-- TestEncClientMetadataCannotReachTheStoredEnvelope() `EXTRACTED`
 - TestEncStreamedPutWithoutContentLengthStoresCiphertext() `EXTRACTED`
 - TestEncUploadPartCopyNeverStoresPlaintext() `EXTRACTED`
 - lstNewRefFixture() `EXTRACTED`
-- *…and 66 more `calls` connection(s) not listed (lowest-degree first to go)*
+- *…and 100 more `calls` connection(s) not listed (lowest-degree first to go)*
 
 ### contains
 - minio_test_helper.go `EXTRACTED`

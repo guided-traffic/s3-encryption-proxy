@@ -1,75 +1,75 @@
 # Bucket Sub-Resource Handlers
 
-> 69 nodes · cohesion 0.06
+> 58 nodes · cohesion 0.12
 
 ## Key Concepts
 
-- **net/http.Request** (147 connections)
-- **net/http.ResponseWriter** (121 connections)
-- **LifecycleHandler** (9 connections) — `internal/proxy/handlers/bucket/lifecycle.go`
-- **LoggingHandler** (9 connections) — `internal/proxy/handlers/bucket/logging.go`
-- **ReplicationHandler** (9 connections) — `internal/proxy/handlers/bucket/replication.go`
-- **WebsiteHandler** (9 connections) — `internal/proxy/handlers/bucket/website.go`
-- **NotificationHandler** (8 connections) — `internal/proxy/handlers/bucket/notification.go`
-- **TaggingHandler** (7 connections) — `internal/proxy/handlers/bucket/tagging.go`
-- **.ReadBody()** (7 connections) — `internal/proxy/request/parser.go`
-- **.writeErrorDocument()** (7 connections) — `internal/proxy/response/errors.go`
-- **.Handle()** (6 connections) — `internal/proxy/handlers/bucket/lifecycle.go`
-- **.Handle()** (6 connections) — `internal/proxy/handlers/bucket/logging.go`
-- **.Handle()** (6 connections) — `internal/proxy/handlers/bucket/replication.go`
-- **.Handle()** (6 connections) — `internal/proxy/handlers/bucket/tagging.go`
-- **.Handle()** (6 connections) — `internal/proxy/handlers/bucket/website.go`
-- **isAWSChunkedRequest()** (6 connections) — `internal/proxy/request/streaming_aws_decoder.go`
-- **.Handle()** (5 connections) — `internal/proxy/handlers/bucket/notification.go`
-- **.Handle()** (5 connections) — `internal/proxy/handlers/multipart/upload.go`
-- **.uploadSegmentedPart()** (5 connections) — `internal/proxy/handlers/multipart/upload.go`
-- **.Handle()** (5 connections) — `internal/proxy/handlers/object/acl.go`
-- **.StreamingReader()** (5 connections) — `internal/proxy/request/parser.go`
-- **.handleDeleteBucketLifecycle()** (4 connections) — `internal/proxy/handlers/bucket/lifecycle.go`
-- **.handleGetBucketLifecycleConfiguration()** (4 connections) — `internal/proxy/handlers/bucket/lifecycle.go`
-- **.handlePutBucketLifecycleConfiguration()** (4 connections) — `internal/proxy/handlers/bucket/lifecycle.go`
-- **.handleDeleteLogging()** (4 connections) — `internal/proxy/handlers/bucket/logging.go`
-- *... and 44 more nodes in this community*
+- **NewParser()** (57 connections) — `internal/proxy/request/parser.go`
+- **NewXMLWriter()** (52 connections) — `internal/proxy/response/xml.go`
+- **NewBaseSubResourceHandler()** (49 connections) — `internal/proxy/handlers/bucket/base.go`
+- **BaseSubResourceHandler** (34 connections) — `internal/proxy/handlers/bucket/base.go`
+- **NewAccelerateHandler()** (11 connections) — `internal/proxy/handlers/bucket/accelerate.go`
+- **NewRequestPaymentHandler()** (11 connections) — `internal/proxy/handlers/bucket/request_payment.go`
+- **NewWebsiteHandler()** (10 connections) — `internal/proxy/handlers/bucket/website.go`
+- **NewNotificationHandler()** (9 connections) — `internal/proxy/handlers/bucket/notification.go`
+- **NewReplicationHandler()** (9 connections) — `internal/proxy/handlers/bucket/replication.go`
+- **NewTaggingHandler()** (9 connections) — `internal/proxy/handlers/bucket/tagging.go`
+- **NewVersioningHandler()** (8 connections) — `internal/proxy/handlers/bucket/versioning.go`
+- **accelerate_test.go** (7 connections) — `internal/proxy/handlers/bucket/accelerate_test.go`
+- **TestAccelerateHandler_AccelerateStatuses()** (7 connections) — `internal/proxy/handlers/bucket/accelerate_test.go`
+- **TestAccelerateHandler_AccelerationBenefits()** (7 connections) — `internal/proxy/handlers/bucket/accelerate_test.go`
+- **TestAccelerateHandler_BucketNamingRequirements()** (7 connections) — `internal/proxy/handlers/bucket/accelerate_test.go`
+- **TestAccelerateHandler_ContentTypeHandling()** (7 connections) — `internal/proxy/handlers/bucket/accelerate_test.go`
+- **TestAccelerateHandler_Handle()** (7 connections) — `internal/proxy/handlers/bucket/accelerate_test.go`
+- **TestAccelerateHandler_HandleErrors()** (7 connections) — `internal/proxy/handlers/bucket/accelerate_test.go`
+- **TestAccelerateHandler_XMLValidation()** (7 connections) — `internal/proxy/handlers/bucket/accelerate_test.go`
+- **TestNotificationHandler_ComplexConfigurations()** (7 connections) — `internal/proxy/handlers/bucket/notification_test.go`
+- **TestNotificationHandler_EventTypes()** (7 connections) — `internal/proxy/handlers/bucket/notification_test.go`
+- **TestNotificationHandler_Handle()** (7 connections) — `internal/proxy/handlers/bucket/notification_test.go`
+- **TestNotificationHandler_HandleErrors()** (7 connections) — `internal/proxy/handlers/bucket/notification_test.go`
+- **TestNotificationHandler_XMLValidation()** (7 connections) — `internal/proxy/handlers/bucket/notification_test.go`
+- **TestReplicationHandler_ComplexConfigurations()** (7 connections) — `internal/proxy/handlers/bucket/replication_test.go`
+- *... and 33 more nodes in this community*
 
 ## Relationships
 
-- [Bucket Handler Routing](Bucket_Handler_Routing.md) (50 shared connections)
-- [Object Operations Handler](Object_Operations_Handler.md) (35 shared connections)
-- [Multipart Handler](Multipart_Handler.md) (26 shared connections)
-- [Object Handler Dispatch](Object_Handler_Dispatch.md) (14 shared connections)
-- [Object Helper Functions](Object_Helper_Functions.md) (13 shared connections)
-- [Bucket CORS Handler](Bucket_CORS_Handler.md) (10 shared connections)
-- [Request Parser Tests](Request_Parser_Tests.md) (10 shared connections)
-- [Bucket ACL Handler](Bucket_ACL_Handler.md) (8 shared connections)
-- [Object Tagging Handler](Object_Tagging_Handler.md) (8 shared connections)
-- [Object Listing](Object_Listing.md) (7 shared connections)
-- [SigV4 Signing Helper](SigV4_Signing_Helper.md) (6 shared connections)
-- [SigV4 Header Authentication](SigV4_Header_Authentication.md) (6 shared connections)
+- [Copy and Delete Object Handlers](Copy_and_Delete_Object_Handlers.md) (39 shared connections)
+- [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (39 shared connections)
+- [Multipart Handler Constructors](Multipart_Handler_Constructors.md) (17 shared connections)
+- [Bucket Crud](Bucket_Crud.md) (17 shared connections)
+- [Bucket Handler Dispatch](Bucket_Handler_Dispatch.md) (14 shared connections)
+- [ACL, CORS and Lifecycle Handlers](ACL,_CORS_and_Lifecycle_Handlers.md) (10 shared connections)
+- [Replication and ACL Handlers](Replication_and_ACL_Handlers.md) (7 shared connections)
+- [Bucket Website and Create/Delete](Bucket_Website_and_Create-Delete.md) (3 shared connections)
+- [Request Parser and Framing Tests](Request_Parser_and_Framing_Tests.md) (3 shared connections)
+- [Checksum Verifier Tests](Checksum_Verifier_Tests.md) (3 shared connections)
+- [Logging](Logging.md) (2 shared connections)
+- [Multipart Handler Coverage Tests](Multipart_Handler_Coverage_Tests.md) (2 shared connections)
 
 ## Source Files
 
-- `internal/proxy/handlers/bucket/handler.go`
-- `internal/proxy/handlers/bucket/lifecycle.go`
-- `internal/proxy/handlers/bucket/logging.go`
+- `internal/proxy/handlers/bucket/accelerate.go`
+- `internal/proxy/handlers/bucket/accelerate_test.go`
+- `internal/proxy/handlers/bucket/base.go`
 - `internal/proxy/handlers/bucket/notification.go`
-- `internal/proxy/handlers/bucket/operations.go`
+- `internal/proxy/handlers/bucket/notification_test.go`
 - `internal/proxy/handlers/bucket/replication.go`
+- `internal/proxy/handlers/bucket/replication_test.go`
+- `internal/proxy/handlers/bucket/request_payment.go`
+- `internal/proxy/handlers/bucket/request_payment_test.go`
 - `internal/proxy/handlers/bucket/tagging.go`
+- `internal/proxy/handlers/bucket/tagging_test.go`
+- `internal/proxy/handlers/bucket/versioning.go`
+- `internal/proxy/handlers/bucket/versioning_test.go`
 - `internal/proxy/handlers/bucket/website.go`
-- `internal/proxy/handlers/health/handler.go`
-- `internal/proxy/handlers/multipart/copy.go`
-- `internal/proxy/handlers/multipart/upload.go`
-- `internal/proxy/handlers/object/acl.go`
-- `internal/proxy/handlers/root/handler.go`
+- `internal/proxy/handlers/bucket/website_test.go`
 - `internal/proxy/request/parser.go`
-- `internal/proxy/request/streaming_aws_decoder.go`
-- `internal/proxy/response/errors.go`
 - `internal/proxy/response/xml.go`
 
 ## Audit Trail
 
-- EXTRACTED: 390 (98%)
-- INFERRED: 8 (2%)
+- EXTRACTED: 272 (74%)
+- INFERRED: 96 (26%)
 - AMBIGUOUS: 0 (0%)
 
 ---
