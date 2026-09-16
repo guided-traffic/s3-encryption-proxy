@@ -76,6 +76,11 @@ network-free, and there is no way around that while both questions share one job
 now re-runs the whole npm path on every title or body change, cancelling the in-flight run,
 because one workflow means one concurrency group.
 
+**Amended 2026-09-16: what "a client-visible answer" in D5 means is decided by ADR 0036.** It is
+the acceptance of a request and the shape of a success. The status code, the error code, the
+class and the wording of a refusal, and a header the proxy adds, are corrections: they never
+carry the marker and never wait for a major. D5's wording and the guard are unchanged.
+
 ## Context
 
 The release process is fully automatic and commit-driven. A push to `main` triggers the test
@@ -129,7 +134,8 @@ applying it is the deliberate act, and no other signal declares a major.
 **D5.** A commit carries the breaking marker whenever the change breaks stored data, an existing
 configuration or a client-visible answer — including on a branch that is not releasing. Markers
 are never softened to route around the guard; the label is what controls the release, the marker
-is what describes the change.
+is what describes the change. *A client-visible answer* is the acceptance of a request and the shape of a
+success (ADR 0036 D4); a corrected refusal or an added header is not one.
 
 **D6** (amended 2026-09-09; merged with D3's guard into one job 2026-09-11). On every pull request into `main`, a dry run of the release tool
 computes the next version from the pull request's commits and prints it on the check. This gate
