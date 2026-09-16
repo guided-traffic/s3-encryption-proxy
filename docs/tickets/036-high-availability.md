@@ -342,7 +342,9 @@ after a duplicate part*.
 
 Raised 2026-09-14 by the owner: *several s3-proxy instances side by side share the
 workload and synchronise with each other so that they cooperate on multipart
-uploads too.* **Refined 2026-09-15 — see the round above. Not scheduled, no code written.**
+uploads too.* **Refined 2026-09-15 and 2026-09-16 — see the three rounds above; round 3 closed
+twenty-three questions and leaves nine, starting at 37. Not scheduled, no code
+written.**
 
 ## Refining round 2, 2026-09-15 — the idle clock landed, and it does not fit
 
@@ -1135,6 +1137,141 @@ answers nothing by default, and raising it is a logging decision of its own.
 ADR 0030 D4 is not touched: it governs the scrape, where a pod-name label
 already exists; the info metric is the same class as that label, and the
 response header is the S3 surface, not the monitoring listener.
+
+### Decision 20. Six questions closed as consequences of decisions 8–19 (questions 12, 14, 18, 20, 25, 30)
+
+Put to the owner as one block on 2026-09-16 and confirmed without objection.
+
+* **12 — The forward.** Exists for exactly one verb, Complete (decision 5):
+  byte-faithful under the client's own SigV4, with the holder-identity header
+  (decision 9), over the peer listener under the client listener's `tls` block
+  (decision 14), with a connect timeout of one to two seconds as a constant — a
+  key only if question 37 wants one. Parts are never forwarded: every instance
+  serves every part (decisions 1 and 3). A client-facing 307 stays dead for the
+  reasons the question records.
+* **14 — The upload id.** Stays the backend's; the row is filed under it
+  (decision 16). Nothing is minted.
+* **18 — The store is unreachable.** No probe depends on it (ADR 0034 D5).
+  Reads, single-request PUTs and the internal producer are untouched. Every
+  client-driven multipart verb that has to read or write the row — for an upload
+  this instance already knows as well — answers `503 SlowDown` (decision 18).
+  The register check at start fails open (decision 15). The sweep skips its
+  tick and judges nothing.
+* **20 — `strategy: Recreate` at one replica.** No. Recreate kills every
+  upload in flight exactly as the surge does, and adds downtime; the answer to
+  "a rollout kills uploads" is the store at one replica (decision 2, middle
+  row). The one-instance invariant holds through a surge because the `preStop`
+  hold withdraws the old pod's endpoints before it stops (ADR 0034 D10). What
+  remains is the stale chart prose, already in *Done when*.
+* **25 — A fleet is single-cluster by definition.** Sentinel addresses and
+  forwarding by pod address are cluster-local; the licence's singular
+  `k8s_cluster_id` describes exactly that; a second cluster is a second
+  deployment with its own store and its own key prefix (decision 16).
+  Multi-cluster is out of scope and the ADR says so.
+* **30 — A nonce store and rate limiting.** Explicitly out of scope. The store
+  carries session rows and the member register and nothing else; ADR 0014's
+  refusals stand, and a later proposal reopens ADR 0014, not this design. The
+  ADR says so in advance, with the *Security* section's reason.
+
+**Still open after this decision:** 22, 23, 26, 27, 28, 29, 31, 32, 37.
+
+### Proposed in this round, not decided — question 37, the HA block
+
+Put to the owner as the last item of the round and left for the next session.
+The proposal, with every value marked as the loader would document it:
+
+```yaml
+high_availability:
+  enabled: false                        # default; true switches the session layer to the store
+  store:                                # Valkey behind Sentinel, the only store type
+    sentinel_addresses:                 # required when enabled; plural from day one; ${VAR}
+      - "${VALKEY_SENTINEL_1}:26379"    # example
+      - "${VALKEY_SENTINEL_2}:26379"    # example
+    primary_name: "mymaster"            # example; Sentinel's name for the primary; required
+    username: ""                        # example; ACL user, empty = default user; ${VAR}
+    password: "${VALKEY_PASSWORD}"      # example; ${VAR}; unset or empty refuses the start
+    sentinel_password: ""               # example; ${VAR}
+    database: 0                         # default
+    insecure_skip_verify: false         # default; TLS itself is not optional, as on the backend leg
+    key_prefix: "s3ep:"                 # default; per deployment; ^[a-z0-9][a-z0-9-]*:$
+  peer:
+    bind_address: ":8090"               # default; the forward listener, closes last
+    advertise_address: "${KUBERNETES_POD_IP}:8090"   # required when enabled; what peers dial; ${VAR}
+```
+
+Constants, not keys, each named in the operator documentation and promoted to a
+key only when a deployment needs another value (ADR 0013): forward connect
+timeout 2 s, store operation timeout 1 s, member register expiry 180 s (above the
+Sentinel failover window of about 90 s, decision 1), register renewal every 60 s,
+body activity stamp every 10 s (decision 10).
+
+Five choices inside it, with the favourite and its reason:
+
+* **(a) The name.** `high_availability`, `ha` or `coordination`. Favourite
+  `high_availability`: spelled out like `s3_security`, `optimizations` and
+  `encryption`, greppable, and the word an operator looks for. The middle form
+  of decision 2 — a store and one replica — is then "high availability without
+  a second instance", which the documentation says in those words.
+* **(b) An explicit `enabled` or the block's presence as the switch.** Favourite
+  `enabled`: the pattern of `tls` and `monitoring`, and the chart's gate
+  "`replicaCount > 1` only with the store" reads a boolean, not a presence.
+  `enabled: true` makes `sentinel_addresses`, `primary_name`, `password` and
+  `advertise_address` mandatory, and the refusal at start names the field.
+* **(c) Store TLS.** Mandatory, no `tls.enabled`, as on the backend leg: the
+  row carries wrapped keys and object names, the same class of data, so the
+  same rule — a plain connection refuses the start under every provider
+  (ADR 0013 D5) — in code rather than in documentation, as round 1 proposed.
+  `insecure_skip_verify` stays for the demo stack with the same security note as
+  the backend's: it weakens verification, and the missing trust store
+  (`ca_file` exists nowhere) is the gap
+  [039](039-backend-certificate-verification-failure-is-named.md) names, neither
+  larger nor smaller here. The alternative — TLS optional with a warning — is
+  what SECURITY_ARCHITECTURE.md §1.2 rule 2 refuses.
+* **(d) The `${VAR}` allowlist** gains the addresses, `primary_name`, `username`,
+  `password`, `sentinel_password` and `advertise_address`, or the proxy starts
+  with the placeholder text as its password (round 1).
+* **(e) The peer port defaults to 8090**, free beside 8080, 8443, 9090 and 6060.
+  The peer listener is a second client port (decision 14); the chart opens it in
+  the Service and never at the ingress.
+
+Deliberately absent: a store-type switch (one type, as there is one client
+type), a `member_ttl`, a forward timeout, a second prefix scheme. Each is
+additive later (ADR 0013 D11). The chart derives from `KUBERNETES_POD_IP`, which
+it already injects and which no Go code reads today.
+
+### Where the open questions stand after this round
+
+**Closed by decisions 8–20:** 3, 4, 5, 6, 7 (transport half), 9, 10, 11, 12,
+13, 14, 15, 16, 17, 18, 19, 20, 21, 24, 25, 30, 34, 35, 36. Questions 1, 2 and 8
+were closed in round 1 and stand.
+
+**Still open:** 22 (where the red cross-instance test lives), 23 (one ticket or
+two), 26 (the observability contract), 27 (the store's classification and
+retention — round 1's "persistence off, no backup" is proposed, not decided),
+28 (support claims at N instances), 29 (whether the proxy can influence the
+scale-in victim; the path itself is decision 13), 31 and 32 (the owner's own
+questions on the licence unit and on who runs the old profile), 33 (moot under
+the release constraint, left for the record), and **37, with the proposal
+above waiting for the owner's answer to (a)–(e)**.
+
+**The next session starts at 37.** Then 27, 26, 29, 28, 22, 23, 31, 32, in that
+order — 27 and 26 shape the ADR's residual-risk and monitoring sections, 22 and
+23 shape how the work is cut.
+
+### What this round changed outside the ticket
+
+* **[ADR 0036](../adr/0036-a-response-follows-s3-deviates-for-the-client-and-is-never-a-break.md)
+  was written**: a response follows S3, deviates only so a client stays usable
+  through the proxy, and changing a response is a correction that never carries
+  the breaking marker. It settles question 21 for good and leaves nothing in
+  this ticket gated on a major.
+* **ADR 0018 D5 gained a pointer** to that reading in its Status section and
+  after D5; its wording and the guard are unchanged. **ADR 0007's D13 note**
+  gained the same pointer as history. The ADR index lists 0036 under *The S3
+  surface*.
+* **Nothing else moved.** No code, no chart, no configuration, no operator page.
+  The knowledge graph under `graphify-out/` is behind by the new ADR and needs
+  its user-approved rebuild.
 
 ## Second pass, 2026-09-14 — what the first pass got wrong
 
@@ -1985,9 +2122,11 @@ accepted ADR.
 
 ## Open questions
 
-All undecided. None is answered here. 1-6 are the original set, sharpened; 7-33
-came from the second pass and the first refining round; 34 and 35 from round 2,
-which reopened 17 and 24.
+Numbered for reference; **the authority on which are still open is the last
+*Where the open questions stand* section of the latest refining round**, not
+this list. 1-6 are the original set, sharpened; 7-33 came from the second pass
+and the first refining round; 34 and 35 from round 2, which reopened 17 and 24;
+36 and 37 from round 3.
 
 1. **Where the shared state lives.** A shared database; a lock service such as
    etcd or Consul; the S3 backend itself; **or the Kubernetes API's
@@ -2237,6 +2376,20 @@ questions 34 and 35. One further item lived elsewhere and is done: the probe
 split and the `preStop` hook landed on 2026-09-15, and the rule they left behind
 is [ADR 0034](../adr/0034-a-probe-reports-the-process-never-its-dependencies.md). The idle-clock work this design looked to for a
 heartbeat has landed too and does not serve that purpose — see *Refining round 2*.
+
+**Round 3 (2026-09-16) settled most of the second block and moved two items into
+the first.** Answered there: 3 and 7 (decision 14), 8, 9 and 14 (decisions 4, 11,
+16), 16 and 17 (decisions 9 and 10), 4 (decision 12), 5 (decision 19), 18
+(decision 20), 24 and 25 (decisions 8 and 20). Still needing a decision: 26, 27
+and 31. New in the first block: the read-then-reserve ordering fix (decision 12)
+and the session-miss classification with its log line and counter (decision 17),
+both buildable without a store. New in the work block: the e2e case that SIGKILLs
+the holder while it holds the short part and asserts the terminal answer and the
+client's re-upload (decision 8), the deferred key switch and the removal guard
+(decision 15), and the answer table as conformance assertions cited to their
+records (decision 18, ADR 0036). The "ungraceful loss" clause of the first work
+item is answered: declared out of scope in the ADR, with the window stated.
+ADR 0036 exists, so no item here waits for a major.
 
 **Needs no design decision — could ship in 5.x:**
 
