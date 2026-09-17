@@ -212,7 +212,7 @@ services:
   #   restart: unless-stopped
 
   vault:
-    image: hashicorp/vault:2.1.0
+    image: hashicorp/vault:2.1.1
     container_name: vault
     environment:
       VAULT_DEV_ROOT_TOKEN_ID: myroot
