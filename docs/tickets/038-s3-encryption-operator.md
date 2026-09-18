@@ -146,14 +146,16 @@ resources, and what a resource may and may not name across a namespace
 boundary — and the **credential model** — which credential is carried, which
 is minted, which is written back, and who owns the Secret each lives in.
 Folding them into one ADR is defensible and makes the credential rules harder
-to cite on their own. **The numbering is settled, 2026-09-18:** the
-high-availability work landed first and took 0036
+to cite on their own. **The numbering moved twice on 2026-09-18, which is the hazard
+itself:** the high-availability work took 0036
 ([ADR 0036](../adr/0036-a-response-follows-s3-deviates-for-the-client-and-is-never-a-break.md)),
-so `docs/adr/` ends there and the two ADRs owed here start at 0037. ADR 0022
-carries the hazard outright as an accepted residual risk — ADR numbers are
-assigned by hand with no uniqueness check — and it cost nothing this time only
-because the two bodies of work landed one after the other instead of side by
-side. Whether
+this ticket then claimed 0037, and the backend-trust work took 0037
+([ADR 0037](../adr/0037-the-backend-leg-is-trusted-explicitly-and-its-failures-are-named.md))
+the same day. **The two ADRs owed here start at 0038.** ADR 0022 carries this
+outright as an accepted residual risk — ADR numbers are assigned by hand with no
+uniqueness check — and it cost nothing either time only because the bodies of
+work landed one after the other instead of side by side. Read the directory
+before claiming a number; a claim written down in a ticket is not a reservation. Whether
 the two ADRs are written now or at the next refining round is not decided
 here.
 
@@ -2792,7 +2794,8 @@ decision did *not* settle is the part a later reader gets wrong.
       `SECURITY_ARCHITECTURE.md` as a privilege with its blast radius, before
       any code exists.
 - [x] The ADR numbering is settled: 0036 went to the high-availability work
-      when it landed on 2026-09-18, so the two ADRs owed here start at 0037.
+      and 0037 to the backend-trust work, both on 2026-09-18, so the two ADRs
+      owed here start at 0038 — re-checked against `docs/adr/` before use.
 - [ ] The word the trust-boundary table uses for the human is decided, and
       `SECURITY_ARCHITECTURE.md:89` either carries the program as a second
       role or renames the first.

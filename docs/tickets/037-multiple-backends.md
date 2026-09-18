@@ -354,10 +354,37 @@ the label value is an operator-chosen name, never an endpoint (ADR 0030 D4).
 
 ## Neighbouring tickets, and where they collide
 
-- **[039](039-backend-certificate-verification-failure-is-named.md)** makes a
-  backend certificate failure nameable. With several backends the log line has to
-  say *which* backend — so 039 should either land first, or design its fields with
-  the name key of this ticket in mind. Cheap to coordinate, expensive to redo.
+- **[039](039-backend-certificate-verification-failure-is-named.md)** adds a
+  per-backend `ca_file` and sharpens how a backend transport failure is named.
+  Both halves touch this ticket, and the second one less than it looks.
+
+  **`ca_file` is a key inside the entry, which is the shape this ticket asked
+  for.** It is per backend from the first line of code — the trust of backend A
+  and backend B are independent, and nothing about it has to be revisited when a
+  second entry starts being read. What *does* have to be decided here is whether
+  several backends may present certificates from different private CAs in the
+  same deployment; the key permits it, and no other part of the design assumes
+  it either way.
+
+  **The failure log is already per backend, and that is not obvious.**
+  `recordBackendFailure` ([backend.go:147](../../internal/monitoring/backend.go#L147))
+  reads `req.URL.Host` off the round trip it is reporting, so its `host` field
+  names the backend that actually failed rather than a configured constant. That
+  line needs nothing from this ticket.
+
+  **The metric does, and there is a comment in the tree with an expiry date on
+  it.** `s3ep_backend_transport_failures_total` carries `class` and deliberately
+  no host label, and the reason is written down at
+  [metrics.go:173](../../internal/monitoring/metrics.go#L173): *"exactly one
+  backend is configured, so it would be a constant."* The day a second entry is
+  read that sentence is false, and the counter can no longer say which backend is
+  failing — which is precisely the signal a fallback exists to expose. The
+  constraint at the top of this ticket governs what the new label may hold: an
+  operator-chosen name, never the endpoint (ADR 0030 D4), because the monitoring
+  listener is unauthenticated. The **log** line may keep naming the host; it is
+  operator-side. So the two channels carry different values on purpose, and the
+  log must not be renamed to the metric's name for the metric's reason.
+
 - **[040](040-managed-buckets.md)** asks in its question 13 whether its bucket
   list is top-level or lives inside an `s3_backends[]` entry. If backends are
   symmetric and hold the same objects, the list is deployment-wide — but the
