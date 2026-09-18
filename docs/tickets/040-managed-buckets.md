@@ -56,6 +56,14 @@ written in the session the decision is taken, not when the code lands. So the
 amendments to ADR 0017 D3, ADR 0002 D7, ADR 0004 D12 and ADR 0002's startup
 Consequence are **the first work item of item 4**, not its last.
 
+**2026-09-17.** The owner asked that the copier of
+[017](017-filename-encryption.md) be built as an extensible pass engine whose
+interfaces later carry this ticket's item 4 (see 017, F11: enumeration, plan,
+conditional transfer, verify, delete-source policy, report, configuration). The
+engine and its rename operation may exist before the amendments above; the
+rewrap operation may not. 017's F11 records what this ticket measured as
+constraints on every operation of that engine.
+
 ## Prior art already in this directory
 
 Three live tickets have worked parts of this, and a fourth rules itself out.

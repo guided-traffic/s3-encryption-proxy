@@ -468,6 +468,11 @@ sharpened by findings there.
    differ per backend by construction (see the nonce finding above), so the ETag a
    client is told changes with the backend that answered
    ([ADR 0032](../adr/0032-the-entity-tag-is-a-change-token-never-a-content-digest.md)).
+   **2026-09-17:** bringing an added backend to parity is planned as an
+   operation of the pass engine of [017](017-filename-encryption.md) (its F11):
+   stored bytes and metadata copied byte for byte from one backend to the other,
+   which is the "backend-side replication" answer in tool form. The decision
+   stays here; 017 only provides the interfaces.
 5. **Multipart across backends.** One upload id per session today. Options: keep
    multipart single-backend and replicate after `CompleteMultipartUpload`, or hold
    N upload ids per session and fan out every part. The second changes the session
