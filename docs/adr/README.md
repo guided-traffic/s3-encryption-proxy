@@ -90,6 +90,7 @@ this column is a reading aid.
 | [0011](0011-the-proxy-owns-the-part-layout.md) | The proxy fixes the part layout it writes, refuses one it cannot verify, and refuses server-side copy | Implemented |
 | [0012](0012-client-checksums-are-verified-never-forwarded.md) | Every checksum a client declares is verified against the plaintext, never forwarded to the backend and never stored; the proxy serves its own sealed CRC32C on whole-object reads | Implemented |
 | [0024](0024-an-upload-forwards-while-it-receives.md) | An upload forwards bytes while it is still receiving them; no write path waits for a complete object before it begins sending it | Implemented, except D5's replay of a retained part |
+| [0036](0036-a-response-follows-s3-deviates-for-the-client-and-is-never-a-break.md) | A response follows S3 and deviates only so a client stays usable through the proxy; changing a response is a correction and never a breaking change — ADR 0018 D5's "client-visible answer" is the acceptance of a request and the shape of a success | Implemented |
 
 ### Operation
 

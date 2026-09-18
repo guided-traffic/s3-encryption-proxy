@@ -342,7 +342,9 @@ after a duplicate part*.
 
 Raised 2026-09-14 by the owner: *several s3-proxy instances side by side share the
 workload and synchronise with each other so that they cooperate on multipart
-uploads too.* **Refined 2026-09-15 — see the round above. Not scheduled, no code written.**
+uploads too.* **Refined 2026-09-15 and 2026-09-16 — see the three rounds above; round 3 closed
+twenty-three questions and leaves nine, starting at 37. Not scheduled, no code
+written.**
 
 ## Refining round 2, 2026-09-15 — the idle clock landed, and it does not fit
 
@@ -467,6 +469,809 @@ the process's own. "Unreachable" becoming a network-triggerable data loss is the
 class SECURITY_ARCHITECTURE.md §1.2 rule 2 refuses to leave to configuration. A
 compare-and-set on the row, where exactly one party may declare an upload over, is
 the guard; which party that is, is part of question 35.
+
+## Refining round 3, 2026-09-16 — the pinned tail is given up
+
+Worked through with the owner against the reference scenario, in dependency
+order: 34 first, because 35, 16 and 9 hang off it. **What is written as decided
+is decided.**
+
+### Decision 8. Failover of a pinned upload is out of scope (question 34, and the second half of 24)
+
+**Option A, taken with the owner's verdict recorded as given: adequate, not
+optimal.** Decision 5 stands. An upload whose holder is lost ungracefully while
+it holds the short last part is lost; the client's Complete is answered with a
+terminal error and the client uploads the whole object again. The graceful cases
+— rollout, scale-in, `helm upgrade` — are not in this residual: the forward
+reaches the draining holder over the peer listener and Complete succeeds.
+
+**What "failover" can mean at all, which is what made the question decidable.**
+An HTTP answer belongs to the TCP connection of the process that accepted the
+request. When the holder dies with a Complete in hand, the client sees a reset,
+and no other instance can answer on that connection, whatever was parked where.
+Failover of the pinned tail is therefore defined as *the client's retried
+Complete succeeds on another instance*, and nothing else. Every SDK uploader
+retries Complete on a connection error — aws-sdk-go-v2 three attempts, a small
+XML body, rewound — so the retry lands, through the Service, on some instance.
+That instance can say "complete" only if it can finish, which needs the held
+part. Under A it cannot, and the answer is terminal.
+
+**The price, as a number.** Expected cost per upload is the probability of an
+ungraceful loss during the upload, times the tail window over the upload
+duration, times a re-upload of the whole object. For the reference scenario that
+is a window of about half a second in ten minutes: one ungraceful loss in twelve
+hundred costs a re-upload of some tens of gigabytes. Re-upload is unavoidable:
+S3 binds parts to an upload id and no verb moves them to a new one;
+`UploadPartCopy` reads only completed objects. What the client does after the
+terminal answer is the client's — rclone repeats the file (`--retries`, default
+3); Velero was not checked beyond "the object is sent again"; s3cmd was not
+checked. None of this is verified in this repository; the e2e case below is
+where it gets measured.
+
+**Decision 5's rejection of parking the held part was overstated, and the ADR
+must not repeat the overstatement.** The rejected variant was priced with "a new
+AEAD construction to specify and review". There is none to build: the held
+part's segments are sealed independently of the trailer — `BodyWithTrailer` is
+`Body()` followed by `SealTrailer(sum)` on a `MultiReader`
+(`internal/orchestration/segmented.go`) — so the segments could be sealed with
+the existing codec when the short part arrives, and only ciphertext under the
+object's data key would reach the store, which is exactly what the row rule
+proposed in round 1 asks for. The variant stays rejected, on cost against the
+number above: the store's memory becomes concurrent pinned uploads times the
+short-part size, the value has to be chunked against
+`client-output-buffer-limit replica`, Complete pays a fetch in part size, sealing
+needs the pinned part size so a short part that arrives before the pin waits in
+memory anyway, and Sentinel's asynchronous replication can lose exactly those
+bytes on the failover they exist for. It is additive later — the row carries a
+schema version and the store is not client-visible — so A forecloses nothing.
+
+**What A needs anyway, found on the way and binding on 35.**
+
+* **A completion state machine in the row, driven by compare-and-set:**
+  `open → completing → completed(ETag)`, and `open → dead`. It is not a failover
+  mechanism; it is what makes Complete idempotent across instances, which A
+  needs with a *live* holder: a client that times out its Complete and retries
+  elsewhere has the retry forwarded to a holder that is in the middle of the
+  first one or has finished it. Today `Complete()` is not idempotent (see *Races
+  between two instances*), and a shared row makes that reachable.
+* **A resolver for a holder that is gone.** Row `completing` and holder
+  unreachable: ask the backend — `ListParts` answering `NoSuchUpload` with the
+  object present under the key means the holder's backend Complete landed before
+  it died, and the answer is `200` with the object's ETag, no re-upload. Row
+  `open` and holder unreachable: the forwarder that wins `open → dead` answers
+  terminally; every later retry reads `dead` and answers the same. Exactly one
+  party declares the upload over, which is the guard round 2 asked 35 for.
+* **The terminal answer is `404 NoSuchUpload`, given after the proxy has aborted
+  its own upload at the backend** (corrected at question 11, decision 18: the
+  state is permanent, so errors.md's class rule wants a 4xx, and after the abort
+  the answer is true; `500 InternalError` was the first candidate here and was
+  wrong by that rule). Never `SlowDown`, which would have the SDK retry a
+  Complete that cannot succeed. The uploader's own Abort still works from any
+  instance; the sweeper takes what is left.
+
+**Consequences.** Question 24's second half is answered: cooperation yes,
+failover of the unpinned upload yes, failover of the pinned tail no. Question 35
+is decidable: with no adoption there is nothing a lease would adopt, so the pin
+needs an address and the compare-and-set above, not a tenancy. *Done when* gains
+one e2e case — SIGKILL the holder while it holds the short part, assert the
+terminal answer and that the client's re-upload completes — and its "ungraceful
+loss" bullet is answered "declared out of scope in the ADR, with the window".
+
+### Decision 9. The pin is an address with an identity, and only a positive signal is a verdict (question 35; closes 17 and the lease half of 9)
+
+**Option B.** The row carries the holder's peer address and an **instance
+identity** drawn at random when the process starts. A forwarded Complete carries
+the identity it expects in an internal, unsigned header; the receiver compares it
+with its own. The pin has no TTL, no heartbeat, no renewal and no clock of any
+kind.
+
+**What a dead pod shows on the network, because it is what sorts the options.**
+A pod's IP is released when it dies; a connection to a released address ends in
+a timeout or an ICMP unreachable, depending on the CNI. A reset — "connection
+refused" — arrives only while the network namespace is alive and no process
+listens, which is a container restart inside a living pod. And the address is
+**reused** later: another proxy pod can answer at the holder's old address.
+Kubernetes knowledge, not verifiable in this repository. Address alone therefore
+cannot tell a partition from a death and cannot see reuse at all, which is what
+rules that shape out.
+
+**The verdict table.** A verdict is a positive signal or the client's own word,
+never a timeout.
+
+| Forward result | Meaning | Answer |
+|---|---|---|
+| a response from the holder | the holder served it | passed through |
+| identity mismatch | holder gone, address reused | CAS `open → dead`, terminal |
+| connection refused | process gone, namespace alive | CAS `open → dead`, terminal |
+| timeout / unreachable | unknown | `503 SlowDown`, row untouched |
+| the client's Abort on any instance | the client's verdict | CAS `open → dead`, backend Abort |
+
+On a partition or a death without a reset, the client is answered `SlowDown` up
+to its retry budget; each retry may land on the holder directly; when the budget
+is out the uploader sends Abort, and *that* is the verdict. The end state is the
+one decision 8 already accepts, reached without a single verdict against an
+upload that may still be alive. The guard round 2 asked for — exactly one party
+may declare an upload over — is the compare-and-set, and it never fires on
+silence.
+
+**Why not a lease.** Its expiry is a timed verdict, and a partition longer than
+the TTL with a living holder is precisely the abort of a live upload that
+SECURITY_ARCHITECTURE.md §1.2 rule 2 refuses to leave to a setting. It also buys
+nothing on the client path: the TTL has to exceed the Sentinel failover window
+(about 90 s, decision 1), the client's retries are spent within seconds, so the
+forwarder would answer `SlowDown` in that window under a lease as well. What a
+lease really addresses — a dead holder *and* a client that never returns — is
+question 16, and a lease is not the answer there either.
+
+**Two costs that come with B.** The forward's connect timeout has to be short,
+one to two seconds, or the client's own Complete timeout runs out first; the
+process owns no `http.Client` today (question 12), so the peer client is new
+code with a dial timeout that is a constant or a key. And the mismatch verdict is
+only as trustworthy as the peer leg's transport: an attacker who can answer at
+the holder's address can make a forwarder declare an upload dead. That is the
+peer-TLS question under 3 and 7, not an argument against B.
+
+**Consequences.** Question 17 is closed — there is nothing to renew. Question 9
+loses its lease half and keeps the part rows. Question 5 gains a fact: the
+instance identity exists because the row needs it; whether it shows in
+`x-amz-id-2` is still 5's. Question 12's forward is confirmed for one verb, with
+a dial timeout to decide. Question 16 inherits a boundary: the case of a dead
+holder and an absent client is 16's alone, and it is answered by a store-side
+activity stamp and the bucket's lifecycle, never by a lease.
+
+### Decision 10. Idle is the store's clock, and every instance sweeps by compare-and-set (question 16; amends the premise of ADR 0028 D2/D4)
+
+**Option B.** Under a store, the idle question is answered by the row and by
+nobody's process clock.
+
+* **The clock is the store's.** The atomic script that records a part stamps
+  `lastActivity` from the store's own `TIME`; the stamp is written at part start,
+  at part end, and coarsely during the body — about every ten seconds — so a
+  slow part is never idle in the middle of its bytes. The 100 ms touch of 5.0.2
+  stays process-local and keeps doing what it does; it is never mirrored. No
+  instance clock is ever compared with another, so ADR 0014's NTP exposure does
+  not grow and round 2's objection to wall-clock arithmetic between machines does
+  not apply.
+* **Every instance sweeps, and the row elects.** Each process `SCAN`s the rows
+  every `multipart_session_cleanup_interval` and treats `lastActivity +
+  multipart_session_idle_timeout < TIME` as idle. The first to win the
+  compare-and-set `open → dead` aborts the upload at the backend; the others read
+  `dead` and move on. No leader, no leader lease, no clock behind the election —
+  N scans per interval over some hundreds of rows cost nothing. A pinned upload is
+  no special case: an idle row means the client is gone whether the holder lives
+  or not; the holder frees its held part when it reads `dead` on its own tick, and
+  a Complete in progress is `completing`, which the sweep's compare-and-set fails
+  against.
+* **How long: `multipart_session_idle_timeout`, unchanged in meaning.** No rename,
+  and the in-process implementation keeps today's monotonic clock behind the same
+  interface.
+* **A failing abort is retried by anyone, and bounded as today.** The row carries
+  `abandonFailures`; any instance's sweep may retry a `dead` row below
+  `maxAbandonAttempts`, because the backend abort is idempotent. At the bound the
+  row stays `dead` until it expires and the upload leaks at the backend into the
+  bucket's lifecycle rule — the same outcome the single instance documents in its
+  give-up message today.
+* **Terminal rows outlive their upload by `multipart_session_idle_timeout`.**
+  `completed` and `dead` rows get a store-side expiry of that length rather than
+  an immediate delete: decision 8 needs a late retry to read the terminal state,
+  or it would fall into question 13's classification against the backend. Rows
+  are small; an hour of `dead` costs nothing and needs no new key.
+
+**Rejected.** Store-side expiry with keyspace notifications as the primary
+mechanism: the event is best-effort, delivered only to subscribers connected at
+that moment, and the row is already gone when it arrives, so there is no
+compare-and-set, no failure counter and every instance aborts at once. A
+leader-elected single sweeper: it needs a leader lease with a TTL, which is the
+clock and the partition case decision 9 just refused; the per-row
+compare-and-set *is* the election.
+
+**Two limits, stated.** After a Sentinel failover `TIME` comes from another Valkey
+node; between NTP-synchronised nodes the skew is seconds against a default of
+3600 s, but the loader accepts an idle timeout of 1 s, so the operator
+documentation for the store has to say that the value must stand far above the
+skew between store nodes. And the coarse body stamp is a store write rate that
+did not exist before — fifteen concurrent parts stamping every ten seconds is
+1.5 writes per second, negligible and new.
+
+**Consequences.** ADR 0028 D2 and D4 are amended from "the owning process" to
+"any instance, by compare-and-set on the row"; their reasons hold. ADR 0029 D2
+narrows: a graceful shutdown abandons its producer uploads and any pinned upload
+whose Complete did not arrive within the budget, and nothing else — the shared
+rows are not the process's to abort (question 6 settles the rest). Question 9's
+remaining half — the part rows — is next.
+
+### Decision 11. The row collects every entity tag a part number was stored under, and the backend says which one is live (question 36; closes question 9)
+
+**Option C′.** A part row is a *set* of entries per `(uploadID, partNumber)`,
+each `(etag, offset, plaintextLen, sum)`, written by append and never
+overwritten. At Complete, a part number with exactly one entry is handled as
+today. A part number with several costs one paginated `ListParts` against the
+backend; the entity tag the backend reports is the live one, and the entry that
+carries it supplies the offset, the length and the checksum that go into the
+trailer. `VerifyClientParts` accepts the client's entity tag if it is *in* the
+set, and the completion list the proxy sends carries the live tag. The happy path
+costs nothing.
+
+**Why the backend has to be asked.** The proxy cannot observe the backend's
+commit order. A sequence number taken before the backend call orders who
+*started* first; one taken after the response orders who was *answered* first;
+neither orders who *committed* last, which is what S3 keeps. The compare-and-set
+the *Races* section proposed orders row writes, so it can refuse a writer, but
+not know whether the refused one is the live one. Verified on the way: the client
+is answered the backend's entity tag (marked, ADR 0032), the table records it
+after the backend has answered (`upload.go`), and `VerifyClientParts` compares
+tags exactly (`segmented_session.go`) — so today's disagreement is refused as
+`400 InvalidPart` before the backend is even asked, or aborts the whole upload
+when the backend refuses instead (`complete.go`).
+
+**What binding the checksum to its tag buys.** A retry sends the same bytes, but
+S3 lets a client overwrite part n deliberately. With one row per number the
+table could hold the checksum of one body and the backend the bytes of the other;
+the trailer would then authenticate a CRC32C the object does not have, and the
+first read would fail with `403 InvalidObjectState`. With the checksum travelling
+beside its own tag, the trailer is computed from the part that is actually live.
+
+**Rejected.** Always listing before Complete: exact and simple, but five backend
+requests on every completion of the reference scenario (about 4100 parts at a
+thousand per page) for a disagreement that needs two candidates to exist.
+De-duplicating on the second instance — read the body, compare the checksum with
+the first instance's entry, answer the first tag without uploading: while the
+first instance is still uploading there is no entry to compare with, so the
+second would have to wait on a process that may be dying, which is the case
+decision 9 just closed.
+
+**One limit.** `ListParts` reports a size, not a checksum. `PartStoredLen`
+inverts a stored size uniquely, so the length is verified against the backend;
+the checksum stays the proxy's own record of the entry that belongs to the live
+tag. That is the trust the single instance places in its table today, addressed
+to the right entry.
+
+**Consequences.** Question 9 is closed entirely: part-row writes are appends and
+commute, so they need no compare-and-set and no linearizable write; the one read
+that must be linearizable with respect to every part write is the read at
+Complete, which the primary serves, and the sweep's verdict is itself a
+compare-and-set on the primary. `ListParts` becomes a verb the proxy issues on
+its own behalf, which is the client question 13 asks for anyway. ADR 0011 D6's
+"exact two-way match" becomes "every claimed tag is one the part was stored
+under, and every stored part is claimed".
+
+### Decision 12. The short-part budget stays per instance, and the reservation moves ahead of the read as a defect of its own (question 4)
+
+**Option A.** `optimizations.multipart_short_part_buffer_size` keeps its name and
+its meaning: what the client-driven uploads of *one process* may hold for their
+short last parts. Decision 8 confirmed the premise — the held bytes never leave
+the process that received them — and memory is a pod's, so a cluster-wide
+counter would bound nothing physical, put a store round trip at the start of
+every held part, make a local `SlowDown` depend on a remote store, and need
+someone to reclaim the reservation of an instance that died holding it, which is
+a lease. Nobody has to reclaim a process's memory: it dies with the process, and
+the row records nothing of it.
+
+**The ordering defect correction 9 found is fixed on its own, in 5.x, before or
+beside this work.** On the encrypting held-part path the body is read with the
+whole budget as the per-request limit and the reservation is taken afterwards in
+`SealPart`, so C concurrent short parts hold up to C × budget transiently and the
+key bounds retained bytes only. The fix has its model in the same file: the
+exit-provider arm without a declared length claims before it reads. Every part an
+SDK sends declares its plaintext length, so the encrypting arm reserves that
+length before the first body byte — `reserveShortPart(0, declared)`, refused with
+`503 SlowDown` before anything is buffered — and moves the claim to the sealed
+size afterwards with the `held → want` form the function already has; a part
+that declares no length claims the whole bound, as the exit arm does. This goes
+into the *needs no design decision* block of *Done when*.
+
+**Why it matters more under N instances than under one.** Only when the key
+bounds the pod can the pod's memory be derived from the configuration — the
+budget, plus part size times concurrency — which is what the chart's requests
+and limits need at any replica count. Left as it is, the real ceiling is a
+function of client behaviour multiplied by the replica count.
+
+**The one property this costs, and why it is not a defect.** An instance refuses
+a short part with `SlowDown` while a neighbour has room. The SDK retries, the
+retry lands anywhere, and at N pods mostly elsewhere. With the 64 MB default
+against at most 5 MiB per short part the bound is not even reached before twelve
+uploads are in their tail on one pod at once.
+
+### Decision 13. A shutdown lets go; it aborts only what dies with the process (question 6; narrows ADR 0029 D2)
+
+**Option B, no hand-over.** Today the tail of a shutdown is one budget in three
+phases — drain until no request is active or the budget is out, then
+`AbandonAllSessions` aborts every upload in the process's map at the backend,
+then the listener closes (`cmd/s3-encryption-proxy/main.go`). Phase two is where
+the reference scenario's backup dies today, and under a shared table it would
+have the first pod of a rollout abort every open upload of the deployment. The
+order becomes:
+
+1. The `preStop` hold; the endpoints are withdrawn (ADR 0034 D10).
+2. SIGTERM. The client listener accepts nothing new; parts in flight run out. A
+   part the client repeats elsewhere because its connection closed is resolved
+   by decision 11.
+3. **The peer listener stays open for the whole budget.** Forwarded Completes
+   for the uploads this process pins land there and are served.
+4. The sweep, at the end of the budget or as soon as nothing pinned is left
+   open, whichever is first. Producer uploads are aborted — they belong to a
+   live request in this process and nothing else can finish them, ADR 0029 D2
+   unchanged. A pinned upload still `open` is ended by compare-and-set
+   `open → dead` and a backend abort, **and each one is logged by name** —
+   upload id, bucket, key — beside a counter, where today a truncated shutdown
+   counts what it cut and names nothing. A pinned upload in `completing` is left
+   alone: decision 8's resolver settles it on the client's next retry. A shared
+   `open` row this process does not hold is not touched.
+5. The peer listener closes, the process exits.
+
+**Why no hand-over.** The pin stands for tenths of a second in an upload that is
+going to succeed, and the default budget is 30 s. What the budget cuts is a
+client that takes longer than the budget between the 200 for its last part and
+its Complete, and for that client the arithmetic is decision 8's: an honest
+terminal answer and a re-upload. Handing the held part to a peer — sealed under
+the object's data key with the existing codec, the peer unwrapping the key from
+the row, a compare-and-set moving the holder's address and identity — would
+buy that case at the price of a second state transition nothing else needs, a
+new peer verb, and a timing problem inside the drain: too early and a Complete
+arriving now hits a holder that is letting go, too late and the budget is gone.
+It is the phase the ticket already describes as the one that gets skipped when
+the fleet is busy. It stays additive: the row schema is versioned, the verb is
+new, nothing in the order above has to be undone for it. It is built when the
+counter in step 4 shows that the budget really kills uploads, not before.
+
+**Consequences.** ADR 0029 D2 narrows from "every multipart upload this process
+is holding" to *producer uploads, and pinned uploads whose Complete did not
+arrive within the budget*, with the reason that the shared rows are not the
+process's to end. The chart's derivation of `terminationGracePeriodSeconds`
+from `shutdown_timeout` gets one sentence: the budget covers the tail of a
+pinned upload, not the upload. Scale-in (question 29) takes the same path — the
+autoscaler's victim runs this order like any other terminating pod — so what 29
+still asks is only whether the proxy can influence the choice of victim. Step 4's
+named log line is the first concrete piece of question 26.
+
+### Decision 14. No data key crosses the network in the clear; the store sees what the backend sees; the peer leg shares the client listener's TLS (questions 3 and the transport half of 7)
+
+**Option A.** The plaintext data key exists only inside a process that unwrapped
+it. The row carries the *wrapped* key, the key-encryption fingerprint, bucket,
+key, the pinned part size, the part entries, the state and the holder — an early
+copy of the four metadata keys plus what Complete needs — and the peer leg
+carries the client's own SigV4 request, a small XML and the holder-identity
+header. Client plaintext never crosses (decisions 5, 8, 13).
+
+**The rule for a row field, now decided rather than proposed:** it is either
+something the backend already sees, or it is sealed under the object's data
+key. Wrapped key, fingerprint, bucket, key, entity tags, offsets and lengths are
+the backend's view. The per-part plaintext CRC32C is not — SECURITY_ARCHITECTURE.md
+§6.4a names it a confirmation oracle in so many words for the backend, and the
+store is no more trusted a party — so it is sealed under the object's data key
+with AES-GCM under an AAD label of its own, separating it from segments and
+trailer. Every instance can open it, the store cannot. After ticket 017 the row
+carries the *stored* name and stays inside the rule.
+
+**What a tampering store achieves, so the threat model can say it.** Attaching
+X's wrapped key to Y's row seals Y under X's key: segment nonces are random
+(`pkg/encryption/dataencryption/segmented_gcm.go`), so no deterministic nonce
+reuse; without the key-encryption key the attacker does not know the key; the
+object key is in every segment's associated data, so no segment of X reads as
+Y. Forging a part entry — offset, length, checksum, tag — fails ADR 0011 D2 at
+Complete, is refused by the backend as `InvalidPart`, or writes a trailer the
+first read rejects. **Tampering is denial, never silent corruption**, and that
+is a property of the storage format, not of the store. It holds before anything
+is built. Rejected: the plaintext key in the row — membership in the store
+would be data-key access, a path to in-flight plaintext around the
+key-encryption key that §5.2 does not contemplate; and a whole-row seal under a
+key derived from the key-encryption key — stronger than the threat model asks,
+hides from the store what the backend sees anyway, and is foreclosed by the
+provider futures below.
+
+**Several key-encryption keys, an asymmetric one, a remote one — what A needs
+of a provider.** Raised by the owner in this round. Several providers in one
+proxy change nothing: the checksum is sealed under the object's data key, not
+under a key-encryption key, and the row names its fingerprint the way object
+metadata does, so an instance unwraps through the provider the fingerprint
+names, exactly as a GET does today. An asymmetric provider — public key wraps,
+private key unwraps — fits `EncryptDEK`/`DecryptDEK`/`Fingerprint` and
+therefore fits the row, which is a copy of the metadata contract. A remote
+provider, where unwrap is a network call, costs one unwrap per upload *and
+instance* on first contact, cached locally, so at most N per upload and never
+per part; the checksum seal costs it nothing, because that runs locally under
+the data key; an unreachable remote refuses the part with a retryable 503 and
+loses nothing; its audit sees N entries per upload where it saw one. **The one
+constraint, to be written into the provider contract:** every instance that
+serves a part of an upload must be able to unwrap that upload's data key, so a
+provider whose unwrap depends on process-local state is incompatible with
+running more than one instance. A whole-row key derived from the key-encryption
+key would have been blocked by exactly these futures — there are no key bytes to
+derive from under a remote provider and no single key under an asymmetric one —
+which is the strongest reason A was right. The exit provider is untouched: no
+data key, no checksum, nothing to seal.
+
+**The peer leg's transport.** The forward is a client-signed request,
+re-verified under SigV4 at the holder, so its authentication is the client
+port's and no peer credential exists. What it lacks is transport integrity: the
+holder-identity header is unsigned, and the XML body is covered by the signature
+only under `verify_payload_hash: true`. An on-path attacker on the peer leg
+could flip the header and force a `dead` verdict. The peer listener therefore
+uses the same `tls` block as the client listener, on or off together, with no
+certificate and no mutual TLS of its own; without TLS the peer leg is as exposed
+as the client leg, and that boundary is the operator's under ADR 0030 D1. The
+peer port must not be reachable from outside the cluster, which the chart says
+and cannot enforce.
+
+**Consequences for SECURITY_ARCHITECTURE.md.** §2.1 gains two roles with one
+sentence of trust each: the store sees what the backend sees, the peer leg is a
+second client port. §3.3's in-flight-key row says "in every instance that
+touched the upload, never in the store". §6.4a's oracle paragraph gains the
+store. §7.1 gains the two-restart rotation (question 19). H-12 is claimed for
+the store's tamper-is-denial property, with the three reasons above.
+
+### Decision 15. A member register makes a one-step rotation work: the active alias takes effect when every live member can read it (question 19)
+
+**Option B′.** The store holds a **member register**: one key per instance —
+identity (decision 9), the set of provider fingerprints it has loaded, the
+fingerprint its active alias names — written with an expiry, renewed every third
+of it, and **deleted explicitly in the shutdown tail** (decision 13, after the
+peer listener closes) so the common case never waits for the expiry. Nothing
+about an upload is ever decided from this register; at worst it delays or
+advances a switch of the writing key. The expiry must exceed the Sentinel
+failover window (about 90 s, decision 1), or members "vanish" during a store
+failover and a pod switches early.
+
+**The rule it enforces, which is the whole point:** under a fleet,
+`encryption_method_alias` names the key-encryption key to write under *as soon
+as every live member can read it*. A pod that starts with `{old, new}` and
+`new` active, and sees live members without `new`, **writes under `old` until
+the last of them is gone**, then switches, and says so in the log at both
+moments; a gauge carries the fingerprint currently written under. With one
+instance the fleet is the process and the switch is immediate — today's
+behaviour, unchanged. The owner's rotation is therefore *one* `helm upgrade`:
+
+| The operator does | What happens |
+|---|---|
+| adds a key, switches the alias, one upgrade | the roll runs through; every pod writes under the old key during it and under the new one after it; no `503`, no `403`, no forward |
+| adds a key, leaves the alias | the roll runs; everyone can read one key more |
+| removes an old key, one upgrade | **the removal guard:** a pod does not start while an *open row* names the removed fingerprint, and logs how many and which; the roll waits until those uploads complete or are swept, with `maxUnavailable 0` keeping the old pods serving. Objects at rest under the removed key answer `403`, as today — the operator's decision |
+| removes the old key and adds the new one in one upgrade | the pod cannot defer (it no longer has `old`) and refuses to start: add first, remove in a later release. Loud, immediate, nothing broken |
+| the store is unreachable during a roll | the register cannot be read: fail-open, immediate switch with a warning, because a start must never depend on the store (ADR 0034 D5's spirit); the runtime floor below carries the roll |
+
+**The runtime floor, kept from option A.** A part for a row whose fingerprint
+this instance cannot open is refused with a retryable `503`. In a correct fleet
+it never fires; it exists for the store outage in the middle of a roll.
+
+**Why not the guard alone (option B as first put).** A register that *halts* a
+wrongly ordered roll turns the owner's one upgrade into a crash-loop with
+instructions: rule 2 of SECURITY_ARCHITECTURE.md §1.2 satisfied and the operator
+punished. The same register, used to defer the switch, makes the one upgrade the
+normal path and leaves only the one action that cannot work — the swap in a
+single release — to be refused at start with one sentence. Why not nothing (A
+alone): a wrongly ordered roll at three replicas has three quarters of the parts
+of every upload created on the new pod land on pods that cannot open its key;
+with three SDK attempts about 42 % of those parts fail for good, and every read
+of such an object from an old pod is a `403` no SDK retries. No loss, no
+corruption, minutes of visible breakage — and the safe order written nowhere,
+which is what rule 2 forbids.
+
+**What it costs.** For the length of a roll the configuration says `new` and
+the proxy writes `old`. That is made visible, not hidden: the two log lines and
+the gauge. The register is a per-instance write every third of its expiry,
+independent of upload traffic, and one read at start.
+
+**Consequences.** The read-path `403` for an unknown fingerprint stays right:
+no object is ever written under a key a live member lacks, so the only unknown
+fingerprint left is a removed key, which is the permanent state ADR 0004's
+reasoning describes. The question-21 item this round nearly opened does not
+exist. Question 5's identity has its home. Question 31 has an instance count
+without asking for one. §7.1 gains one sentence instead of a procedure: add,
+switch, upgrade; remove in a later release. ADR 0004 gains the fleet reading of
+the active alias.
+
+### Decision 16. The row is filed under the backend's upload id, carries bucket and key, and every verb checks them (question 10)
+
+**Option C.** The store key is the upload id the backend issued, under a
+per-deployment prefix. The row carries bucket and key, which the sweep
+(decision 10), the resolver (decision 8) and the segment AAD need anyway.
+**All four verbs compare the request's bucket and key with the row's**, where
+today only `ListParts` does (`internal/proxy/handlers/multipart/list.go`);
+a mismatch is `404 NoSuchUpload`, logged with both pairs. Registration is
+`SET NX`: an id that already has a row — a terminal one included — refuses the
+Create with `500 InternalError` and a log line, because it means a backend that
+reuses ids within `multipart_session_idle_timeout` or a client that guessed one;
+today registration overwrites silently (`segmented_session.go`).
+
+**Why this and not a compound key or nothing.** `404 NoSuchUpload` for an id
+under the wrong key is what S3 itself answers, so the proxy says it earlier —
+before a part is sealed for nothing — and nothing client-visible changes; the
+release constraint is untouched. A compound primary key ends in the same `404`
+by way of a miss, but cannot tell a mismatch from an id it never saw, and puts
+object names of up to 1024 bytes into the keyspace. Doing nothing lets a valid
+id under a foreign key seal a part under the row's object key and send it to
+the backend under the request's, which the backend refuses, unseen. With the
+check in place there is exactly one object key per upload, so the *Security*
+section's question "which key goes into the associated data — the row's or the
+request's" no longer exists. The store's primary key stays the backend's to
+choose (ADR 0001); `SET NX` is what stops that choice from overwriting.
+
+**The prefix, and where it lives — the owner's instruction in this round.** A
+prefix per deployment lets two deployments share one Valkey without seeing each
+other's rows. It is a key of the **HA block of the proxy's configuration, the
+same block that defines the Valkey connection** — never a separate top-level
+key, never derived from something else. The shape of that block is question 37.
+
+### Decision 17. A session miss is classified against the backend, always, and the verdict is logged and counted (question 13; the "Abort leak" of question 15 with it)
+
+**Option B, in both implementations alike.** A miss on `UploadPart` or
+`CompleteMultipartUpload` — no row, or no map entry without a store — costs one
+`ListParts` against the backend. `NoSuchUpload` back means the upload does not
+exist and `404 NoSuchUpload` is the true answer. Anything else means the upload
+lives at the backend and the proxy has lost the table that alone could finish
+it: the answer is `403 InvalidObjectState` — the read path's own code for an
+object this proxy cannot serve, decision 18, which corrected the `500` first
+written here — with one log line naming upload id, bucket, key and the verdict,
+and one counter. The SDK does not retry a 403, the uploader sends Abort, and
+Abort already goes to the backend whether or not a session exists
+(`internal/proxy/handlers/multipart/abort.go`), so the backend is left clean. A backend that cannot be reached during the
+classification is a `503`, as for any backend failure. The exit provider is
+untouched: a pass-through part needs no session.
+
+**What a miss means under the design, which is why the verdict is worth a
+call.** An id nobody issued, or an upload created at the backend behind the
+proxy's back; a terminal row that expired after `multipart_session_idle_timeout`;
+an open row lost on a Sentinel failover, the fail-closed case round 1 named; and
+without a store, a process that was SIGKILLed and restarted. In every case but
+the first the upload exists and today's `404` blames a correct client while the
+operator sees nothing. The counter is the detector for exactly the losses round
+1 could only document: rows lost on failover, rows expired under a client that
+came back late, and a second deployment sharing a backend.
+
+**Why not only under a store.** Two answers to one situation in one binary
+(decision 3), and the SIGKILL-and-restart case is the in-process one, telling
+the same lie. Why not never: a miss is abnormal by definition, so one backend
+request per abnormal request is not a load, and an attacker with invented ids
+gets one backend call per request — the ratio of every proxied request.
+
+**Question 15 closes with this.** Abort on a miss already reaches the backend;
+what a non-holder could not free was the holder's memory, and decision 10 frees
+it when the holder reads `dead` on its own tick. No standalone fix remains.
+
+**This is buildable now**, without a store and without the rest: the
+classification, the log line and the counter belong to the *needs no design
+decision* block of *Done when*. Its one client-visible change — `404` becomes
+`403 InvalidObjectState` for an upload the backend *has* — is released as a fix
+under the owner's ruling recorded in decision 18.
+
+### Decision 18. The answer table, and the owner's ruling that a changed error code in this work is a fix (questions 11 and 21)
+
+**The ruling first, because it shaped the table.** **Changing the code of an
+error answer is released as a fix and carries no breaking marker.** Taken by the
+owner on 2026-09-16 for this ticket and then generalised the same day into
+[ADR 0036](../adr/0036-a-response-follows-s3-deviates-for-the-client-and-is-never-a-break.md):
+a response follows S3, deviates only so a client stays usable through the proxy,
+and adjusting one is a correction that never carries the marker. ADR 0018 D5
+keeps its wording and gains a pointer to that reading. With the compatibility
+filter gone, every cell was chosen on two criteria only: the status class rule of `docs/developer/errors.md` — a permanent
+state is a 4xx, a transient failure a 5xx, because the class decides what the
+SDK does next — and the truth of the answer towards client and operator.
+
+**Corrected on the way: the `500 InternalError` candidate of decisions 8 and 17
+was wrong by that rule.** A dead holder and a lost table are permanent states of
+that upload; a 5xx makes the SDK retry three times a request that cannot
+succeed. Both decisions are amended in place to point here.
+
+| Situation | Class | Answer | Why |
+|---|---|---|---|
+| store unreachable and the verb needs the row | transient | `503 SlowDown` | cell (iii) |
+| the row's key-encryption fingerprint unknown to this instance | transient in a fleet | `503 SlowDown` | cell (iii); decision 15's floor |
+| holder unreachable by timeout | unknown, treated as transient | `503 SlowDown` | cell (iii); decision 9 |
+| holder gone by positive signal, row `open` | permanent | CAS `open → dead`, backend abort, then `404 NoSuchUpload` | true once the abort has run |
+| row `dead` | permanent | `404 NoSuchUpload` | true |
+| row `completed`, an `UploadPart` | permanent | `404 NoSuchUpload` | what S3 answers |
+| row `completed`, a retried Complete | — | **`200` with ETag, `x-amz-checksum-crc32c`, version id** | cell (i) |
+| miss, and the backend has the upload | permanent, not this proxy's | **`403 InvalidObjectState`**, log line, counter, **no abort** | cell (ii); decision 17 |
+| miss, and the backend does not | permanent | `404 NoSuchUpload` | true |
+| bucket or key does not match the row | permanent | `404 NoSuchUpload` | exactly S3's model: under this key the id does not exist; decision 16 |
+| Create collision under `SET NX` | a proxy or backend defect | `500 InternalError` | the retry obtains a fresh id and succeeds; decision 16 |
+
+**Cell (i): a retried Complete on a completed upload answers `200`.** The object
+exists, the client learns it, the uploader reports success and nothing is sent
+again. *Races* lists the non-idempotent Complete as a defect, and this closes it.
+The terminal row therefore carries the final ETag, the version id and the
+object's checksum — sealed under the data key, decision 14 — and the in-process
+implementation keeps the same terminal entry for the same time, so one instance
+gives the same `200`. AWS itself answers a second Complete `NoSuchUpload`; the
+proxy is kinder than the original here, on purpose.
+
+**Cell (ii): a miss for an upload the backend has answers `403 InvalidObjectState`.**
+It is the read path's own code with the read path's own meaning — an object this
+proxy did not write and cannot serve — and it separates, for the client, "this id
+does not exist" from "this id exists and is not servable here", the distinction
+question 13 bought for the log and now gives to the client too. `404` would be
+S3-conformant and indistinguishable; `500` is the wrong class. The proxy touches
+nothing at the backend for it: **the proxy aborts at the backend only an upload
+it has a row for; an upload without a row is never ended on the proxy's own
+initiative**, because it may be the live upload of a second deployment sharing
+the bucket or of a client working past the proxy. The client's own Abort still
+goes through, as it always did.
+
+**Cell (iii): the transient class is `503 SlowDown`.** aws-sdk-go-v2 treats it as
+a throttling error with throttling backoff, and in adaptive mode it lowers the
+client's rate — which is what a ten to thirty second Sentinel failover wants. It
+is also what the short-part budget refusal already answers, so the vocabulary
+does not grow.
+
+**Question 21 dissolves.** Every answer marked new in this table is an answer to
+a situation that cannot arise today — a store, a fleet, a `dead` row — so no
+client sees a different answer to a request it can make now, and the one
+changed answer a single instance can reach — the retried Complete, `404` today,
+`200` after — is a fix under ADR 0036. Nothing in this ticket waits for a
+major.
+
+### Decision 19. The instance identity is answered in `x-amz-id-2`, carried in the logs of every cross-instance event, and mapped to the pod by an info metric (question 5)
+
+**Option B.** The identity decision 9 created — random per process start, held in
+the row as the holder and in the member register — is answered on **every
+response in `x-amz-id-2`**, the extended request id S3 itself sends on every
+answer. aws-sdk-go-v2 reads that header into the `HostID` of its response error,
+so a client's own error text names the instance that answered, which is the one
+question a fleet adds to "my upload failed"; rclone and s3cmd print the same
+error. SDK behaviour is SDK knowledge, not verified in this repository. The
+header is additive and in S3's own shape, a correction under ADR 0036 D1 and no
+break. The value is the random identity, never the pod name and never an
+address: a client learns a token the operator can resolve in the log, and
+nothing about the deployment.
+
+**Where else it shows.** In the startup line, which maps identity to pod name
+where the chart supplies one; in every log line about a cross-instance event —
+a forward, a verdict of decision 9, a sweep won under decision 10, a deferred or
+executed switch under decision 15, and each upload decision 13's step 4 ends by
+name; and in an info metric `s3ep_instance_info{instance_id}` beside the
+`kubernetes_pod_name` label every series already carries, so a dashboard can
+join the two. Not in every request line: under Kubernetes the log stream carries
+the pod already, and outside it there is one process. Whether the access log
+leaves Debug is question 26's.
+
+**Outside Kubernetes** the identity is the same random value, and the pod name
+is an optional attribute of it rather than the other way round — so a
+non-Kubernetes deployment has an identity for the first time, without a
+configuration key.
+
+**Rejected.** Embedding the identity in `x-amz-request-id`: the same
+information in the wrong header — S3 separates request id and host id for this
+reason, and log tooling treats the request id as opaque. Identity in every
+access-log line: the access log is Debug-only and drops the query string, so it
+answers nothing by default, and raising it is a logging decision of its own.
+ADR 0030 D4 is not touched: it governs the scrape, where a pod-name label
+already exists; the info metric is the same class as that label, and the
+response header is the S3 surface, not the monitoring listener.
+
+### Decision 20. Six questions closed as consequences of decisions 8–19 (questions 12, 14, 18, 20, 25, 30)
+
+Put to the owner as one block on 2026-09-16 and confirmed without objection.
+
+* **12 — The forward.** Exists for exactly one verb, Complete (decision 5):
+  byte-faithful under the client's own SigV4, with the holder-identity header
+  (decision 9), over the peer listener under the client listener's `tls` block
+  (decision 14), with a connect timeout of one to two seconds as a constant — a
+  key only if question 37 wants one. Parts are never forwarded: every instance
+  serves every part (decisions 1 and 3). A client-facing 307 stays dead for the
+  reasons the question records.
+* **14 — The upload id.** Stays the backend's; the row is filed under it
+  (decision 16). Nothing is minted.
+* **18 — The store is unreachable.** No probe depends on it (ADR 0034 D5).
+  Reads, single-request PUTs and the internal producer are untouched. Every
+  client-driven multipart verb that has to read or write the row — for an upload
+  this instance already knows as well — answers `503 SlowDown` (decision 18).
+  The register check at start fails open (decision 15). The sweep skips its
+  tick and judges nothing.
+* **20 — `strategy: Recreate` at one replica.** No. Recreate kills every
+  upload in flight exactly as the surge does, and adds downtime; the answer to
+  "a rollout kills uploads" is the store at one replica (decision 2, middle
+  row). The one-instance invariant holds through a surge because the `preStop`
+  hold withdraws the old pod's endpoints before it stops (ADR 0034 D10). What
+  remains is the stale chart prose, already in *Done when*.
+* **25 — A fleet is single-cluster by definition.** Sentinel addresses and
+  forwarding by pod address are cluster-local; the licence's singular
+  `k8s_cluster_id` describes exactly that; a second cluster is a second
+  deployment with its own store and its own key prefix (decision 16).
+  Multi-cluster is out of scope and the ADR says so.
+* **30 — A nonce store and rate limiting.** Explicitly out of scope. The store
+  carries session rows and the member register and nothing else; ADR 0014's
+  refusals stand, and a later proposal reopens ADR 0014, not this design. The
+  ADR says so in advance, with the *Security* section's reason.
+
+**Still open after this decision:** 22, 23, 26, 27, 28, 29, 31, 32, 37.
+
+### Proposed in this round, not decided — question 37, the HA block
+
+Put to the owner as the last item of the round and left for the next session.
+The proposal, with every value marked as the loader would document it:
+
+```yaml
+high_availability:
+  enabled: false                        # default; true switches the session layer to the store
+  store:                                # Valkey behind Sentinel, the only store type
+    sentinel_addresses:                 # required when enabled; plural from day one; ${VAR}
+      - "${VALKEY_SENTINEL_1}:26379"    # example
+      - "${VALKEY_SENTINEL_2}:26379"    # example
+    primary_name: "mymaster"            # example; Sentinel's name for the primary; required
+    username: ""                        # example; ACL user, empty = default user; ${VAR}
+    password: "${VALKEY_PASSWORD}"      # example; ${VAR}; unset or empty refuses the start
+    sentinel_password: ""               # example; ${VAR}
+    database: 0                         # default
+    insecure_skip_verify: false         # default; TLS itself is not optional, as on the backend leg
+    key_prefix: "s3ep:"                 # default; per deployment; ^[a-z0-9][a-z0-9-]*:$
+  peer:
+    bind_address: ":8090"               # default; the forward listener, closes last
+    advertise_address: "${KUBERNETES_POD_IP}:8090"   # required when enabled; what peers dial; ${VAR}
+```
+
+Constants, not keys, each named in the operator documentation and promoted to a
+key only when a deployment needs another value (ADR 0013): forward connect
+timeout 2 s, store operation timeout 1 s, member register expiry 180 s (above the
+Sentinel failover window of about 90 s, decision 1), register renewal every 60 s,
+body activity stamp every 10 s (decision 10).
+
+Five choices inside it, with the favourite and its reason:
+
+* **(a) The name.** `high_availability`, `ha` or `coordination`. Favourite
+  `high_availability`: spelled out like `s3_security`, `optimizations` and
+  `encryption`, greppable, and the word an operator looks for. The middle form
+  of decision 2 — a store and one replica — is then "high availability without
+  a second instance", which the documentation says in those words.
+* **(b) An explicit `enabled` or the block's presence as the switch.** Favourite
+  `enabled`: the pattern of `tls` and `monitoring`, and the chart's gate
+  "`replicaCount > 1` only with the store" reads a boolean, not a presence.
+  `enabled: true` makes `sentinel_addresses`, `primary_name`, `password` and
+  `advertise_address` mandatory, and the refusal at start names the field.
+* **(c) Store TLS.** Mandatory, no `tls.enabled`, as on the backend leg: the
+  row carries wrapped keys and object names, the same class of data, so the
+  same rule — a plain connection refuses the start under every provider
+  (ADR 0013 D5) — in code rather than in documentation, as round 1 proposed.
+  `insecure_skip_verify` stays for the demo stack with the same security note as
+  the backend's: it weakens verification, and the missing trust store
+  (`ca_file` exists nowhere) is the gap
+  [039](039-backend-certificate-verification-failure-is-named.md) names, neither
+  larger nor smaller here. The alternative — TLS optional with a warning — is
+  what SECURITY_ARCHITECTURE.md §1.2 rule 2 refuses.
+* **(d) The `${VAR}` allowlist** gains the addresses, `primary_name`, `username`,
+  `password`, `sentinel_password` and `advertise_address`, or the proxy starts
+  with the placeholder text as its password (round 1).
+* **(e) The peer port defaults to 8090**, free beside 8080, 8443, 9090 and 6060.
+  The peer listener is a second client port (decision 14); the chart opens it in
+  the Service and never at the ingress.
+
+Deliberately absent: a store-type switch (one type, as there is one client
+type), a `member_ttl`, a forward timeout, a second prefix scheme. Each is
+additive later (ADR 0013 D11). The chart derives from `KUBERNETES_POD_IP`, which
+it already injects and which no Go code reads today.
+
+### Where the open questions stand after this round
+
+**Closed by decisions 8–20:** 3, 4, 5, 6, 7 (transport half), 9, 10, 11, 12,
+13, 14, 15, 16, 17, 18, 19, 20, 21, 24, 25, 30, 34, 35, 36. Questions 1, 2 and 8
+were closed in round 1 and stand.
+
+**Still open:** 22 (where the red cross-instance test lives), 23 (one ticket or
+two), 26 (the observability contract), 27 (the store's classification and
+retention — round 1's "persistence off, no backup" is proposed, not decided),
+28 (support claims at N instances), 29 (whether the proxy can influence the
+scale-in victim; the path itself is decision 13), 31 and 32 (the owner's own
+questions on the licence unit and on who runs the old profile), 33 (moot under
+the release constraint, left for the record), and **37, with the proposal
+above waiting for the owner's answer to (a)–(e)**.
+
+**The next session starts at 37.** Then 27, 26, 29, 28, 22, 23, 31, 32, in that
+order — 27 and 26 shape the ADR's residual-risk and monitoring sections, 22 and
+23 shape how the work is cut.
+
+### What this round changed outside the ticket
+
+* **[ADR 0036](../adr/0036-a-response-follows-s3-deviates-for-the-client-and-is-never-a-break.md)
+  was written**: a response follows S3, deviates only so a client stays usable
+  through the proxy, and changing a response is a correction that never carries
+  the breaking marker. It settles question 21 for good and leaves nothing in
+  this ticket gated on a major.
+* **ADR 0018 D5 gained a pointer** to that reading in its Status section and
+  after D5; its wording and the guard are unchanged. **ADR 0007's D13 note**
+  gained the same pointer as history. The ADR index lists 0036 under *The S3
+  surface*.
+* **Nothing else moved.** No code, no chart, no configuration, no operator page.
+  The knowledge graph under `graphify-out/` is behind by the new ADR and needs
+  its user-approved rebuild.
 
 ## Second pass, 2026-09-14 — what the first pass got wrong
 
@@ -1317,9 +2122,11 @@ accepted ADR.
 
 ## Open questions
 
-All undecided. None is answered here. 1-6 are the original set, sharpened; 7-33
-came from the second pass and the first refining round; 34 and 35 from round 2,
-which reopened 17 and 24.
+Numbered for reference; **the authority on which are still open is the last
+*Where the open questions stand* section of the latest refining round**, not
+this list. 1-6 are the original set, sharpened; 7-33 came from the second pass
+and the first refining round; 34 and 35 from round 2, which reopened 17 and 24;
+36 and 37 from round 3.
 
 1. **Where the shared state lives.** A shared database; a lock service such as
    etcd or Consul; the S3 backend itself; **or the Kubernetes API's
@@ -1491,6 +2298,20 @@ which reopened 17 and 24.
     reach. The address form needs a compare-and-set naming exactly one party that
     may declare an upload over, or a partition turns "unreachable" into
     network-triggerable data loss. Depends on 34 and subsumes 17.
+36. **Which entity tag is live after a duplicate part?** A part retried onto a
+    second instance after a lost response lands twice at the backend; S3 keeps
+    the last one committed, the table keeps the last one written, and the two
+    orders are independent. Today a disagreement is `400 InvalidPart` from
+    `VerifyClientParts` or an abort of the whole upload from `complete.go`.
+    Raised in round 1, numbered in round 3.
+37. **What is the shape of the HA block in the proxy's configuration?** One
+    block defines the store connection and everything that belongs to it: the
+    Sentinel address list and the credential (plural from the first release,
+    round 1), the store's TLS, the per-deployment key prefix (decision 16), the
+    peer listener's address. Which keys, which defaults, which of them the
+    `${VAR}` allowlist in `envexpand.go` has to carry, and whether the block's
+    presence alone switches the session layer to the store implementation
+    (decision 2's three forms). Raised by the owner in round 3.
 
 ## What it must not break
 
@@ -1555,6 +2376,20 @@ questions 34 and 35. One further item lived elsewhere and is done: the probe
 split and the `preStop` hook landed on 2026-09-15, and the rule they left behind
 is [ADR 0034](../adr/0034-a-probe-reports-the-process-never-its-dependencies.md). The idle-clock work this design looked to for a
 heartbeat has landed too and does not serve that purpose — see *Refining round 2*.
+
+**Round 3 (2026-09-16) settled most of the second block and moved two items into
+the first.** Answered there: 3 and 7 (decision 14), 8, 9 and 14 (decisions 4, 11,
+16), 16 and 17 (decisions 9 and 10), 4 (decision 12), 5 (decision 19), 18
+(decision 20), 24 and 25 (decisions 8 and 20). Still needing a decision: 26, 27
+and 31. New in the first block: the read-then-reserve ordering fix (decision 12)
+and the session-miss classification with its log line and counter (decision 17),
+both buildable without a store. New in the work block: the e2e case that SIGKILLs
+the holder while it holds the short part and asserts the terminal answer and the
+client's re-upload (decision 8), the deferred key switch and the removal guard
+(decision 15), and the answer table as conformance assertions cited to their
+records (decision 18, ADR 0036). The "ungraceful loss" clause of the first work
+item is answered: declared out of scope in the ADR, with the window stated.
+ADR 0036 exists, so no item here waits for a major.
 
 **Needs no design decision — could ship in 5.x:**
 

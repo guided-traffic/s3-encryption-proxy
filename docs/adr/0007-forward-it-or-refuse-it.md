@@ -88,7 +88,8 @@ where this record says otherwise: D7 on the proxy's own multipart upload and D8'
 
 **Amended 2026-09-09:** D13 adds a refusal for a query string that contains a `;`, closing the
 bypass that was recorded under Residual risks. It is a new client-visible refusal, so it lands
-with 5.0.0 (ADR 0018). **Implemented 2026-09-11**, after authentication and ahead of the
+with 5.0.0 (ADR 0018) — the reading of the day; since ADR 0036 (2026-09-16) a new refusal
+that says what is true is a fix and waits for no major. **Implemented 2026-09-11**, after authentication and ahead of the
 handler: a raw query carrying a `;` is answered `400 InvalidArgument`, and the refusal is
 pinned by a test that drives the bypass shape over the wire and asserts the object is
 byte-identical afterwards. A percent-encoded semicolon is a value byte and is not affected.
