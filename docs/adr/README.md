@@ -4,10 +4,9 @@ Every durable design decision of this proxy lives here, one file per decision fa
 records **what was decided, why, what was rejected, and what it costs** — so a later change can
 argue with the decision instead of rediscovering it.
 
-**An ADR is not a ticket.** A ticket is a work list: it exists while work is outstanding and is
-**deleted** when the work lands. An ADR is the decision behind that work and stays. Nothing
-outside `docs/tickets/` may reference a ticket — not the README, not the security architecture,
-not a code comment, not a commit message. ADRs may be referenced from anywhere.
+**An ADR is not a ticket.** A ticket is a work list; an ADR is the decision behind that work and
+stays. Nothing outside `docs/tickets/` may reference a ticket — not the README, not the security
+architecture, not a code comment, not a commit message. ADRs may be referenced from anywhere.
 
 ## Format
 

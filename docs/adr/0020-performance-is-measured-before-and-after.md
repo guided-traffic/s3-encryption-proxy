@@ -450,5 +450,5 @@ image builds with a newer toolchain than that.
 * ADR 0017 — Stored data compatibility is not owed; a major release may break the format
 * ADR 0018 — A major release is declared by a label, never discovered at merge
 * ADR 0019 — Integration and end-to-end tests are the product; they are never skipped
-* ADR 0022 — Tickets are work lists that get deleted; decisions live in ADRs
+* ADR 0022 — Tickets are work lists that get archived; decisions live in ADRs
 * [README.md](../../README.md) — the performance optimisation settings and the test targets

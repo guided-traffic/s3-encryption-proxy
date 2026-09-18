@@ -244,7 +244,7 @@ references that outlive the ticket, and they are the ones that made deletion imp
   remembered.
 * **Not verified: that every decision in the backlog is claimed by an ADR.** The set of ADRs for
   this round was defined in one sitting from the tickets as they stood. No cross-check has been
-  run, and a decision that no ADR covers is lost the moment its ticket is deleted.
+  run, and a decision that no ADR covers is lost the moment its ticket is archived.
 * **Not verified: that the ADRs of this round agree with each other.** They were written in
   parallel from the same sources. Overlaps between siblings, and any contradiction between them,
   have not been reviewed.
