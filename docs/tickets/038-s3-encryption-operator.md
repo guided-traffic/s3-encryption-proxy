@@ -146,15 +146,14 @@ resources, and what a resource may and may not name across a namespace
 boundary — and the **credential model** — which credential is carried, which
 is minted, which is written back, and who owns the Secret each lives in.
 Folding them into one ADR is defensible and makes the credential rules harder
-to cite on their own. **The numbering is a problem before either is written:**
-`docs/adr/` on this branch ends at 0035, so the next free number here is 0036,
-while an ADR numbered 0036 already exists on `feat/high-availability` (added
-in commit `c9f04c7`, which is not an ancestor of this HEAD). ADR 0022 carries
-this outright as an accepted residual risk — ADR numbers are assigned by hand
-with no uniqueness check
-(`docs/adr/0022-tickets-are-work-lists-that-get-archived.md:260`) — so
-whichever branch merges second renumbers, and every citation written against
-the losing number moves with it. Somebody has to own that sequence. Whether
+to cite on their own. **The numbering is settled, 2026-09-18:** the
+high-availability work landed first and took 0036
+([ADR 0036](../adr/0036-a-response-follows-s3-deviates-for-the-client-and-is-never-a-break.md)),
+so `docs/adr/` ends there and the two ADRs owed here start at 0037. ADR 0022
+carries the hazard outright as an accepted residual risk — ADR numbers are
+assigned by hand with no uniqueness check — and it cost nothing this time only
+because the two bodies of work landed one after the other instead of side by
+side. Whether
 the two ADRs are written now or at the next refining round is not decided
 here.
 
@@ -772,8 +771,8 @@ immutability, wherever this is taken up.
 
 This section was a budget against a release being cut that day, and the premise
 above it — that a configuration shape is free today and costs a 6.0.0 later —
-closed when 5.0.0 shipped. 5.0.1 and 5.0.2 followed and this branch's HEAD is
-the 5.1.0 release commit, dated 2026-09-15 (`CHANGELOG.md:1`). What it said, and
+closed when 5.0.0 shipped. 5.0.1, 5.0.2, 5.1.0 and 5.1.1 followed; the newest
+release is 5.1.1, dated 2026-09-17 (`CHANGELOG.md:1`). What it said, and
 what
 became of each item: the `/version` item is void twice over, because the endpoint
 it recorded as done was deleted the next day (ADR 0034) and the release that made
@@ -2792,8 +2791,8 @@ decision did *not* settle is the part a later reader gets wrong.
       own client credentials back as a Secret are each in
       `SECURITY_ARCHITECTURE.md` as a privilege with its blast radius, before
       any code exists.
-- [ ] The ADR numbering against `feat/high-availability` is settled before
-      either branch merges, and one person owns the sequence.
+- [x] The ADR numbering is settled: 0036 went to the high-availability work
+      when it landed on 2026-09-18, so the two ADRs owed here start at 0037.
 - [ ] The word the trust-boundary table uses for the human is decided, and
       `SECURITY_ARCHITECTURE.md:89` either carries the program as a second
       role or renames the first.
