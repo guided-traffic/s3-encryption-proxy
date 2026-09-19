@@ -65,7 +65,8 @@ Every deterministic name the proxy produces:
 |---|---|
 | **[docs/operations/](./docs/operations/)** | Running it: configuration guide, deployment, S3 API behaviour, integrity guarantees, monitoring, upgrading, per-client notes |
 | **[docs/operations/clients/](./docs/operations/clients/)** | [Velero](./docs/operations/clients/velero.md) · [rclone](./docs/operations/clients/rclone.md) · [s3cmd](./docs/operations/clients/s3cmd.md) |
-| **[SECURITY_ARCHITECTURE.md](./SECURITY_ARCHITECTURE.md)** | Threat model, trust boundaries, where keys and secrets live, what the proxy does not defend against, residual risks, how to report a vulnerability |
+| **[docs/security/](./docs/security/)** | The security architecture, one page per perspective: threat model and trust boundaries, key management, stored objects, request authentication, upload integrity, refusals, tenancy and privilege, operational security — each ending with what it does not cover |
+| **[SECURITY.md](./SECURITY.md)** | How to report a vulnerability, privately |
 | **[docs/adr/](./docs/adr/)** | Every design decision: what was decided, why, what was rejected and what it costs |
 | **[docs/developer/](./docs/developer/)** | Changing the code: package map, storage format, request paths, multipart, errors, tests, performance |
 | **[DEVELOPER.md](./DEVELOPER.md)** · **[CONTRIBUTING.md](./CONTRIBUTING.md)** · **[CHANGELOG.md](./CHANGELOG.md)** | Contributor entry point, how to contribute, release history |
@@ -507,11 +508,10 @@ What it deliberately does **not** do:
 | **No SSE-C** | `501 NotImplemented`: no read path carries the customer key, so such an object could never be read back |
 | **No network policy** | Which namespaces may reach the pod is a property of the cluster, not of the chart ([ADR 0030](./docs/adr/0030-the-network-boundary-belongs-to-the-administrator.md)) |
 
-[SECURITY_ARCHITECTURE.md](./SECURITY_ARCHITECTURE.md) has the trust
-boundaries, the secret flow, the privilege footprint and the residual-risk
-checklist. Report a vulnerability through
-[its last section](./SECURITY_ARCHITECTURE.md#9-reporting-a-vulnerability) —
-privately, never as a public issue.
+[docs/security/](./docs/security/) has the trust boundaries, the secret flow,
+the privilege footprint and, on every page, the gaps that page leaves open.
+Report a vulnerability through [SECURITY.md](./SECURITY.md) — privately, never
+as a public issue.
 
 ## 🛠 Development
 

@@ -100,7 +100,7 @@ bodies into this file:
   ([config.go:568-569](../../internal/config/config.go#L568)), so a configuration written
   for the stub fails loudly rather than falling through to the generic invalid-type
   error — kept on purpose and documented as such in `README.md`,
-  `SECURITY_ARCHITECTURE.md`, `CONTRIBUTING.md` and `CLAUDE.md`; and that refusal's
+  `docs/security/key-management.md`, `CONTRIBUTING.md` and `CLAUDE.md`; and that refusal's
   wording still promises the deleted name ("tink encryption is not yet implemented with
   the new architecture"), a promise
   [ADR 0005](../adr/0005-a-kms-key-is-a-provider.md) has already replaced with Vault

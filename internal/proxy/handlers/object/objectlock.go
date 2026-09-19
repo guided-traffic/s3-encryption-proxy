@@ -12,8 +12,8 @@ import (
 // Object retention and legal hold are passthrough (ADR 0007 D4). Both act on the
 // ciphertext object, so the proxy has nothing to add to either document. WORM
 // here defends against a compromised client credential, not against a compromised
-// backend, which can ignore its own lock — SECURITY_ARCHITECTURE.md §3.6 says
-// which adversary that is for.
+// backend, which can ignore its own lock — docs/security/stored-objects.md,
+// "What the backend learns anyway", says which adversary that is for.
 //
 // Both used to answer 501, and before that something worse: ?legal-hold read the
 // body, discarded it and always sent Status=On, so a client releasing a hold

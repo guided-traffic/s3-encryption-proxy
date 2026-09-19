@@ -230,5 +230,5 @@ revisit if connection pinning turns out to be a real problem rather than a theor
 * ADR 0019 — Integration and end-to-end tests are the product; they are never skipped
 * ADR 0020 — Performance is measured before and after, never asserted
 * [README.md](../../README.md) — `shutdown_timeout` and the rest of the server configuration
-* [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — trust boundaries and the hardening
-  checklist, including what the proxy deliberately does not defend against
+* [docs/security/threat-model.md](../security/threat-model.md) — trust boundaries and what the
+  proxy deliberately does not defend against

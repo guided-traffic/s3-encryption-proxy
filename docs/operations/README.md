@@ -35,6 +35,6 @@ above are the ones a suite proves on every release.
 | Where | What |
 |---|---|
 | [README.md](../../README.md) | What the product is, the fast start, the complete configuration key reference |
-| [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) | Threat model, trust boundaries, where keys live, residual risks |
+| [docs/security/](../security/) | Threat model, trust boundaries, where keys live, and the gap each mechanism leaves |
 | [docs/adr/](../adr/) | Why the product behaves the way it does, and what was rejected |
 | [docs/developer/](../developer/) | Changing the code: package map, request paths, the codec, tests |

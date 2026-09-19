@@ -306,7 +306,7 @@ all, so a lifecycle-tiered bucket has no mapping today.
    ([bucket/operations.go:107-127](../../internal/proxy/handlers/bucket/operations.go#L107))
    and every authenticated client may call it against any bucket — there is no
    per-client scope
-   ([SECURITY_ARCHITECTURE.md:516-519](../../SECURITY_ARCHITECTURE.md#L516)). A
+   ([docs/security/tenancy-and-privilege.md](../security/tenancy-and-privilege.md#what-it-does-not-give-you)). A
    client deletes a listed bucket at 14:00, the proxy keeps serving, and the next
    Helm upgrade or reschedule fails to start. Cause and outage are separated by
    however long the process happens to live.
@@ -322,15 +322,17 @@ all, so a lifecycle-tiered bucket has no mapping today.
    the gap — a bucket policy does not describe this identity's *effective*
    permission.
 4. **The credential's blast radius widens permanently.** There is one static
-   backend credential for everything, and `SECURITY_ARCHITECTURE.md` section 5.2
-   already states that an attacker who takes the proxy gets it. Item 4 needs
+   backend credential for everything, and `docs/security/tenancy-and-privilege.md`,
+   *What an attacker who takes the proxy gets*, already states that it goes with
+   the proxy. Item 4 needs
    bucket-wide `PutObject` and, to clear the plaintext version it leaves behind,
    `DeleteObjectVersion` — **whether or not a pass is running**. That moves a
    proxy compromise from "read and write what clients touch" to "silently
    overwrite or destroy the entire bucket including its version history."
 
 And one document that goes stale the day a scan ships:
-`SECURITY_ARCHITECTURE.md:277` and section 5.2 describe the data-key exposure as
+`docs/security/key-management.md`, *Where each secret lives*, and
+`docs/security/tenancy-and-privilege.md` describe the data-key exposure as
 "an LRU of up to 1024 already-unwrapped DEKs". A scan unwraps **one per object**.
 There is no zeroization of key material anywhere in `internal/` or `pkg/`
 (verified by grep, zero non-test hits), and Go does not zero freed memory, so a
@@ -443,7 +445,8 @@ format decision.**
    pass, data plane untouched; (b) an allowlist that refuses unlisted buckets;
    (c) a per-bucket policy map. (c) is closed by ADR 0001 D5 and ADR 0025 D3. (b)
    breaks two release gates, needs wildcards on day one, and contradicts
-   `SECURITY_ARCHITECTURE.md:516-519`, which says in those words that no bucket
+   `docs/security/tenancy-and-privilege.md`, *What it does not give you*, which
+   says in those words that no bucket
    allowlist exists. *Leaning: (a), with any refusal arriving later as a second,
    separately-named key — adding an inventory is additive, adding a refusal is a
    behaviour break.*

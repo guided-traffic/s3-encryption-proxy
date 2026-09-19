@@ -550,5 +550,5 @@ already gives.
 - [docs/operations/integrity.md](../operations/integrity.md) — the storage overhead and the error the
   proxy answers for a foreign object
 - [docs/operations/upgrading.md](../operations/upgrading.md) — the migration procedure
-- [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — threat model, what the stored
-  format guarantees, and the residual risks above from the operator's side
+- [docs/security/stored-objects.md](../security/stored-objects.md) — what the stored format
+  guarantees, where a failed proof surfaces, and the rollback gap it leaves

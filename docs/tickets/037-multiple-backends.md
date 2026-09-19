@@ -174,8 +174,8 @@ that matters.
 mid-stream fault?** Covering it means not streaming — verify the whole object
 before the status line — which is goal 3 traded away for goal 1. Not covering it
 means the honest claim is "a damaged *header* of an object falls back; a damaged
-*body* still cuts the response", and `SECURITY_ARCHITECTURE.md` has to say exactly
-that.
+*body* still cuts the response", and `docs/security/stored-objects.md` has to say
+exactly that.
 
 ### Conditional requests, entity tags and timestamps are backend-local
 
@@ -213,7 +213,7 @@ supported only when the backends replicate (question 4 answered "backend-side")?
 `DeleteObjects` a single batch (`:769`). If a delete is not held to the same
 policy as a write, the fallback resurrects objects the client deleted — worse than
 a missing copy, because the operator believes the data is gone. This belongs in
-the write policy of question 3, and in `SECURITY_ARCHITECTURE.md`: a second copy
+the write policy of question 3, and in `docs/security/stored-objects.md`: a second copy
 makes deletion a distributed operation, and ADR 0001 D9 currently puts deletion
 out of scope (question 7).
 
@@ -424,7 +424,8 @@ YAML files carry the block — `config/aes-example.yaml`, `aes-tls-example.yaml`
 `values-monitoring.yaml`, `values-production.yaml` and
 `test/e2e/velero/values-proxy.yaml` — plus the reference block at `README.md:378`,
 the container's variable table at `README.md:729-732`, `CLAUDE.md:369`,
-`SECURITY_ARCHITECTURE.md:282` and `:900`, `docs/developer/configuration.md:113-114`
+`docs/security/key-management.md` (where each secret lives) and
+`docs/security/threat-model.md` (transport), `docs/developer/configuration.md:113-114`
 and `deploy/helm/s3-encryption-proxy/README.md:92` and `:132-133`. Two tests decode
 what is shipped: the named examples at
 `internal/config/default_config_test.go:160-195` and every `config/*.yaml` at
@@ -584,7 +585,7 @@ sharpened by findings there.
       manipulated copy — including a manipulation *inside a segment* of a
       multi-segment object, which is the case a fallback may not be able to cover
 - [ ] `make test-conformance` is run for the entry's new keys
-- [ ] `SECURITY_ARCHITECTURE.md` states what a second copy defends against and what
+- [ ] `docs/security/stored-objects.md` states what a second copy defends against and what
       it does not — explicitly including the mid-stream gap of question 11, and
       only claiming what the code verifies (ADR 0001 D10)
 - [ ] ADR 0001 D9 is amended rather than quietly outgrown (question 7)

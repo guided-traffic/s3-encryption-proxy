@@ -43,8 +43,8 @@ func NewTaggingHandler(
 // Handle handles object tagging operations (?tagging). The tags travel to the
 // backend and the backend's answer comes back: they carry no plaintext of the
 // object and the proxy has nothing to add to them (ADR 0007 D4). They are stored
-// in the clear next to the ciphertext, which SECURITY_ARCHITECTURE.md §3.6
-// states as the accepted cost.
+// in the clear next to the ciphertext, which docs/security/stored-objects.md,
+// "What the backend learns anyway", states as the accepted cost.
 func (h *TaggingHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]

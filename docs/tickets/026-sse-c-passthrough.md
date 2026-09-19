@@ -69,7 +69,7 @@ ciphertext a second time with a key the adversary sees. The feature exists so
 that a client or a bucket policy that *requires* SSE-C (some organisations
 enforce `s3:x-amz-server-side-encryption-customer-algorithm` in bucket
 policies) works through the proxy. The README says exactly that, and
-`SECURITY_ARCHITECTURE.md` says it next to the storage-header table D-35 adds.
+`docs/security/stored-objects.md` says it next to the storage-header table D-35 adds.
 
 What the proxy must do with the key: forward it on the backend leg and echo the
 two response headers; **never** log it (the request logger logs headers?
@@ -133,7 +133,7 @@ test sees. Say so in the test file.
   stays as the guard).
 - README: SSE-C row in the storage-header table, the sentence that it is
   compatibility and not protection against the backend, the TLS requirement.
-- `SECURITY_ARCHITECTURE.md`: the same sentence, and "the key transits the
+- `docs/security/stored-objects.md`: the same sentence, and "the key transits the
   proxy and is never logged, stored or cached".
 - Integration tests in the TLS suite.
 
@@ -178,7 +178,7 @@ test sees. Say so in the test file.
       entropy check) and its metadata carries no customer key; a pre-signed GET
       with SSE-C headers in `SignedHeaders` succeeds.
 - [ ] **6. Docs.** README storage-header table and the compatibility sentence;
-      `SECURITY_ARCHITECTURE.md` next to the D-35 table; the TLS requirement of
+      `docs/security/stored-objects.md` next to the D-35 table; the TLS requirement of
       MinIO in the test file header.
 
 ## Success criteria
@@ -190,7 +190,7 @@ test sees. Say so in the test file.
       message naming MinIO's TLS requirement.
 - [ ] A log capture of an SSE-C PUT and GET at `log_level: debug` does not
       contain the key.
-- [ ] README and `SECURITY_ARCHITECTURE.md` say in one sentence each that SSE-C
+- [ ] README and `docs/security/stored-objects.md` say in one sentence each that SSE-C
       through this proxy is compatibility, not protection against the backend.
 
 ## Risks and open questions

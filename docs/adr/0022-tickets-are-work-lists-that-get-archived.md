@@ -270,6 +270,5 @@ references that outlive the ticket, and they are the ones that made deletion imp
 * This directory's [README.md](README.md) — the ADR format, the ground rules and the index
 * [docs/operations/](../operations/) — the destination for the operator-facing half of a closing ticket
 * [README.md](../../README.md) — the product's front page and the configuration key reference
-* [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — threat model and hardening
-  checklist; the destination for the security-facing half
+* [docs/security/](../security/) — the destination for the security-facing half of a ticket
 * [CLAUDE.md](../../CLAUDE.md) — project conventions, including this lifecycle as a working rule

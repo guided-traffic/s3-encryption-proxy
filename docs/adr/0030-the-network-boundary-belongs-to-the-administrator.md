@@ -19,7 +19,7 @@ scrape carries no identifying label and no license countdown.
 Helm ignores a value key a chart no longer declares, so an operator who had set
 `networkPolicy.enabled: true` loses the policy on upgrade with no error of its own. The chart
 renders no NetworkPolicy under any values, and the two statements outside the chart — `README.md`
-and `SECURITY_ARCHITECTURE.md` — say so.
+and the security design — say so.
 
 ## Context
 
@@ -140,5 +140,6 @@ would keep offering the word while the object grants everything.
   down: a key that does not deliver what it names is removed, not documented as a limitation.
 * [ADR 0018](0018-a-major-release-is-declared-by-a-label.md) — a removal with no compatibility shim
   lands in a release declared major by its label.
-* [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — the home of the residual risk this
-  decision leaves standing; its statement about a shipped policy goes with the object.
+* [docs/security/request-authentication.md](../security/request-authentication.md) — the
+  unauthenticated monitoring surface this decision leaves standing; its statement about a shipped
+  policy goes with the object.

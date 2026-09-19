@@ -6,7 +6,7 @@
 monitoring listener stays unauthenticated by decision: [ADR 0014](../../adr/0014-authentication-is-sigv4-no-rate-limiting.md)
 D11 is the rule, `licensed_to` and `company` were dropped from the scrape so the
 port carries no identifying label, no `NetworkPolicy` ships because the network
-boundary is the administrator's, and `SECURITY_ARCHITECTURE.md` states the
+boundary is the administrator's, and the security design states the
 posture as a residual risk. Nothing durable is left here: every decision this
 round produced is an ADR.
 

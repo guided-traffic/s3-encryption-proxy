@@ -59,8 +59,8 @@ of the `s3-encryption-proxy` chart; an operator provides it, which is the same
 division ADR 0030 D1 already draws for the network boundary.
 
 Three shapes were weighed and rejected. *Sticky routing* — ADR 0033's
-Alternatives already rejects it on three grounds and SECURITY_ARCHITECTURE.md
-§1.2 rule 2 adds a fourth. *Refusing client-driven multipart in a multi-instance
+Alternatives already rejects it on three grounds and rule 2 of
+`docs/security/threat-model.md` adds a fourth. *Refusing client-driven multipart in a multi-instance
 deployment* — honest and free, and it takes Velero, rclone and s3cmd with it,
 because every SDK uploader switches to multipart above a threshold; dead as an end
 state under ADR 0006. *Owner-routing with a proxy-minted upload id and a
@@ -264,7 +264,7 @@ question yet. They are recorded so the reasoning is not re-derived.
   key itself travels only wrapped. Valkey alone is then useless, because the
   key-encryption key never leaves the proxy. Two fields fail that rule as the
   session stands: `sessionPart.sum` is a **plaintext** CRC32C, which
-  SECURITY_ARCHITECTURE.md §6.4a names as a confirmation oracle in so many words,
+  `docs/security/upload-integrity.md` names as a confirmation oracle in so many words,
   and the object key is the client's cleartext name, which after
   [017](017-filename-encryption.md) the backend no longer sees — so the row must
   carry the *stored* name and the receiver re-derive, or ADR 0023 D8's "exactly
@@ -301,7 +301,7 @@ question yet. They are recorded so the reasoning is not re-derived.
   else's live upload; `min-replicas-to-write` is the setting that closes it, it
   lives in Valkey's configuration rather than the proxy's, and the proxy can read
   it at startup and refuse rather than leave the control in a document
-  (SECURITY_ARCHITECTURE.md §1.2 rule 2).
+  (rule 2 of `docs/security/threat-model.md`).
 * **Persistence off.** Everything in the store is in flight, so there is nothing
   to back up — which has to be *stated*, or an operator will build a backup and
   turn the row set into a durable record of every object name written through the
@@ -466,7 +466,7 @@ which the holder is alive and merely unreachable from the forwarder has a health
 instance abort a live upload. The destructive primitive is already there — both
 sweeps issue a real `AbortMultipartUpload`, safe today only because the table is
 the process's own. "Unreachable" becoming a network-triggerable data loss is the
-class SECURITY_ARCHITECTURE.md §1.2 rule 2 refuses to leave to configuration. A
+class rule 2 of `docs/security/threat-model.md` refuses to leave to configuration. A
 compare-and-set on the row, where exactly one party may declare an upload over, is
 the guard; which party that is, is part of question 35.
 
@@ -596,7 +596,7 @@ silence.
 
 **Why not a lease.** Its expiry is a timed verdict, and a partition longer than
 the TTL with a living holder is precisely the abort of a live upload that
-SECURITY_ARCHITECTURE.md §1.2 rule 2 refuses to leave to a setting. It also buys
+rule 2 of `docs/security/threat-model.md` refuses to leave to a setting. It also buys
 nothing on the client path: the TTL has to exceed the Sentinel failover window
 (about 90 s, decision 1), the client's retries are spent within seconds, so the
 forwarder would answer `SlowDown` in that window under a lease as well. What a
@@ -836,8 +836,9 @@ header. Client plaintext never crosses (decisions 5, 8, 13).
 **The rule for a row field, now decided rather than proposed:** it is either
 something the backend already sees, or it is sealed under the object's data
 key. Wrapped key, fingerprint, bucket, key, entity tags, offsets and lengths are
-the backend's view. The per-part plaintext CRC32C is not — SECURITY_ARCHITECTURE.md
-§6.4a names it a confirmation oracle in so many words for the backend, and the
+the backend's view. The per-part plaintext CRC32C is not —
+`docs/security/upload-integrity.md` names it a confirmation oracle in so many
+words for the backend, and the
 store is no more trusted a party — so it is sealed under the object's data key
 with AES-GCM under an AAD label of its own, separating it from segments and
 trailer. Every instance can open it, the store cannot. After ticket 017 the row
@@ -854,7 +855,8 @@ first read rejects. **Tampering is denial, never silent corruption**, and that
 is a property of the storage format, not of the store. It holds before anything
 is built. Rejected: the plaintext key in the row — membership in the store
 would be data-key access, a path to in-flight plaintext around the
-key-encryption key that §5.2 does not contemplate; and a whole-row seal under a
+key-encryption key that *What an attacker who takes the proxy gets* does not
+contemplate; and a whole-row seal under a
 key derived from the key-encryption key — stronger than the threat model asks,
 hides from the store what the backend sees anyway, and is foreclosed by the
 provider futures below.
@@ -893,12 +895,15 @@ as the client leg, and that boundary is the operator's under ADR 0030 D1. The
 peer port must not be reachable from outside the cluster, which the chart says
 and cannot enforce.
 
-**Consequences for SECURITY_ARCHITECTURE.md.** §2.1 gains two roles with one
-sentence of trust each: the store sees what the backend sees, the peer leg is a
-second client port. §3.3's in-flight-key row says "in every instance that
-touched the upload, never in the store". §6.4a's oracle paragraph gains the
-store. §7.1 gains the two-restart rotation (question 19). H-12 is claimed for
-the store's tamper-is-denial property, with the three reasons above.
+**Consequences for `docs/security/`.** *Roles* in `threat-model.md` gains two
+rows with one sentence of trust each: the store sees what the backend sees, the
+peer leg is a second client port. The in-flight-key row of *Where each secret
+lives* in `key-management.md` says "in every instance that touched the upload,
+never in the store". The oracle paragraph of `upload-integrity.md` gains the
+store. *KEK rotation* in `key-management.md` gains the two-restart rotation
+(question 19). H-12 is claimed for the store's tamper-is-denial property, with
+the three reasons above, in the closing section of the page whose mechanism it
+belongs to.
 
 ### Decision 15. A member register makes a one-step rotation work: the active alias takes effect when every live member can read it (question 19)
 
@@ -935,7 +940,7 @@ it never fires; it exists for the store outage in the middle of a roll.
 
 **Why not the guard alone (option B as first put).** A register that *halts* a
 wrongly ordered roll turns the owner's one upgrade into a crash-loop with
-instructions: rule 2 of SECURITY_ARCHITECTURE.md §1.2 satisfied and the operator
+instructions: rule 2 of `docs/security/threat-model.md` satisfied and the operator
 punished. The same register, used to defer the switch, makes the one upgrade the
 normal path and leaves only the one action that cannot work — the swap in a
 single release — to be refused at start with one sentence. Why not nothing (A
@@ -956,7 +961,8 @@ no object is ever written under a key a live member lacks, so the only unknown
 fingerprint left is a removed key, which is the permanent state ADR 0004's
 reasoning describes. The question-21 item this round nearly opened does not
 exist. Question 5's identity has its home. Question 31 has an instance count
-without asking for one. §7.1 gains one sentence instead of a procedure: add,
+without asking for one. *KEK rotation* in `docs/security/key-management.md`
+gains one sentence instead of a procedure: add,
 switch, upgrade; remove in a later release. ADR 0004 gains the fleet reading of
 the active alias.
 
@@ -1226,7 +1232,7 @@ Five choices inside it, with the favourite and its reason:
   (`ca_file` exists nowhere) is the gap
   [039](039-backend-certificate-verification-failure-is-named.md) names, neither
   larger nor smaller here. The alternative — TLS optional with a warning — is
-  what SECURITY_ARCHITECTURE.md §1.2 rule 2 refuses.
+  what rule 2 of `docs/security/threat-model.md` refuses.
 * **(d) The `${VAR}` allowlist** gains the addresses, `primary_name`, `username`,
   `password`, `sentinel_password` and `advertise_address`, or the proxy starts
   with the placeholder text as its password (round 1).
@@ -1823,7 +1829,7 @@ accepted ADR.
   store row's or the request's — becomes an explicit choice, and the inconsistent
   answer produces segments sealed under a key the object is not stored at.
 * **Parking the part table in S3 hands the backend a confirmation oracle.**
-  `sessionPart.sum` is a plaintext CRC32C, and SECURITY_ARCHITECTURE.md §6.4a says
+  `sessionPart.sum` is a plaintext CRC32C, and `docs/security/upload-integrity.md` says
   in so many words why the object's own CRC32C lives sealed inside the trailer:
   "a plaintext checksum in cleartext beside the ciphertext would hand a hostile
   backend a confirmation oracle". Open question 1 prices that option on integrity
@@ -1845,7 +1851,8 @@ accepted ADR.
   write "this instance is dead" can have a healthy instance abort other instances'
   live uploads.
 * **KEK rotation has no rolling form.** The procedure is "add the new provider,
-  point the alias at it, restart" (SECURITY_ARCHITECTURE.md §7.1), which at N
+  point the alias at it, restart" (*KEK rotation* in
+  `docs/security/key-management.md`), which at N
   instances is a rolling restart — a window in which pods hold different provider
   sets. An object written by a pod with a new provider is `403 InvalidObjectState`
   on a pod that has not loaded it, which the product documents as a **permanent**
@@ -1857,20 +1864,24 @@ accepted ADR.
   abandon uploads — no plaintext of sealed parts, because unwrapping still goes
   through the configured key encryptor. Plaintext-key arm: **membership is DEK
   access**, a path to in-flight plaintext that bypasses the KEK entirely, which
-  §5.2 does not contemplate. In both arms a member sees the held part's plaintext
+  *What an attacker who takes the proxy gets* does not contemplate. In both arms
+  a member sees the held part's plaintext
   if hand-over moves it.
-* **What has to change in SECURITY_ARCHITECTURE.md**, by name: §2.1 Roles (two
-  network rows today; a peer leg and a store are a third and fourth), §2.2
-  Boundaries (the sentence "The single boundary that matters runs between the
-  proxy and the backend" becomes false), §3.3 Where each secret lives (the
-  in-flight-DEK row, plus a new row if client plaintext moves), §3.6 (only if the
-  store is S3), §4.1/§4.2, §5.2 ("an attacker who takes the proxy" → any one of
-  N), §6.2-6.4 (the replay window becomes a key-handover replay window if SigV4 is
-  reused), §6.6 Transport (a third leg), §7.1 (a rolling form), §7.2 (new
-  rotatable material). Section 8's next free identifier is **H-12** — and archived
-  ticket 031 already records an H-12 owed elsewhere, which is a rule living in an
-  archive that ADR 0022 forbids.
-* **Sticky routing is what §1.2 rule 2 forbids**, more strongly than ADR 0033's
+* **What has to change under `docs/security/`**, by page and heading:
+  `threat-model.md` — *Roles* (two network rows today; a peer leg and a store are
+  a third and fourth), *Boundaries* (the sentence "The single boundary that
+  matters runs between the proxy and the backend" becomes false) and *Transport*
+  (a third leg); `key-management.md` — *Where each secret lives* (the
+  in-flight-DEK row, plus a new row if client plaintext moves), *KEK rotation* (a
+  rolling form) and *Client credential rotation* (new rotatable material);
+  `stored-objects.md` — *What the backend learns anyway*, only if the store is S3;
+  `tenancy-and-privilege.md` — all four sections, and "an attacker who takes the
+  proxy" becomes any one of N; `request-authentication.md` — the replay window
+  becomes a key-handover replay window if SigV4 is reused. The next free gap
+  identifier is **H-12**, and it goes in the closing section of the page whose
+  mechanism has the gap — and archived ticket 031 already records an H-12 owed
+  elsewhere, which is a rule living in an archive that ADR 0022 forbids.
+* **Sticky routing is what rule 2 of the threat model forbids**, more strongly than ADR 0033's
   best-effort argument: "A control that exists only in configuration or in
   documentation is worse than no control, because it gets relied upon." The chart
   ships no `sessionAffinity` key at all, ADR 0030 D1 says it will ship none, and
@@ -2095,11 +2106,12 @@ accepted ADR.
   metric. And its *A configuration key* checklist does not name CLAUDE.md's
   configuration table, which CLAUDE.md itself declares a startup failure if
   forgotten: two lists of the same duty that disagree.
-* **SECURITY_ARCHITECTURE.md is the only document that cites code by line** — 95
-  such links, thirteen of them in §3.3 alone, nine into exactly the code this
-  feature rewrites — and nothing in the repo owns keeping them true: the update
-  rule is stated only for `docs/developer/` and that page puts
-  SECURITY_ARCHITECTURE.md outside its scope.
+* **The security pages cite code by line** — 86 such links on 2026-09-19,
+  thirteen of them in *Where each secret lives* alone, nine into exactly the code
+  this feature rewrites. The update rule now covers them:
+  `docs/security/README.md` says whoever changes the behaviour updates the page
+  in the same change. Nothing enforces it, which is the same standing as
+  `docs/developer/`.
 * **The ADR 0029 rationale to re-read before touching it:** D1 step 2 and D7 both
   justify their behaviour with "another replica" / "a replacement instance is
   already taking the traffic". That is true today only because of the rollout surge
@@ -2410,9 +2422,10 @@ ADR 0036 exists, so no item here waits for a major.
 - [ ] Open questions 1, 2, 24 and 25 are answered — which property is being
       bought, whether state is shared at all, which store, and whether a fleet is
       single-cluster — and recorded in an ADR.
-- [ ] Questions 3 and 7 are answered and `SECURITY_ARCHITECTURE.md` carries the
-      key flow *and* the plaintext flow between instances, with its seven affected
-      sections rewritten and H-12 (or H-13) claimed.
+- [ ] Questions 3 and 7 are answered and `docs/security/` carries the key flow
+      *and* the plaintext flow between instances, with every affected page
+      rewritten and H-12 claimed in the closing section of the page whose
+      mechanism has the gap.
 - [ ] Questions 8, 9 and 14 are answered — the part-size inference, the
       consistency contract, and the upload id — because together they decide whether
       coordination is on the hot path.

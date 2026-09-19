@@ -245,7 +245,7 @@ CRC-32C if your client lets you choose; the AWS SDKs send CRC-32 by default.
 **A CRC is a transmission-corruption check, not an integrity guarantee.** It
 catches a byte damaged on the way to the proxy, which is what it is for. It does
 not detect a deliberate modification, and nothing here claims it does — see
-[SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) § 6.4.
+[docs/security/upload-integrity.md](../security/upload-integrity.md).
 
 **Your value is never forwarded and never stored.** It describes the plaintext
 while the body the proxy uploads is ciphertext, so a digest-checking backend

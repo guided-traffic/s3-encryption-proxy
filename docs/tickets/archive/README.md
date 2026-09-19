@@ -15,7 +15,7 @@ That is:
 | What the product does and why, what was rejected | [docs/adr/](../../adr/) |
 | How a subsystem works, an invariant, a hard-won detail | [docs/developer/](../../developer/) |
 | What an operator or a client needs | [README.md](../../../README.md) |
-| The threat model and residual risks | [SECURITY_ARCHITECTURE.md](../../../SECURITY_ARCHITECTURE.md) |
+| The threat model and the gaps | [docs/security/](../../security/) |
 | Work still outstanding | a live ticket in [docs/tickets/](../) |
 
 **A ticket is archived only after everything durable in it has been moved out**

@@ -294,4 +294,4 @@ family as the data layer and as what key management services use internally.
 - ADR 0020 — Performance is measured before and after, never asserted
 - ADR 0021 — Key material and licenses are generated, never committed
 - [README.md](../../README.md) — provider reference and key generation
-- [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — key providers, where each secret lives, rotation, and the hardening checklist
+- [docs/security/key-management.md](../security/key-management.md) — key providers, where each secret lives, rotation, and why the fingerprint is derived

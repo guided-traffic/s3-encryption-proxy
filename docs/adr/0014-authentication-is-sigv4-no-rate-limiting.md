@@ -314,5 +314,6 @@ and `/version` until then.*
 - ADR 0018 — A major release is declared by a label, never discovered at merge
 - [README.md](../../README.md) — the `s3_clients` and `s3_security` configuration reference, and
   the pre-signed URL section
-- [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — trust boundaries, what is verified
-  on every request, what is not verified, and the hardening checklist
+- [docs/security/request-authentication.md](../security/request-authentication.md) — what is
+  verified on every request, what is not, and the per-chunk signature gap H-2;
+  [docs/security/threat-model.md](../security/threat-model.md) — the trust boundaries

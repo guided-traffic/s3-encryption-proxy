@@ -53,7 +53,7 @@ to the index below in the same change that writes it.
 
 ## Index
 
-Every record here is **Accepted**; none is superseded. The *State* column is the coarse build
+Every record here is **Accepted**. One rule is superseded: D5 of ADR 0035, by ADR 0038. The *State* column is the coarse build
 state as of 2026-09-13, on the unreleased 5.0.0 branch: **Implemented**, **Partly built** (some
 rules of the decision hold, the rest are decided and outstanding) or **Not built** (decided,
 nothing of it exists yet). A state that reads *Implemented, except …* names what is still
@@ -120,12 +120,13 @@ this column is a reading aid.
 | [0027](0027-conformance-is-asserted-against-a-backend-that-is-not-minio.md) | One backend-agnostic conformance suite runs free against the local stack and on a schedule against a paid backend; the corpus is seeded once and a byte budget is enforced in code | Implemented |
 | [0028](0028-an-abandoned-upload-is-ended-not-forgotten.md) | A client-driven multipart upload expires on inactivity, not on age, and the sweeper aborts it at the backend before it forgets it | Implemented |
 | [0029](0029-the-shutdown-budget-finishes-work-and-sweeps-what-cannot-be-finished.md) | Graceful shutdown goes readiness-false, stop accepting, finish what is running, then end every upload that can no longer be finished | Implemented |
-| [0035](0035-the-readme-advertises-the-reference-lives-under-docs.md) | The README advertises the product and carries the configuration key reference; operator and client reference lives under `docs/operations/`, and the security design is not decomposed | Implemented |
+| [0035](0035-the-readme-advertises-the-reference-lives-under-docs.md) | The README advertises the product and carries the configuration key reference; operator and client reference lives under `docs/operations/` | Implemented; D5 superseded by ADR 0038 |
+| [0038](0038-the-security-architecture-is-one-page-per-perspective.md) | The security architecture is a directory of one page per perspective, each ending with what it does not cover; an open gap keeps a stable `H-<n>` beside its mechanism and a closed one becomes prose, nothing there takes the shape of a ticket, and vulnerability reporting is `SECURITY.md` at the root | Implemented |
 
 ## Related documents
 
 * [README.md](../../README.md) — the product's front page and the configuration key reference
 * [docs/operations/README.md](../operations/README.md) — what an operator or a client needs: configuration, deployment, S3 API behaviour, integrity, monitoring, upgrading, per-client notes
-* [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — threat model, trust boundaries and the hardening checklist
+* [docs/security/](../security/) — the security architecture: threat model, trust boundaries, and the gap each page names
 * [docs/developer/README.md](../developer/README.md) — how the subsystems work; the home for everything an ADR may not name
 * [CLAUDE.md](../../CLAUDE.md) — project conventions, the ticket lifecycle and the ADR obligation

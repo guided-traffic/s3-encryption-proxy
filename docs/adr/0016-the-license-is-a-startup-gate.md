@@ -260,5 +260,5 @@ shipped binary accepts.
 - [README.md](../../README.md) — the operator-facing license setup. The token routes and the
   exit provider's exemption are written there (verified 2026-09-12); the verbatim failure message
   to search for is not, and lands with the unbuilt half of this decision.
-- [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — license expiry as an
-  availability property with security consequences.
+- [docs/security/operational-security.md](../security/operational-security.md) — license expiry as
+  an availability property with security consequences.

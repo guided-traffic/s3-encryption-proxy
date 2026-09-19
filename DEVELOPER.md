@@ -2,8 +2,8 @@
 
 For people changing this code. [README.md](README.md) is the product's front
 page, [docs/operations/](docs/operations/) is what an operator or a client needs,
-[SECURITY_ARCHITECTURE.md](SECURITY_ARCHITECTURE.md) is the threat model
-and the residual risks, and this page is the contributor's entry point: where
+[docs/security/](docs/security/) is the threat model and the gaps, and this
+page is the contributor's entry point: where
 things live, how to build and test them, what continuous integration gates, and
 the conventions that are not obvious from the tree.
 
@@ -374,7 +374,7 @@ waits on a check that never reports.
   [docs/tickets/](docs/tickets/) while work is outstanding and is closed by
   **moving the file to [docs/tickets/archive/](docs/tickets/archive/)**. Move
   anything durable out of it first: the decision into an ADR, the user-facing
-  consequence into `docs/operations/`, `README.md` or `SECURITY_ARCHITECTURE.md`. The extraction is
+  consequence into `docs/operations/`, `README.md` or `docs/security/`. The extraction is
   the close; an archived file is history, never a source of a current rule.
 - **Nothing outside `docs/tickets/` may reference a ticket** — not a code
   comment, not a commit message, not a pull request. Cite the ADR instead. `git

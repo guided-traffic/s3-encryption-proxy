@@ -84,7 +84,7 @@ Every line was read in the tree, in the pinned client binaries under
 | Where a wrapped key reaches the pod | The chart renders the configuration into a ConfigMap (`deploy/helm/s3-encryption-proxy/templates/configmap.yaml:9,:36`) and the AES key into `S3EP_AES_KEY` from a Secret (`templates/deployment.yaml:109-118`); the loader expands `${VAR}` only in the fields ADR 0013 names | A wrapped name key is ciphertext, not key material, but the chart pattern to follow is the Secret one, and `filename_encryption` fields must join the expanded-fields list or a `${VAR}` in them is kept verbatim |
 | The e2e assertions that "go vacuously green" | One confirmed: the Velero deletion gate `test/e2e/velero/scenarios_lifecycle_test.go:141-145` asserts zero objects under the literal prefix `backups/<name>/`, which is trivially true once the directory is stored under another name. The at-rest helper **guards itself**: `test/e2e/harness/atrest.go:38-43` fails with "nothing is stored under …, so nothing was checked" when `ListStored` (`harness/stored.go:36-61`, a literal-prefix `ListObjectsV2` paginator plus `HeadObject` per key) returns nothing | The count "three" from 2026-09-13 is not confirmed; one is. Both helpers need the transform, and the harness rule applies: a change there needs a real Velero run |
 | Binaries | `cmd/s3-encryption-proxy/main.go` is a cobra root with no subcommands; `cmd/keygen` and `cmd/license-tool` are separate binaries | D16's `names` surface is either a subcommand tree or a third binary; F11 |
-| What is documented today | `README.md:504` ("Object key names are in the clear"), `SECURITY_ARCHITECTURE.md:77,:122,:446`, `docs/operations/integrity.md:22` (the associated data binds the client's key) | The pages Stage 7 owes |
+| What is documented today | `README.md:504` ("Object key names are in the clear"), `docs/security/threat-model.md` (out of scope, boundaries) and `docs/security/stored-objects.md` (what the backend learns anyway), `docs/operations/integrity.md:22` (the associated data binds the client's key) | The pages Stage 7 owes |
 | `test/perf/` | Seven instruments on 2026-09-17 (`cryptofloor`, `memory`, `rangeread`, `smallobject`, `throughput`, `unwrap`, `uploadpath`), none lists objects | Unchanged: the listing instrument is built first, with its BEFORE column |
 | `scripts/conformance-run.sh` | Writes its proxy configuration as a heredoc (`:191-220`, credentials as `${VAR}` references) and launches `./build/s3-encryption-proxy --config` (`:222-233`) | The pattern the feature-on integration package copies (F16); and every new configuration key has to run `make test-conformance` |
 
@@ -367,7 +367,7 @@ overwrite becomes visible again: a deleted backup reappears, rclone deletes it o
 every run, kopia accumulates garbage it cannot explain. So a delete in `mixed`
 or `drain` has to settle both forms. **A blind DELETE of the clear form is
 forbidden**: on a versioned bucket, and Object Lock implies versioning on exactly
-the buckets `SECURITY_ARCHITECTURE.md` recommends it for, it creates a delete
+the buckets `docs/security/stored-objects.md` recommends it for, it creates a delete
 marker under the **cleartext** name, which stores the name permanently. The
 sequence is therefore `HeadObject` on the other form, then `DeleteObject` only
 where it exists; and when the other copy is under retention or legal hold (the
@@ -1205,7 +1205,7 @@ unlike payloads, are *how you address an object*, so they cannot age out unless
 the write path stops mapping them. But be honest about what the pass is: ADR 0025
 promises that leaving needs no batch operation, no tool and no licence, and a
 reverse pass needs all three — plus a bucket-sized copy-then-delete that object
-lock refuses on exactly the buckets SECURITY_ARCHITECTURE recommends object lock
+lock refuses on exactly the buckets `docs/security/stored-objects.md` recommends object lock
 for. **The pass is the mitigation, not the resolution.** Say both.
 
 The licence lever is `internal/config/config.go:695`, the binding license-file
@@ -1347,8 +1347,8 @@ as today"** — D-J shows that is a per-bucket property, not a per-change one.
 
 The signal problem is real and it is a **documentation** gap the project owes
 anyway: the strings "back up", "backed up" and "escrow" appear **nowhere** in
-`README.md` or `SECURITY_ARCHITECTURE.md` today. The sentence a new key-custody
-section has to carry: *losing the KEK under `exit` still yields readable objects;
+`README.md` or under `docs/security/` today. The sentence a new key-custody
+section of `docs/security/key-management.md` has to carry: *losing the KEK under `exit` still yields readable objects;
 losing the name key yields readable objects nobody can address.*
 
 ---
@@ -1441,7 +1441,7 @@ feature-on e2e job; the D18 amendment precedes the audit test built against it.
 | **4** | The multi-source listing primitive (F3), the fan-out (F9), the fallback and memo (F2), the directory cache (F2-M2), `DeleteObjects` and `ListMultipartUploads`, the refusals (F12), the memo (F14) | Pagination over 2500 objects across three directories in V1 and V2 under `mixed`; no duplicate; the leak unit test green; `s3cmd sync` converges on a fresh and on a mixed bucket | 2 w |
 | **5** | `names map`, `names unmap`, `names audit` (read-only) | `audit` proves a bucket ready for `strict` and exits non-zero otherwise | 0.5 w |
 | **6** | Tests per F16: the feature-on integration package, the e2e repairs, one feature-on scenario per client suite, the `drain` and `strict` scenarios | Nothing green that does not check something; the at-rest assertion fails without the transform | 1.5-2 w |
-| **7** | README key reference, `SECURITY_ARCHITECTURE.md` key-custody section ("losing the KEK under `exit` still yields readable objects; losing the name key yields readable objects nobody can address"), `docs/operations/` (configuration, s3-api, integrity, upgrading, one note per client page), `docs/developer/` (`package-map.md`, `request-paths.md`, `configuration.md`, `testing.md`, `errors.md`, `performance.md`), the ADR amendments still owed (0023 D5, D6, D15, D16 for F4/F11; D9's directory half and D11 for F9/F13; D17 for F13; D20's leaf sentence; 0025's carve-out for F10) | | 0.5-1 w |
+| **7** | README key reference, `docs/security/key-management.md` key-custody section ("losing the KEK under `exit` still yields readable objects; losing the name key yields readable objects nobody can address"), `docs/operations/` (configuration, s3-api, integrity, upgrading, one note per client page), `docs/developer/` (`package-map.md`, `request-paths.md`, `configuration.md`, `testing.md`, `errors.md`, `performance.md`), the ADR amendments still owed (0023 D5, D6, D15, D16 for F4/F11; D9's directory half and D11 for F9/F13; D17 for F13; D20's leaf sentence; 0025's carve-out for F10) | | 0.5-1 w |
 | **8, after launch** | The pass engine (F11) with the rename operation, `names migrate` | A bucket with an object above the copy threshold migrates online with its four metadata keys intact; a conditional copy detects a concurrent client write; retention and legal hold survive; `names audit` proves completion; a second, test-only operation proves the `Enumerate`/`Plan`/`Transfer`/`Verify` interfaces without touching rename code | 2-3 w, not on the launch path |
 | **later, other tickets** | rewrap (040 item 4) and replicate (037) as operations of the same engine | Each after its own ticket's decisions; rewrap after the amendments to ADR 0017 D3, ADR 0002 D7 and ADR 0004 D12 | — |
 
@@ -1480,7 +1480,7 @@ on deterministic quantities.
   one-character partial-leaf prefix costs one backend request per page as today
   and a two-character one costs its class (F17); the byte path shows **no
   movement at all**, and any movement is a bug, not a cost.
-- Stage 0's answers are in ADR 0023, the README and `SECURITY_ARCHITECTURE.md`,
+- Stage 0's answers are in ADR 0023, the README and `docs/security/`,
   including the leaf-name residual as the census found it, and the key-custody
   sentence.
 

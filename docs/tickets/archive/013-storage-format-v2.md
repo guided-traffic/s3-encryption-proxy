@@ -28,7 +28,7 @@ What is left, with the one row that closed since at the top:
 | — | The trailer's part number is not reserved (ADR 0011 D4) | **Closed 2026-09-11**: a client-driven upload has 9999 numbers and part 10000 is refused when it is sent |
 | 12 | Two remainders | **Closed 2026-09-11**: the 64 KiB multiple check landed 2026-09-10 and the README callout that denied it is corrected; `multipart_short_part_buffer_size` is in the two AES examples, the Velero values and `values-production.yaml`, and `config/exit-example.yaml` says in a comment why it is not in that one |
 | 15 | The after-column | **Closed 2026-09-11**: `perf-baseline/20260911T103132Z-cc62c05/`, every instrument at `ok`, with `FINDINGS.md`. The run found and closed a 24 % ranged-read loss nobody had measured |
-| 16 | `DEVELOPER.md`, and `CLAUDE.md`'s architecture sections | **Closed 2026-09-11**: `DEVELOPER.md` exists and is the contributor entry point; `CLAUDE.md` is 752 lines shorter by 265 and points at it; `SECURITY_ARCHITECTURE.md` no longer claims the file does not exist, and `CONTRIBUTING.md` points at it instead of carrying a second build matrix |
+| 16 | `DEVELOPER.md`, and `CLAUDE.md`'s architecture sections | **Closed 2026-09-11**: `DEVELOPER.md` exists and is the contributor entry point; `CLAUDE.md` is 752 lines shorter by 265 and points at it; the security design no longer claims the file does not exist, and `CONTRIBUTING.md` points at it instead of carrying a second build matrix |
 
 One thing the release needs and this ticket does not decide: **ADR 0003 D9's
 ranged-read request count**. The gap is written down in that ADR's status block —
@@ -115,7 +115,8 @@ the record of why the format looks the way it does.
   from Vault through `${S3EP_AES_KEY}` today.
 - **The bucket stays out of the AAD (D-33).** The owner's rule: the bucket name
   plays no role in encryption or decryption. Risk 8 below is the accepted
-  residual and is written into `SECURITY_ARCHITECTURE.md` H-3 by work item 12.
+  residual and is written into H-3 of the security design (now
+  `docs/security/stored-objects.md`) by work item 12.
 - **A client key inside the metadata prefix is refused (D-34, 024 H-5).** Work
   item 4a: `400 InvalidArgument` on PUT and CreateMultipartUpload. The
   case-sensitive compare on the single-part paths is fixed on `main` before this
@@ -348,7 +349,8 @@ filename-encryption layer changes nothing for stored objects.
 wholesale to another bucket or another provider for disaster recovery without
 re-encryption.
 
-**Residual, to be written into `SECURITY_ARCHITECTURE.md`:** the backend can
+**Residual, to be written into the security design (now
+`docs/security/stored-objects.md`):** the backend can
 still swap two objects that have the same key across two buckets served by the
 same KEK, and it can serve an older version of the same key (rollback). No AEAD
 prevents rollback. The client's own consistency checks — kopia's on a Velero
@@ -1157,7 +1159,7 @@ items carry the work and nothing else.
       alone: the format change, the producer restructuring and the self-copy
       removal landed in one commit.
 - [ ] **16. Docs, what is left of it.** Done and verified 2026-09-10: `README.md`,
-      `SECURITY_ARCHITECTURE.md` (H-9 closed) and **every ADR status block** (25
+      the security design (H-9 closed) and **every ADR status block** (25
       of them, ADR 0025 included) describe the tree; `docs/developer/` carries
       the format, the request paths,
       multipart, the errors, the test layers and the performance rules, and
@@ -1459,7 +1461,7 @@ The parts:
 - [x] The old names are gone from the code and from every shipped configuration
       file. What the grep still returns outside `CHANGELOG.md` and
       `docs/tickets/` is deliberate and must stay: `README.md`,
-      `SECURITY_ARCHITECTURE.md`, `CLAUDE.md` and four ADRs name
+      the security design, `CLAUDE.md` and four ADRs name
       `integrity_verification`, `streaming_threshold`, `aes-iv` and `s3ep-hmac`
       **to say that they no longer exist**, and four integration tests assert
       their absence. `internal/orchestration/README.md`, which this criterion
@@ -1528,7 +1530,8 @@ The parts:
    document. It is **new** everywhere but at the tail: today's HMAC path
    verifies only once the body minus its last chunk is on the wire, and in `lax`
    it hands that chunk over and logs. So it has to be stated in
-   `SECURITY_ARCHITECTURE.md`: a proxy that has already sent 200 cannot un-send it.
+   the security design (now `docs/security/stored-objects.md`): a proxy that has
+   already sent 200 cannot un-send it.
 3. **Read amplification on tiny reads is real.** A 32-byte read costs at least
    one 64 KiB segment fetch. kopia's reads are larger than that, but a client
    that ranges in 512-byte steps pays 128× amplification. Measure it in the new
@@ -1558,7 +1561,7 @@ The parts:
    Must be written down, not left implicit. **Decided 2026-09-07 (owner, D-33):
    the bucket stays out**; the same-key swap across buckets or deployments under
    one KEK is the accepted residual, answered by one KEK per deployment, and
-   `SECURITY_ARCHITECTURE.md` H-3 says so.
+   H-3 of the security design says so (now `docs/security/stored-objects.md`).
 9. **Performance is a hope with a good argument, not a measurement.** One
    GHASH-accelerated pass should beat CTR plus a SHA-256 pass, and removing the
    self-copy and the serialization is a pure gain — but per-segment setup at
@@ -1570,8 +1573,9 @@ The parts:
     pass). The percentage itself has not been re-measured since the deletion
     round, and the denominator moved — see the coverage line under Cleanliness.
 11. **Closed by item 2c.** The `aes` fingerprint is
-    `hex(HKDF-Expand(prk, "s3ep-kek-fingerprint", 32))` and H-8 is closed in
-    `SECURITY_ARCHITECTURE.md`. The record of the question, and of the HMAC form
+    `hex(HKDF-Expand(prk, "s3ep-kek-fingerprint", 32))` and H-8 is closed in the
+    security design (now `docs/security/key-management.md`, *Why the fingerprint
+    is derived rather than hashed*). The record of the question, and of the HMAC form
     that D-32 superseded:
     **The KEK fingerprint stays a plain hash of the key unless this ticket
     changes it — H-8, and this is the only ticket that can.**
@@ -1582,7 +1586,7 @@ The parts:
     from `s3ep-keygen` that leaks nothing; for a low-entropy or published key it
     is an offline verification oracle, and two buckets carrying the same value
     prove they share a KEK.
-    [SECURITY_ARCHITECTURE.md H-8](../../../SECURITY_ARCHITECTURE.md#h-8-the-aes-kek-fingerprint-is-a-plain-hash-of-the-key)
+    [The H-8 finding](../../security/key-management.md#why-the-fingerprint-is-derived-rather-than-hashed)
     carries the finding and names this ticket as the cheap place to fix it,
     because the metadata block is rewritten here anyway; nothing else owns it.
     **Decided 2026-09-06 (owner): derive the identifier as
@@ -1615,12 +1619,12 @@ The parts:
     owner decided **documentation only** — the format change fixes it by construction and
     an interim patch on the hot path would be deleted by this ticket. What that decision
     obliges *now*: the README must stop presenting `strict` as protection on the CTR path,
-    and `SECURITY_ARCHITECTURE.md` H-5 ("only `strict` is safe") must be rewritten to say
+    and H-5 of the security design ("only `strict` is safe") must be rewritten to say
     that `strict` is safe for AES-GCM objects and for nothing above
     `streaming_threshold`. That doc change is part of this ticket's prerequisites, not of
     its delivery.
 
-    **The doc obligation is discharged.** `SECURITY_ARCHITECTURE.md` H-5 is rewritten
+    **The doc obligation is discharged.** H-5 of the security design is rewritten
     (heading and anchor changed to *"`integrity_verification` does not refuse a tampered
     `aes-ctr` object"*), the two statements in §3.4 and §3.5 that contradicted it are
     corrected, `README.md` gains an *Integrity verification* section plus a Security

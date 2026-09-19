@@ -200,7 +200,7 @@ in the code, in a workflow run, or in a rendered artefact.
       future caller can forget it, and it needs a test that pins this branch —
       none exists.
 
-- [x] **`SECURITY_ARCHITECTURE.md` asserts a filter a shipped path does not
+- [x] **The security design asserts a filter a shipped path does not
       apply.** **True as of 2026-09-12**: the sentence needed no change, the code
       did. Its three line anchors were stale and are corrected, and the claim that
       the multipart create path "filters the same way" now says what the tree does
@@ -248,7 +248,7 @@ in the code, in a workflow run, or in a rendered artefact.
       Done 2026-09-12; the parameters left `SetLicenseInfo` with them.
       The remaining labels and the validity and expiry gauges stay. **No
       `NetworkPolicy` ships**: restricting the metrics port is the administrator's
-      job, and that is recorded as a residual risk in `SECURITY_ARCHITECTURE.md`
+      job, and that is recorded as a residual risk in the security design
       and in the chart README rather than shipped as a chart object.
 - [x] **Decision 5 — remove `s3ep_license_days_remaining`.** Done 2026-09-12. It is written once at
       startup and never refreshed, so the dashboard's thresholds sit on a value
@@ -335,7 +335,7 @@ when it is 128. Every one of the 92 code line anchors and 141 document links in
 the changed files was resolved afterwards.
 
 
-- [x] `README.md` and `SECURITY_ARCHITECTURE.md` state the metadata prefix pattern
+- [x] `README.md` and the security design state the metadata prefix pattern
       as `^[a-z0-9-]+$`; the enforced pattern is `^[a-z0-9][a-z0-9-]{2,}-$`. The
       chart README carries the right one.
 - [x] `docs/developer/multipart.md` and `storage-format.md` say the unaligned
@@ -351,7 +351,7 @@ the changed files was resolved afterwards.
       authentication first; the router registers seven. Its bucket sub-resource
       table is wrong for lifecycle, tagging and notification, and its `GET`
       diagram no longer matches the code after `fecbc00`.
-- [x] `SECURITY_ARCHITECTURE.md`: §3.3 describes the multipart session lifetime
+- [x] The security design: §3.3 describes the multipart session lifetime
       under the pre-ADR-0028 rule; §5.1 still says object ACL, tagging, legal hold
       and retention are refused at the handler; H-7 says `s3_security` carries
       `max_clock_skew_seconds` "and nothing else"; H-10 lists the exit-provider
@@ -854,7 +854,7 @@ the proxy's namespace. ADR 0001 D5 and ADR 0009 D1 both claimed exclusivity; now
 it is true.
 
 **The documentation describes what ships.** `README.md`,
-`SECURITY_ARCHITECTURE.md` and all 21 ADR status blocks were rewritten against
+the security design and all 21 ADR status blocks were rewritten against
 the tree — sixteen of them still described the state before this release, several
 in the future tense for work the release had already gone past. A new
 `docs/developer/` holds the subsystem overviews that had been accumulating in
@@ -1007,7 +1007,7 @@ against a hard-coded 5. The security log line stays; it now records the peer
 address and the raw `X-Forwarded-For` header as two separate fields instead of
 collapsing them into one value a client chooses. This is what
 [ADR 0014](../adr/0014-authentication-is-sigv4-no-rate-limiting.md) decided, and
-it closes the `H-7` entry of `SECURITY_ARCHITECTURE.md`.
+it closes the `H-7` entry of the security design.
 
 ### Gates
 
@@ -1578,7 +1578,7 @@ accept-and-discard. A configuration file still carrying the key does not start,
 and its name is in the error (ADR 0013 D11).
 
 Removed from the two example configurations, the Velero values, `README.md`,
-`CLAUDE.md`, `SECURITY_ARCHITECTURE.md` and ADR 0012, and added to the release
+`CLAUDE.md`, the security design and ADR 0012, and added to the release
 notes' removed-key list. Not to be confused with
 `optimizations.clean_http_transfer_chunked`, which is a different key with the
 opposite problem and whose deletion ADR 0013 D9 already owns — see open question 3.

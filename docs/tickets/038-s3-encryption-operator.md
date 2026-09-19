@@ -64,8 +64,8 @@ ticket never asked how the resource is scoped. It is new ground and it is the
 decision the other three hang from. It **sharpens open question 12 rather than
 answering it**: a namespaced resource reads as a tenancy boundary to every
 Kubernetes reader, while nothing in the proxy scopes an instance to a bucket —
-`SECURITY_ARCHITECTURE.md:90` states outright that there is no per-client
-bucket or prefix scoping, and `HandleListBuckets` forwards the request as it
+*Roles* in `docs/security/threat-model.md` states outright that there is no
+per-client bucket or prefix scoping, and `HandleListBuckets` forwards the request as it
 stands, copying prefix, continuation token, bucket region and maximum through
 to the backend and filtering nothing
 (`internal/proxy/handlers/root/handler.go:66-101`). The API shape now implies
@@ -417,8 +417,8 @@ rule is `object.metadata.name` matching one of an enumerated set of derived
 names rather than a single suffix. Since the set is the only thing that
 genuinely constrains the reachable name space, widening it is widening the
 bound: the set is closed, and adding to it is a deliberate act with its own
-line in `SECURITY_ARCHITECTURE.md`, never a consequence of a later feature
-needing somewhere to put a value.
+line in `docs/security/key-management.md`, never a consequence of a later
+feature needing somewhere to put a value.
 
 **The CEL owner clause is group-pinned and version-agnostic, never pinned to
 one `apiVersion`.** An `ownerReference` records the `apiVersion` its writer
@@ -991,8 +991,8 @@ by making the container image a required tenant-supplied field
 (valkey-operator/`api/v1/valkey_types.go:432`) and passing `podLabels` and
 `podAnnotations` through (`:70-75`). Question 18.
 
-**N. The ConfigMap write verb reaches the one leg `SECURITY_ARCHITECTURE.md`
-exists to defend.** s3eo has to write the rendered proxy configuration as a
+**N. The ConfigMap write verb reaches the one leg `docs/security/` exists to
+defend.** s3eo has to write the rendered proxy configuration as a
 ConfigMap — that is what the chart does today
 (`deploy/helm/s3-encryption-proxy/templates/configmap.yaml:1-9`, hashed into
 the pod template at `templates/deployment.yaml:25`) — and cluster-wide that
@@ -1003,13 +1003,14 @@ verb is not confined to objects the operator created: the precedent grants
 which reaches the `coredns` ConfigMap in `kube-system` and every namespace's
 `kube-root-ca.crt`. Rewriting the Corefile redirects the hostname the proxy
 resolves for `s3_backends[0].target_endpoint`, which puts an attacker on the
-proxy-to-backend leg — the leg `SECURITY_ARCHITECTURE.md:96-134` draws as the
-boundary that matters and `:30-47` declares outright hostile. What the proxy
+proxy-to-backend leg — the leg *Boundaries* in
+`docs/security/threat-model.md` draws as the boundary that matters and *The S3
+backend is hostile* declares outright hostile. What the proxy
 has against that is certificate verification and nothing else:
 `target_endpoint` and `insecure_skip_verify` are the only backend values
 reaching the SDK options, and with the latter true the transport is built with
 `InsecureSkipVerify` set (`internal/proxy/server.go:202`, `:241`), which
-`SECURITY_ARCHITECTURE.md:936-939` already names as removing the only defence
+*Transport* in `docs/security/threat-model.md` already names as removing the only defence
 against an additional attacker on that leg. Verified in the loader: a scheme
 that is neither `https` nor `http` refuses the start
 (`internal/config/config.go:540-557`), and plain `http://` refuses the start
@@ -1018,8 +1019,8 @@ under every provider that resolves, the exit provider included
 against a correctly configured proxy dies at the handshake, and against one
 carrying `insecure_skip_verify: true` — which the demo configurations set — it
 succeeds and the redirected endpoint receives the backend credential in a
-SigV4 header, the one secret `SECURITY_ARCHITECTURE.md:284` records as
-deliberately sent onto that leg. *Not verified by experiment here, but* the
+SigV4 header, the one secret *Where each secret lives* in
+`docs/security/key-management.md` records as deliberately sent onto that leg. *Not verified by experiment here, but* the
 timing differs by target: the proxy reads its configuration once at startup
 and has no watcher — no `fsnotify` and no `WatchConfig` anywhere in
 `internal/config/` or `cmd/` — so rewriting the proxy's own ConfigMap needs a
@@ -1148,7 +1149,8 @@ generator, transplanted, produces a policy that denies every client the
 instance exists to serve. Whether an operator is even the same actor as a
 chart is genuinely open and worth stating precisely rather than settling: the
 chart's argument is knowledge, that it cannot know which namespaces may reach
-the proxy (`SECURITY_ARCHITECTURE.md:726-730`), and a resource is written by
+the proxy (*What is not verified* in
+`docs/security/request-authentication.md`), and a resource is written by
 the same administrator who writes a values file, so the knowledge is identical
 at install time; what differs, and is verified, is that an operator holds a
 reconcile loop and RBAC on `networkpolicies`
@@ -1519,8 +1521,9 @@ container runtime's inspect output show only the reference, whereas a literal
 `env` entry shows the key to everyone who may read the Pod; in both cases the
 expanded value sits in the container's environment and is readable at
 `/proc/<pid>/environ` by anything sharing the PID namespace or holding node
-access. Nothing zeroes it afterwards, and `SECURITY_ARCHITECTURE.md:281`
-already records the KEK's lifetime as the process lifetime. Questions 19
+access. Nothing zeroes it afterwards, and *Where each secret lives* in
+`docs/security/key-management.md` already records the KEK's lifetime as the
+process lifetime. Questions 19
 and 20.
 
 **AG. Every provisioned instance needs a licence of its own, and the chart
@@ -1577,18 +1580,21 @@ refused, which is a thing the schema gets for free and the chart never had.
 
 **AI. "Operator" already names the human in this repository, and one of those
 places is a trust-boundary role.** Counted on 2026-09-16: 236 occurrences
-under `docs/` outside the ticket directory, 25 in `SECURITY_ARCHITECTURE.md`,
-4 in `CLAUDE.md`, and none in `README.md`. The sharpest is the roles table at
-`SECURITY_ARCHITECTURE.md:89`, whose role is literally named **Operator** and
+under `docs/` outside the ticket directory, 25 in the security design (one
+document then, `docs/security/` since 2026-09-19), 4 in `CLAUDE.md`, and none
+in `README.md`. The sharpest is the roles table in
+`docs/security/threat-model.md`, whose role is literally named **Operator** and
 defined as "Whoever writes the proxy configuration and holds the KEK
 material", with the access column reading "Everything. The operator chooses
 the KEK and the backend" — once a program called the operator writes the proxy
 configuration and holds Secrets of key material, that row does not become
 ambiguous, it becomes true of the wrong subject, and it is the row the
 existing Done-when box at lines 412-413 wants the new program's privileges
-written into. Three more flip outright: `SECURITY_ARCHITECTURE.md:727` and
-`:734` restate the network-boundary rule as the operator's own, `:1013` says
-"a Secret the operator manages", and `:1002` describes an operator rotating a
+written into. Three more flip outright: *What is not verified* in
+`docs/security/request-authentication.md` restates the network-boundary rule as
+the operator's own, and *A configuration change has to reach the pods* in
+`docs/security/operational-security.md` says "a Secret the operator manages" and
+describes an operator rotating a
 provider alias and key material. The documentation home is named for that
 reader (`docs/operations/README.md:1-3`) and so are the contributor
 instructions (`CLAUDE.md:47`, `:135`, `:583`). One ADR already uses both words
@@ -1792,7 +1798,8 @@ rather than behaviour it inherits.** Verified:
 `deploy/helm/s3-encryption-proxy/templates/deployment.yaml:24-30` hashes the
 rendered ConfigMap and the rendered Secret, and the comment at `:27-29` says
 in as many words that an externally managed one "stays invisible here";
-`SECURITY_ARCHITECTURE.md:1007-1014` records the same closure and its
+*A configuration change has to reach the pods* in
+`docs/security/operational-security.md` records the same closure and its
 remaining gap — "a Secret the operator manages themselves: the chart cannot
 hash what it does not render" — and `templates/secret.yaml:18-19` renders
 `license.jwt` only under `.Values.license.jwt`, so the
@@ -1891,7 +1898,7 @@ decision did *not* settle is the part a later reader gets wrong.
    item 3). It is
    also the most useful thing an operator could do on day one — and it is a
    privilege escalation of the product's footprint, so it belongs in
-   `SECURITY_ARCHITECTURE.md` before it belongs in code.
+   `docs/security/tenancy-and-privilege.md` before it belongs in code.
 6. **Where does instance status come from?** Today: nothing but metrics, off by
    default, on an unauthenticated listener whose content is itself a decision
    (ADR 0030 D2/D4). A status endpoint is additive to the configuration, but what
@@ -2068,7 +2075,7 @@ decision did *not* settle is the part a later reader gets wrong.
     end-to-end preflight asserts the label**, which is a claim about the
     environment rather than a control, and a preflight that runs only in the
     suite says nothing about a real install; **nothing, with
-    `SECURITY_ARCHITECTURE.md`'s privilege footprint stating plainly that
+    the privilege footprint in `docs/security/tenancy-and-privilege.md` stating plainly that
     installing s3eo is a node-level-code-execution grant**, which is the
     honest and cheapest option and means s3eo cannot be recommended where
     namespace tenants are part of the threat model; **the resource carries no
@@ -2228,7 +2235,7 @@ decision did *not* settle is the part a later reader gets wrong.
     changed while its pod restarts. **One of the five is smaller than it
     looks.** A licence renewal under D-C rewrites N copies cheaply and then
     does nothing at all to any running pod: the chart's checksum covers only
-    what the chart renders, and `SECURITY_ARCHITECTURE.md:1007-1014` says the
+    what the chart renders, and `docs/security/operational-security.md` says the
     same in its own words; the token is read once at startup
     (`internal/config/config.go:378`) and the monitor compares an
     already-parsed expiry (`internal/license/validator.go:193-194`). So
@@ -2575,7 +2582,7 @@ decision did *not* settle is the part a later reader gets wrong.
 38. **Which word does each reader get?** A program named the operator and a
     human called the operator share one word across 265 counted occurrences,
     and the collision is not cosmetic in the one place it matters: the
-    trust-boundary table at `SECURITY_ARCHITECTURE.md:89` defines a role of
+    trust-boundary table in `docs/security/threat-model.md` defines a role of
     that name as whoever writes the proxy configuration and holds the KEK
     material, which is a description of what the program would do (finding
     AI). The candidates: **keep "operator" for the human and give the program
@@ -2628,8 +2635,8 @@ decision did *not* settle is the part a later reader gets wrong.
 - **The operator's own reach is not the Custom Resource's reach.** "No
   cross-namespace references" constrains what a resource's author can name;
   the controller's ClusterRole is a second and wider boundary.
-  `SECURITY_ARCHITECTURE.md` section 2 carries **neither** entry today — the
-  roles table at `:85` lists the human operator, the S3 client, the proxy
+  `docs/security/threat-model.md` carries **neither** entry today — its
+  *Roles* table lists the human operator, the S3 client, the proxy
   process, the S3 backend and the two network legs — so both have to be added
   as separate rows rather than one, and nothing may be written that lets the
   first be mistaken for the second.
@@ -2677,7 +2684,7 @@ decision did *not* settle is the part a later reader gets wrong.
   mode (ADR 0016 D1); `exit` is the one provider type admitted without one
   (ADR 0025 D2), and it writes plaintext.
 - **A Custom Resource may not be described as a tenancy boundary while nothing
-  enforces one.** `SECURITY_ARCHITECTURE.md:90` states outright that there is
+  enforces one.** *Roles* in `docs/security/threat-model.md` states outright that there is
   no per-client bucket or prefix scoping, and `ListBuckets` is forwarded
   unfiltered (`internal/proxy/handlers/root/handler.go:66-101`). Whether to
   build the scope is existing question 12; what may be claimed while it is
@@ -2710,8 +2717,9 @@ decision did *not* settle is the part a later reader gets wrong.
   the reachable Secret types; the type clause in particular is what keeps
   `create secrets` in every namespace from being a service-account token in
   every namespace. Adding a third shape, or a type exception, widens the bound
-  and is a deliberate act with its own line in `SECURITY_ARCHITECTURE.md`,
-  never a side effect of a feature needing somewhere to put a value.
+  and is a deliberate act with its own line in
+  `docs/security/key-management.md`, never a side effect of a feature needing
+  somewhere to put a value.
 - **The policy's owner clause is group-pinned and version-agnostic.** An
   `ownerReference` keeps the `apiVersion` its writer used, so pinning the
   clause to one version means the operator silently loses the ability to
@@ -2768,8 +2776,8 @@ decision did *not* settle is the part a later reader gets wrong.
 - [ ] The backend question (one per instance or several per process) is answered,
       and the configuration consequence is taken in a major or explicitly deferred.
 - [ ] The licence distribution model is written down, `k8s_cluster_id` included.
-- [ ] The operator's Kubernetes privileges are in `SECURITY_ARCHITECTURE.md` as a
-      trust boundary before any code exists.
+- [ ] The operator's Kubernetes privileges are in
+      `docs/security/threat-model.md` as a trust boundary before any code exists.
 - [ ] Replica-versus-instance is answered against the process-local multipart session.
 - [ ] The restart policy is decided: whether the operator may roll a running
       instance on its own, and what is owed to the uploads it ends.
@@ -2791,21 +2799,21 @@ decision did *not* settle is the part a later reader gets wrong.
       fact that it constrains the resource's author and not the controller.
 - [ ] Reading a Secret that holds backend credentials and writing the proxy's
       own client credentials back as a Secret are each in
-      `SECURITY_ARCHITECTURE.md` as a privilege with its blast radius, before
-      any code exists.
+      `docs/security/tenancy-and-privilege.md` as a privilege with its blast
+      radius, before any code exists.
 - [x] The ADR numbering is settled: 0036 went to the high-availability work
       and 0037 to the backend-trust work, both on 2026-09-18, so the two ADRs
       owed here start at 0038 — re-checked against `docs/adr/` before use.
-- [ ] The word the trust-boundary table uses for the human is decided, and
-      `SECURITY_ARCHITECTURE.md:89` either carries the program as a second
-      role or renames the first.
+- [ ] The word the trust-boundary table uses for the human is decided, and the
+      *Roles* table in `docs/security/threat-model.md` either carries the
+      program as a second role or renames the first.
 - [ ] cert-manager in the kind end-to-end setup is recorded, and ADR 0026's
       stated gap — the cert-manager arm ships with a render test and no run —
       is amended or closed in the same change.
 - [ ] What the operator's ServiceAccount may hold cluster-wide is decided per
       verb and per resource, `secrets`, `configmaps` and `deployments`
-      included, and written into `SECURITY_ARCHITECTURE.md` rather than only
-      into a ClusterRole.
+      included, and written into `docs/security/tenancy-and-privilege.md`
+      rather than only into a ClusterRole.
 - [ ] Where a provisioned instance's licence comes from is decided, and the
       end-to-end bring-up's one-Secret assumption is either generalised or
       recorded as a limit of the suite.
@@ -2852,8 +2860,9 @@ decision did *not* settle is the part a later reader gets wrong.
       `blockOwnerDeletion: false` is set deliberately, and which one, with the
       reason, is recorded (finding AK).
 - [ ] The unbounded cluster-wide Secret read and the forged-`ownerReference`
-      weakness are each in `SECURITY_ARCHITECTURE.md` as an accepted residual
-      risk with its mitigation named, before any code exists.
+      weakness are each an accepted gap in the closing section of the
+      `docs/security/` page that owns the mechanism, with its mitigation named,
+      before any code exists.
 - [ ] Whether the commercial terms permit one token across many namespaces is
       answered by a named owner and recorded at the top of the licence ADR as
       a blocking item; what a refusal does to D-C is decided by the owner at

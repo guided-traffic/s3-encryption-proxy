@@ -214,5 +214,5 @@ upon. The prefix was documented as a namespace and enforced as nothing.
 - [README.md](../../README.md) — the `encryption.metadata_key_prefix` key reference
 - [docs/operations/integrity.md](../operations/integrity.md) — the four metadata keys as a client meets
   them, and what an invalid prefix used to do
-- [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — what is written into object
+- [docs/security/stored-objects.md](../security/stored-objects.md) — what is written into object
   metadata, what is never written, and what is filtered out of client responses

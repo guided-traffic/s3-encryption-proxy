@@ -181,7 +181,7 @@ body, which is what the marker inspection above judges.
 | A decision — what the product does and why, what was rejected | an [ADR](docs/adr/), carrying no references into the code |
 | How a subsystem works, an invariant, a hard-won detail | [docs/developer/](docs/developer/) |
 | What an operator or a client needs | [docs/operations/](docs/operations/); the configuration **key reference** itself stays in [README.md](README.md) |
-| The threat model and residual risks | [SECURITY_ARCHITECTURE.md](SECURITY_ARCHITECTURE.md) |
+| The threat model and the gaps | [docs/security/](docs/security/), one page per perspective |
 
 The README is the product's front page and carries nothing else
 ([ADR 0035](docs/adr/0035-the-readme-advertises-the-reference-lives-under-docs.md)).
@@ -223,7 +223,7 @@ The repository layout, the core flows and the extension checklists are
   [0021](docs/adr/0021-key-material-is-generated-never-committed.md))
 - Do not report a vulnerability in a public issue or a pull request. Use the
   private route in
-  [SECURITY_ARCHITECTURE.md § Reporting a vulnerability](SECURITY_ARCHITECTURE.md#9-reporting-a-vulnerability)
+  [SECURITY.md](SECURITY.md)
 
 ## Debugging
 

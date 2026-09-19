@@ -86,7 +86,7 @@ untouched and was already per backend.
 | 2 | `backend_endpoint` on the error writer | Not needed — the observer's line carries `host` |
 | 3 | How many failure classes | The five that exist; no second vocabulary |
 | 4 | A counter for stream faults | No new counter; `s3ep_backend_transport_failures_total` is the one |
-| 5 | A hardening item | Neither opened nor closed; §6.6 gains the alternative |
+| 5 | A hardening item | Neither opened nor closed; *Transport* in `docs/security/threat-model.md` gains the alternative |
 | 6 | A fifth config example | No — the demo stack's two examples become it |
 | 7 | `ca_file` together with `insecure_skip_verify: true` | Refuse the start, naming both keys |
 | 8 | The key's name and form | `ca_file`, exactly one PEM file, which may hold several certificates |
@@ -164,7 +164,7 @@ untouched and was already per backend.
    response body.
 9. **`README.md`** — one sentence beside `insecure_skip_verify` pointing at the
    developer section, plus the new key in the configuration block (item 2).
-10. **`SECURITY_ARCHITECTURE.md` §6.6 *Transport*** — the paragraph that tells an
+10. **`docs/security/threat-model.md`, *Transport*** — the paragraph that tells an
     operator not to use `insecure_skip_verify` outside development names no
     alternative. One sentence pointing at the new section. No hardening item is
     opened or closed (decision 5).

@@ -215,7 +215,8 @@ it.
 
 **Closes:** P-10 (all six sub-items), the two unbuilt parts of the e2e health
 check (items 8 and 9), and the e2e half of N-4 (item 10) — its operator half is
-already closed in the README and in `SECURITY_ARCHITECTURE.md` H-4. Gitignoring
+already closed in the README and in H-4 of the security design (now
+`docs/security/operational-security.md`). Gitignoring
 the test keys touches neighbouring files but is separate work
 ([ADR 0021](../../adr/0021-key-material-is-generated-never-committed.md)).
 
@@ -844,7 +845,7 @@ pass.
 The N-4 finding of 2026-09-06 had two halves. The operator half landed: the
 README carries the warning and the command
 ([README.md:861-888](../../../README.md#L861)), and
-[SECURITY_ARCHITECTURE.md H-4](../../../SECURITY_ARCHITECTURE.md#h-4-velero-kopia-repositories-default-to-a-published-password)
+[H-4](../../security/operational-security.md#h-4-velero-kopia-repositories-default-to-a-published-password)
 states why a strong repository password is what makes kopia a second layer
 rather than a decoration. The suite half — *set one in the e2e, so the suite
 runs the configuration the README tells operators to run* — was never built.
@@ -1112,7 +1113,8 @@ that fails without it, and the e2e still passes with the workarounds gone".
    correct outcome (the alternative is continuing to encrypt under a public key),
    and CLAUDE.md wants no backward compatibility. History: the removal shipped
    in v3.8.56 (PR #330) as a plain fix, so there are no 5.0.0 release notes
-   to carry it; `SECURITY_ARCHITECTURE.md` section 7.4 is where the warning about
+   to carry it; `docs/security/operational-security.md`, *A published chart
+   default that was a working key*, is where the warning about
    objects encrypted under the published default lives. Work item 6 is the second
    change of this shape in the same file and has no release note yet either.
 7. **Helm version coverage is partly resolved.** All five values files were

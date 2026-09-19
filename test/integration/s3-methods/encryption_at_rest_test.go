@@ -915,7 +915,7 @@ func TestEncOverwriteReencrypts(t *testing.T) {
 // TestEncTamperedCiphertextIsRejected is the other half of "encrypted at rest":
 // storing ciphertext is only worth something if the proxy notices when the
 // backend hands back different ciphertext. The threat model in
-// SECURITY_ARCHITECTURE.md treats the backend as hostile, so this flips one byte
+// docs/security/threat-model.md treats the backend as hostile, so this flips one byte
 // of the stored body behind the proxy's back and asserts the plaintext is never
 // delivered.
 //

@@ -32,7 +32,7 @@ the operator-facing half is in `README.md`.
 The decisions behind every item live in
 [ADR 0013](../../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md) and
 [ADR 0014](../../adr/0014-authentication-is-sigv4-no-rate-limiting.md); the standing
-gap is `SECURITY_ARCHITECTURE.md` §8, H-10. This ticket is the work list, nothing
+gap is H-10 of the security design. This ticket is the work list, nothing
 else. Every anchor below was read in the tree at `6eea6c3`.
 
 ---
@@ -43,7 +43,7 @@ else. Every anchor below was read in the tree at `6eea6c3`.
 |---|---|---|
 | **1** — delete `SecurityMetrics`, the failed-attempt map, `getClientIP`, the brute-force branch | dead-code round 2026-09-10 | `grep -rn SecurityMetrics internal/ cmd/ pkg/` is empty. `logSecurityEvent` ([s3auth_robust.go:409-419](../../../internal/proxy/middleware/s3auth_robust.go#L409-L419)) logs `remote_addr` and `x_forwarded_for` as two raw fields, exactly as ADR 0013 D2 specifies. The three remaining `SecurityMetrics` hits are the Prometheus subtest name in [auth_test.go:143-144, 430](../../../test/integration/authentication/auth_test.go#L143), which is what the success criterion always allowed |
 | **3** — delete the six dead `s3_security` keys, `GetS3SecurityConfig`, plus `streaming_buffer_size` and `enable_adaptive_buffering` | same | `S3SecurityConfig` ([config.go:64-68](../../../internal/config/config.go#L64-L68)) carries `MaxClockSkewSeconds` and nothing else; `validateS3Security` ([config.go:717-729](../../../internal/config/config.go#L717-L729)) checks only that one. `OptimizationsConfig` ([config.go:70-94](../../../internal/config/config.go#L70-L94)) has no buffer or threshold field. `GetStreamingBufferSize`, `GetStreamingThreshold`, `GetS3SecurityConfig`, `GetProviderByAlias`, `GetProviderConfig`, `ValidateS3ClientCredentials`, `IsS3ClientAuthEnabled` all have zero hits |
-| **7** — delete `use_tls` from both structs, both defaults, the migration and the `server.go` fallback; rewrite the misleading comment | same | `grep -rn "use_tls\|UseTLS" internal/ cmd/ pkg/ config/ deploy/ test/` is empty. `migrateLegacyConfig` is gone with the whole legacy block. `backendClientOptions` ([server.go:130-171](../../../internal/proxy/server.go#L130-L171)) reads `TargetEndpoint` and `InsecureSkipVerify` only; the transport is `o.BaseEndpoint` at [server.go:153](../../../internal/proxy/server.go#L153). `SECURITY_ARCHITECTURE.md` §6.6 states it |
+| **7** — delete `use_tls` from both structs, both defaults, the migration and the `server.go` fallback; rewrite the misleading comment | same | `grep -rn "use_tls\|UseTLS" internal/ cmd/ pkg/ config/ deploy/ test/` is empty. `migrateLegacyConfig` is gone with the whole legacy block. `backendClientOptions` ([server.go:130-171](../../../internal/proxy/server.go#L130-L171)) reads `TargetEndpoint` and `InsecureSkipVerify` only; the transport is `o.BaseEndpoint` at [server.go:153](../../../internal/proxy/server.go#L153). The security design (*Transport*, now `docs/security/threat-model.md`) states it |
 | **8**, deletion half — strip the dead keys from every config surface | same | Nothing left in `config/*.yaml`, `deploy/helm/…/values-production.yaml` or `test/e2e/velero/values-proxy.yaml`, the four-line D-5 comment in the latter included. There are **four** example configs: `config/rsa-example.yaml` went with the `rsa` provider (`2fa4b9c`), and `config/none-example.yaml` is now `config/exit-example.yaml` (`0ccface`). `config/multi-example.yaml` also lost a top-level `streaming.segment_size` block no code ever read |
 | **12** — pprof on its own loopback listener | 2026-09-07 | `monitoring.pprof_bind_address` with `requireLoopbackAddress` ([config.go:328-357](../../../internal/config/config.go#L328-L357)); ADR 0013 D8 |
 | **13** — validate `metadata_key_prefix` at startup | 2026-09-07 | `metadataKeyPrefixPattern` = `^[a-z0-9-]+$` ([config.go:490](../../../internal/config/config.go#L490)), checked first in `validateEncryption` ([config.go:501-508](../../../internal/config/config.go#L501-L508)). Item **14** below still changes the pattern |
@@ -118,7 +118,7 @@ Ordered so each item compiles and tests green on its own.
       pre-signed section leads with the one-hour default and names the seven-day
       maximum as the ceiling rather than the rule; and the upgrade notes carry the
       clock-skew change as the one item here that can break a healthy deployment.
-      `SECURITY_ARCHITECTURE.md`: §6.3 rewritten around one window governing both
+      The security design (now `docs/security/request-authentication.md`): §6.3 rewritten around one window governing both
       forms, and H-10 closed with the three rows recording what each change does
       to an existing configuration. `CLAUDE.md`'s configuration reference carries
       the new keys and the note that it is now the authoritative list, because a
@@ -230,8 +230,9 @@ ADR rather than here.
   block the ticket: the refusal for encrypting providers is the security-relevant
   half and is unaffected.
 - **`X-Forwarded-For` stays in the logs** ([s3auth_robust.go:409-419](../../../internal/proxy/middleware/s3auth_robust.go#L409-L419)).
-  Accepted: it is a log field, not a key or a decision input. `SECURITY_ARCHITECTURE.md`
-  §4.2 ([:443](../../../SECURITY_ARCHITECTURE.md#L443)) already says so and should keep
+  Accepted: it is a log field, not a key or a decision input. *What it does not
+  give you* in [docs/security/tenancy-and-privilege.md](../../security/tenancy-and-privilege.md#what-it-does-not-give-you)
+  (then §4.2) already says so and should keep
   saying it, so the next reader does not mistake it for a trusted client identity.
 - **Nothing prevents the next dead knob.** ErrorUnused (item 15) does not help: a
   field that is declared and never read passes it, and so does one whose reader

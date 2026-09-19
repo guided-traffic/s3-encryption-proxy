@@ -50,7 +50,7 @@ type, `handlers/bucket/listing.go` for the stored-to-plaintext conversion.
 | Path | Responsibility |
 |---|---|
 | `server.go`, `router.go`, `middleware_setup.go` | Listener, routes, middleware chain. `Server.Shutdown` is what stops the manager's background sweep |
-| `middleware/` | SigV4 in both forms (header and pre-signed), CORS, logging, request tracking, and the authenticated access key id it puts in the request context for the handlers that report an owner. What the signature check does *not* cover is in [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) |
+| `middleware/` | SigV4 in both forms (header and pre-signed), CORS, logging, request tracking, and the authenticated access key id it puts in the request context for the handlers that report an owner. What the signature check does *not* cover is in [docs/security/request-authentication.md](../security/request-authentication.md) |
 | `request/` | Request parsing, aws-chunked body decoding, upload checksum verification, query parameters, and the `x-amz-expected-bucket-owner` guard every backend call carries on the verbs S3 defines it for ([ADR 0007](../adr/0007-forward-it-or-refuse-it.md) D14) |
 | `response/` | S3 error documents, backend error mapping, XML helpers. See [errors.md](errors.md) |
 | `utils/` | One file: the detached, 30-second context that lets a multipart abort finish after the client is gone |

@@ -405,5 +405,5 @@ belongs to ADR 0014. Checksum verification buys most of the same practical benef
 - ADR 0020 — Performance is measured before and after, never asserted
 - [docs/operations/integrity.md](../operations/integrity.md) — every declared checksum is verified, and
   the measured cost per algorithm
-- [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — the client leg, what is verified on
-  it and what is not
+- [docs/security/upload-integrity.md](../security/upload-integrity.md) — the client leg, what is
+  verified on it and what is not

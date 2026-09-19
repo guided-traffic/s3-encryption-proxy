@@ -339,5 +339,6 @@ refusal says so honestly.
 * ADR 0020 — Performance is measured before and after, never asserted
 * [docs/operations/s3-api.md](../operations/s3-api.md) — the copy refusals and the multipart part sizes
 * [docs/operations/upgrading.md](../operations/upgrading.md) — the migration note for the major release
-* [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — why an operation refuses instead of
-  pretending, and what the backend is trusted with
+* [docs/security/refusals.md](../security/refusals.md) — why an operation refuses instead of
+  pretending; [docs/security/threat-model.md](../security/threat-model.md) — what the backend is
+  trusted with

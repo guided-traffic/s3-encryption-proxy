@@ -227,4 +227,4 @@ documented configuration that nothing here runs.
 - ADR 0025 — Leaving is a supported mode
 - [README.md](../../README.md) — the product's front page and the supported clients
 - [docs/operations/clients/](../operations/clients/) — the settings each supported client needs, and the documented limits
-- [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — threat model, trust boundaries, residual risks
+- [docs/security/](../security/) — threat model, trust boundaries, and the gaps each page names

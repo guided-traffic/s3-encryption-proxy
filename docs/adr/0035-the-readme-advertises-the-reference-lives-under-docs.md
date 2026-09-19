@@ -2,13 +2,17 @@
 
 ## Status
 
-Accepted. Date: 2026-09-15.
+Accepted. Date: 2026-09-15. **Amended 2026-09-19: D5 is superseded by
+[ADR 0038](0038-the-security-architecture-is-one-page-per-perspective.md)**, which
+decomposes the security design into one page per perspective under `docs/security/` and
+deletes both the root document and the page of closed hardening items. Every other rule of
+this record stands.
 
 **Implemented in the change that wrote this record.** The README went from 2075 lines to
 about 550, `docs/operations/` was created with eight pages, and the eight closed items of
-the hardening checklist moved to `docs/security/hardening-history.md`. What is *not* done
-is the knowledge graph under `graphify-out/`, which is rebuilt by a separate, user-approved
-run and does not know about the new directories.
+the hardening checklist moved to a page of their own under `docs/security/`. What is *not*
+done is the knowledge graph under `graphify-out/`, which is rebuilt by a separate,
+user-approved run and does not know about the new directories.
 
 ## Context
 
@@ -35,7 +39,7 @@ metric table. Neither audience is served by the page being one page.
 
 The project already had three homes for durable material and a rule for choosing between
 them: a decision goes in an ADR, a subsystem goes in `docs/developer/`, the threat model
-goes in `SECURITY_ARCHITECTURE.md`. Operator and client reference had no home of its own —
+goes in the security design at the root. Operator and client reference had no home of its own —
 the rule sent it to the README — so everything that was neither a decision, nor a
 subsystem, nor a threat landed there by default. The README was not chosen as the place for
 this material; it was the only place left.
@@ -45,7 +49,8 @@ answer. Twenty-four of the thirty-four ADRs cite it, several by section number, 
 `CONTRIBUTING.md` and the chart README. Moving a section out of it moves an anchor that
 something else names. What is genuinely separable there is its history: eight of the eleven
 hardening items are closed, and they account for roughly three hundred lines that describe
-defects the product no longer has.
+defects the product no longer has. (The "several by section number" was never counted. When
+it was, in 2026-09, it was six — see ADR 0038.)
 
 ## Decision
 
@@ -72,10 +77,14 @@ client adds a page; it never adds a section to another client's page. This is th
 the end-to-end suites already follow — one tool, one suite, one job — for the same reason:
 what is broken should be named by where it is, not found by reading.
 
-**D5 — The security design stays at the repository root.** `SECURITY_ARCHITECTURE.md` is not
-decomposed. Its closed hardening items move to `docs/security/hardening-history.md`, which is
-history and states no current rule; everything a reader might cite by section number stays
-where it is.
+**D5 — The security design stays at the repository root.** ~~`SECURITY_ARCHITECTURE.md` is
+not decomposed. Its closed hardening items move to a history page under `docs/security/`,
+which states no current rule; everything a reader might cite by section number stays where
+it is.~~ **Superseded 2026-09-19 by
+[ADR 0038](0038-the-security-architecture-is-one-page-per-perspective.md).** The security
+design is a directory of one page per perspective, the history page is gone, and a security
+page is cited by heading rather than by section number. The citation cost this rule was
+protecting was measured before the split: six anchors, not twenty-four documents.
 
 **D6 — The README links, it does not explain.** When a paragraph in the README starts
 explaining a mechanism, the explanation belongs in the page the paragraph links to. The
@@ -84,8 +93,8 @@ and at ADRs — not into the source tree.
 
 **D7 — Five homes, and a durable statement goes to exactly one.** A decision goes to an ADR.
 A subsystem's invariants go to `docs/developer/`. What an operator or a client needs goes to
-`docs/operations/`. The threat model and the residual risks go to `SECURITY_ARCHITECTURE.md`.
-Outstanding work goes to a ticket. The README carries the product's front page and the
+`docs/operations/`. The threat model and the residual risks go to `docs/security/` (ADR 0038;
+this record wrote `SECURITY_ARCHITECTURE.md` here). Outstanding work goes to a ticket. The README carries the product's front page and the
 configuration key reference, and points at the rest.
 
 ## Consequences
@@ -104,7 +113,8 @@ configuration key reference, and points at the rest.
   documents name, because an emoji heading's generated anchor is neither stable nor guessable.
   Four anchors carry that weight today.
 - **`SECURITY_ARCHITECTURE.md` lost three hundred lines and no anchor.** Every section number
-  an ADR cites is still in the file it was in.
+  an ADR cited was still in the file it was in — until ADR 0038 replaced the file with a
+  directory and retargeted every citation.
 - **The knowledge graph and the marketing site are behind.** `graphify-out/` was built before
   this change and its articles name a documentation layout that no longer exists; the site
   repository carries its own hand-maintained copies of some of this prose and is not touched
@@ -127,11 +137,12 @@ table should not have to decide whether they are a contributor first.
 same page with a different name, without the property that makes the split worth anything: that a
 question has an address.
 
-**Split `SECURITY_ARCHITECTURE.md` the same way.** Rejected. Twenty-four ADRs cite it, several by
-section number, along with `CONTRIBUTING.md` and the chart README. Splitting it means editing
-those citations, and a mis-edited citation in an ADR is worse than a long page: it points a reader
-at a rule that is not where it says it is. Only the closed history moved, and it carries no
-anchor anything else names.
+**Split `SECURITY_ARCHITECTURE.md` the same way.** Rejected here, **and taken in ADR 0038 on
+2026-09-19.** The reason given at the time: twenty-four ADRs cite it, several by section number,
+along with `CONTRIBUTING.md` and the chart README, so splitting means editing those citations,
+and a mis-edited citation in an ADR is worse than a long page. What was not done was counting
+"several": six references named an anchor, and the rest were see-also links. The estimate, not
+the reasoning, is what kept the document whole for four days.
 
 **Per-client sections on one `clients.md`.** Rejected for the reason D4 gives: a third client
 would be a third section on a page that is already two subjects long, and the page's name would
@@ -164,5 +175,5 @@ stop predicting its content.
   reference has to have exactly one home
 * [README.md](../../README.md) — the front page this decision defines
 * [docs/operations/README.md](../operations/README.md) — the index of the new home
-* [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — the document that was deliberately
-  not decomposed
+* [docs/security/](../security/) — the security design, decomposed by
+  [ADR 0038](0038-the-security-architecture-is-one-page-per-perspective.md)

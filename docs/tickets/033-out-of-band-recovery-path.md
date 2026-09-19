@@ -54,7 +54,8 @@ every other segment still opens and verifies.
   refusal plus a damage report, or both behind a flag.
 - How the operator states consent, and how the run is made auditable.
 - Whether it reads the configuration or takes the key on its own terms.
-- What `SECURITY_ARCHITECTURE.md` has to say about a tool that deliberately
-  serves unauthenticated bytes, and which residual risk it opens.
+- What `docs/security/tenancy-and-privilege.md` has to say about a tool that
+  deliberately serves unauthenticated bytes, and in which page's closing section
+  the gap it opens belongs.
 - Whether the decision — recovery is possible, out of band, never in the proxy —
   is an ADR of its own or an amendment to the record that owns the stored format.

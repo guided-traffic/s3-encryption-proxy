@@ -176,5 +176,5 @@ which is why the default is not flipped.
 > `encryption.provider_type` is the reason this document is not on the S3
 > listener. An `exit` provider means the backend holds plaintext, and that must
 > not be readable without a signature — see
-> [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md).
+> [docs/security/request-authentication.md](../security/request-authentication.md).
 

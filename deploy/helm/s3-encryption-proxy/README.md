@@ -746,7 +746,9 @@ renders all three override files plus the Velero e2e values on every run.
    deployment layer can.
 
 The threat model behind these points is in
-[SECURITY_ARCHITECTURE.md](../../../SECURITY_ARCHITECTURE.md).
+[docs/security/threat-model.md](../../../docs/security/threat-model.md), and the
+deployment side of it is
+[docs/security/operational-security.md](../../../docs/security/operational-security.md).
 
 ## Known limitations
 

@@ -290,5 +290,5 @@ shipped binary accepts, which makes it a stronger credential than any token it w
 - [README.md](../../README.md) — key generation and the demo bring-up steps
 - [docs/operations/configuration.md](../operations/configuration.md) — the `${VAR}` references and the
   variables the shipped image reads.
-- [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — the published chart default,
-  and what an operator does if a deployment ran under it.
+- [docs/security/operational-security.md](../security/operational-security.md) — the published
+  chart default, and what an operator does if a deployment ran under it.

@@ -387,4 +387,4 @@ instead; the blanket form remains available as a decision of its own.
 * ADR 0013 — A configuration key exists only if code reads it, and an unworkable configuration refuses to start
 * [docs/operations/s3-api.md](../operations/s3-api.md) — the refusals, request ids, versioned buckets
 * [docs/operations/integrity.md](../operations/integrity.md) — the checksums and the entity tag
-* [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — threat model and trust boundaries
+* [docs/security/threat-model.md](../security/threat-model.md) — threat model and trust boundaries

@@ -9,7 +9,8 @@ the session's owner decides when that is.
 Before the change the same client could take the process down — the cap was per
 session, so N sessions held N × 64 MB and the container went OOM — and the global
 budget is strictly better for the process. What is new is the effect on **other
-clients**, and it is recorded nowhere: section 4.2 of `SECURITY_ARCHITECTURE.md`
+clients**, and it is recorded nowhere: *What it does not give you* in the
+security design (now `docs/security/tenancy-and-privilege.md`)
 lists the ways clients on one proxy share a blast radius and this one is missing,
 section 8 has no H- entry for it, and ADR 0011 describes the two answers without
 their cross-client consequence.
@@ -54,7 +55,7 @@ README already describes the key as what all open uploads hold together.
 
 ## Where it stands against the recorded decisions
 
-- **`SECURITY_ARCHITECTURE.md` 4.2** already says: *"Every authenticated client
+- **The security design, *What it does not give you*,** already says: *"Every authenticated client
   can do everything any other authenticated client can do … share one blast
   radius. If tenant separation is required, run one proxy per tenant."* This is a
   new instance of that statement, not a new class. It has to be listed there
@@ -109,10 +110,11 @@ because B is the first mechanism that separates clients at all.
 ## Work
 
 - [ ] Decide A or B
-- [ ] `SECURITY_ARCHITECTURE.md` section 8: a new open `### H-12` after H-4, in
-      the shape of the other entries — what it is, who can do it, what it costs
+- [ ] A new open `### H-12` in the security design — since 2026-09-19 that is
+      the closing section of the `docs/security/` page whose mechanism has the
+      gap — in the shape of the other entries — what it is, who can do it, what it costs
       the others, the levers and what each one does not do
-- [ ] `SECURITY_ARCHITECTURE.md` section 4.2: one bullet beside the other
+- [ ] `docs/security/tenancy-and-privilege.md`, *What it does not give you*: one bullet beside the other
       shared-blast-radius items, pointing at H-12
 - [ ] ADR 0011: one sentence in the status block or the consequences — a global
       budget is a shared budget, and holding it is a lever one client has over

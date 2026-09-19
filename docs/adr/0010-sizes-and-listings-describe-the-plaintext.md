@@ -269,5 +269,6 @@ unchanged.
 - [docs/operations/s3-api.md](../operations/s3-api.md) — the listing reference: reported sizes, forwarded
   parameters, the `max-keys` rule, the mixed-bucket under-report
 - [docs/operations/integrity.md](../operations/integrity.md) — the entity-tag deviation
-- [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — the hostile-backend model and why no
-  checksum element is emitted
+- [docs/security/threat-model.md](../security/threat-model.md) — the hostile-backend model;
+  [docs/security/stored-objects.md](../security/stored-objects.md) — why no checksum element is
+  emitted

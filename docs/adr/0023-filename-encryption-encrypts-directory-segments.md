@@ -374,4 +374,4 @@ key-free, so a later implementation of those bodies does not inherit a wrong ans
 * ADR 0021 — Key material and licenses are generated, never committed
 * ADR 0025 — Leaving is a supported mode
 * [README.md](../../README.md) — records today that object key names are stored in the clear and that encrypting them is specified and not implemented. The `encryption.filename_encryption` reference, the client-key-to-stored-key naming table, the residual leak, the delimiter restriction and the key-length limit are owed when the feature lands (2026-09-12)
-* [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — what the backend learns anyway, where key names are out of scope until this lands. Why the name key must be backed up like the key encryption key is owed with the feature (2026-09-12)
+* [docs/security/stored-objects.md](../security/stored-objects.md) — what the backend learns anyway, where key names are out of scope until this lands. Why the name key must be backed up like the key encryption key is owed with the feature (2026-09-12)

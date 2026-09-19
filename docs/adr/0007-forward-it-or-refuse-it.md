@@ -456,6 +456,7 @@ a silent drop. That asymmetry, not policy, is what earns the refusal.
 - [docs/operations/s3-api.md](../operations/s3-api.md) — the operations the proxy refuses, sub-resource by
   sub-resource, and the versioning behaviour a client sees today
 - [docs/operations/integrity.md](../operations/integrity.md) — the checksum behaviour
-- [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — what the backend learns
-  anyway, the handlers that refuse rather than pretend, and the trust boundary the
-  forwarding decision is measured against
+- [docs/security/stored-objects.md](../security/stored-objects.md) — what the backend learns
+  anyway; [docs/security/refusals.md](../security/refusals.md) — the handlers that refuse rather
+  than pretend; [docs/security/threat-model.md](../security/threat-model.md) — the trust boundary
+  the forwarding decision is measured against

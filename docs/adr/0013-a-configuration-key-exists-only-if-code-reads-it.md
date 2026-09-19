@@ -603,4 +603,4 @@ of that feature that breaks anything, and a major release is where a break is pa
   what an encrypting provider wrote
 - ADR 0028 — An abandoned upload expires on inactivity, not on age
 - [README.md](../../README.md) — the configuration reference an operator works from
-- [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — the threat model rule this decision applies, and the hardening checklist entry for the dead keys
+- [docs/security/threat-model.md](../security/threat-model.md) — the threat model rule this decision applies, and where rule 2 came from

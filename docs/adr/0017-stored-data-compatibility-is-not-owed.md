@@ -318,6 +318,7 @@ stored data unreadable is the definition of a major.
 - [docs/operations/upgrading.md](../operations/upgrading.md) — the operator-facing upgrade guide: which
   release lines stop being readable, which configuration keys are gone, and the meaning of the refusal
   an old object answers with.
-- [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — the threat model rule that
-  the stored format may change without a migration path, and key rotation as the same
+- [docs/security/threat-model.md](../security/threat-model.md) — the threat model rule that
+  the stored format may change without a migration path;
+  [docs/security/key-management.md](../security/key-management.md) — key rotation as the same
   re-upload story one layer down.

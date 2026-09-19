@@ -48,7 +48,7 @@ does carry. A CORS preflight is answered there too — no route declares `OPTION
 and mux runs a subrouter's middleware only after a route matched, so the CORS
 middleware would never see one. The monitoring middleware is separate: it wraps the whole
 router, and only when `monitoring.enabled`. What SigV4 does and does not verify
-is in [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md).
+is in [docs/security/request-authentication.md](../security/request-authentication.md).
 
 The tracking counter is what a graceful shutdown waits on
 ([ADR 0015](../adr/0015-a-transfer-is-bounded-by-the-client-and-by-shutdown.md));

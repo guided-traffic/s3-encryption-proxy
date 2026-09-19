@@ -452,7 +452,7 @@ is already terminating. It is work item 11.
    anything outside the process. 036 depends on these and a ticket is not a
    source of a rule (ADR 0022).
 10. **Documentation.** The chart README's probe rows,
-    [README.md](../../../README.md), [SECURITY_ARCHITECTURE.md](../../../SECURITY_ARCHITECTURE.md)
+    [README.md](../../../README.md), [docs/security/](../../security/)
     — the probe paragraph and the monitoring-listener paragraph both name
     `/health` — and [docs/developer/](../../developer/).
 11. **Measure the one unknown.** Whether kubelet acts on a liveness failure for a

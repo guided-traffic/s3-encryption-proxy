@@ -339,6 +339,6 @@ rule adds none.
 - ADR 0010 — Sizes and listings describe the plaintext
 - ADR 0017 — Stored data compatibility is not owed; a major release may break the format
 - ADR 0020 — Performance is measured before and after, never asserted
-- [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — key hierarchy, where each secret
-  lives, and rotation by fingerprint
+- [docs/security/key-management.md](../security/key-management.md) — key hierarchy, where each
+  secret lives, and rotation by fingerprint
 - [README.md](../../README.md) — provider configuration and the rotation procedure

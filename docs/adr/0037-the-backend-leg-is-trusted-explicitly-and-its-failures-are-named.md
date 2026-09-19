@@ -183,4 +183,4 @@ separate decision, and ADR 0034 D9 names the condition under which it reopens.
   listener is unauthenticated, which bounds what a label may hold
 * [ADR 0034](0034-a-probe-reports-the-process-never-its-dependencies.md) — dependency
   health is reported and never acted on; the counter pair is the alerting surface
-* [SECURITY_ARCHITECTURE.md](../../SECURITY_ARCHITECTURE.md) — §6.6 *Transport*
+* [docs/security/threat-model.md](../security/threat-model.md) — *Transport*
