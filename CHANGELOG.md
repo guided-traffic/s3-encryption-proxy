@@ -1,3 +1,43 @@
+## [5.1.3](https://github.com/guided-traffic/s3-encryption-proxy/compare/v5.1.2...v5.1.3) (2026-09-22)
+
+
+## 📊 Quality Metrics
+
+![Coverage](https://img.shields.io/badge/coverage-95.3%25-brightgreen)
+![Go Version](https://img.shields.io/github/go-mod/go-version/guided-traffic/s3-encryption-proxy?logo=go)
+![Security](https://img.shields.io/badge/security-✅%20passed-green)
+![Linting](https://img.shields.io/badge/linting-✅%20passed-green)
+
+**Test Coverage**: 95.3% of code is covered by tests
+
+
+### Bug Fixes
+
+* **deps:** Update dependency @semantic-release/github to v12.0.10 ([#357](https://github.com/guided-traffic/s3-encryption-proxy/issues/357)) ([4d15bc7](https://github.com/guided-traffic/s3-encryption-proxy/commit/4d15bc7e30a5fd4a591aa6f746eb2e2e7d777067))
+
+
+## 🐳 Docker Images
+
+This release is available as a Docker image:
+
+```bash
+# Latest version
+docker pull guidedtraffic/s3-encryption-proxy:latest
+
+# Specific version
+docker pull guidedtraffic/s3-encryption-proxy:5.1.3
+```
+
+**Supported platforms:** linux/amd64
+
+## 📥 Download Assets
+
+Pre-built binaries and coverage reports are attached to this release:
+- `s3-encryption-proxy-v5.1.3-linux-amd64` - Main proxy binary
+- `s3ep-keygen-v5.1.3-linux-amd64` - Key generation utility
+- `coverage-v5.1.3.out` - Coverage profile (Go format)
+- `coverage-v5.1.3.txt` - Coverage report (human readable)
+
 ## [5.1.2](https://github.com/guided-traffic/s3-encryption-proxy/compare/v5.1.1...v5.1.2) (2026-09-19)
 
 
