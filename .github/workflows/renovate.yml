@@ -29,13 +29,23 @@ jobs:
   renovate:
     runs-on: self-hosted
     steps:
+      # GitHub App installation token (guided-traffic-automation), scoped to this
+      # repository with all permissions of the app; expires after 1 h and is
+      # revoked at the end of the job. Renovate detects the app identity itself.
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - name: Checkout
         uses: actions/checkout@v7
 
       - name: Self-hosted Renovate
         uses: renovatebot/github-action@v46.3.3
         with:
-          token: ${{ secrets.BOT_PAT }}
+          token: ${{ steps.app-token.outputs.token }}
           configurationFile: renovate.json
         env:
           LOG_LEVEL: ${{ inputs.logLevel || 'info' }}

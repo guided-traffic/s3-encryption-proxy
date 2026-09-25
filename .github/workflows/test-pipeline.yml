@@ -1065,11 +1065,24 @@ jobs:
       pull-requests: write
       id-token: write
     steps:
+      # GitHub App installation token (guided-traffic-automation), scoped to this
+      # repository; expires after 1 h and is revoked at the end of the job. Not
+      # GITHUB_TOKEN: a release created with it would not start push.yml.
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write       # tag, release, assets, @semantic-release/git commit
+          permission-issues: write         # @semantic-release/github comments, released labels, fail issue
+          permission-pull-requests: write  # @semantic-release/github comments and labels on released PRs
+
       - name: Checkout
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          token: ${{ secrets.BOT_PAT }}
+          token: ${{ steps.app-token.outputs.token }}
 
       # Shared with the pull-request dry run so the two cannot drift: a dry run
       # that predicts a version this job does not cut is worse than none.
@@ -1111,7 +1124,7 @@ jobs:
         id: stamp
         continue-on-error: true
         env:
-          GITHUB_TOKEN: ${{ secrets.BOT_PAT }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           log=$(npx semantic-release --dry-run 2>&1) || true
           printf '%s\n' "$log"
@@ -1169,7 +1182,7 @@ jobs:
 
       - name: Semantic Release
         env:
-          GITHUB_TOKEN: ${{ secrets.BOT_PAT }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           # Read by release.config.mjs for the coverage line of the release notes.
           TEST_COVERAGE: ${{ needs.coverage-report.outputs.coverage }}
         run: npx semantic-release
