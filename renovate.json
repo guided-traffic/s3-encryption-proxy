@@ -21,7 +21,7 @@
   "prHourlyLimit": 0,
   "prConcurrentLimit": 0,
   "branchConcurrentLimit": 0,
-  "gitAuthor": "Renovate Bot <mail@s3ep.com>",
+  "gitAuthor": "guided-traffic-automation[bot] <333655627+guided-traffic-automation[bot]@users.noreply.github.com>",
   "forkProcessing": "disabled",
   "customManagers": [
     {
