@@ -1,3 +1,45 @@
+## [5.1.5](https://github.com/guided-traffic/s3-encryption-proxy/compare/v5.1.4...v5.1.5) (2026-10-07)
+
+
+## 📊 Quality Metrics
+
+![Coverage](https://img.shields.io/badge/coverage-95.3%25-brightgreen)
+![Go Version](https://img.shields.io/github/go-mod/go-version/guided-traffic/s3-encryption-proxy?logo=go)
+![Security](https://img.shields.io/badge/security-✅%20passed-green)
+![Linting](https://img.shields.io/badge/linting-✅%20passed-green)
+
+**Test Coverage**: 95.3% of code is covered by tests
+
+
+### Bug Fixes
+
+* **deps:** Update aws-sdk-go-v2 monorepo ([#358](https://github.com/guided-traffic/s3-encryption-proxy/issues/358)) ([a952a16](https://github.com/guided-traffic/s3-encryption-proxy/commit/a952a165d85dd4b3efae5a0f06d195f8f4856635))
+* **deps:** Update dependency helm-unittest/helm-unittest to v1.2.0 ([#361](https://github.com/guided-traffic/s3-encryption-proxy/issues/361)) ([f66d6a8](https://github.com/guided-traffic/s3-encryption-proxy/commit/f66d6a8ecf1d502728256388d8ae997354c08bd5))
+* **deps:** Update module github.com/aws/smithy-go to v1.28.4 ([#362](https://github.com/guided-traffic/s3-encryption-proxy/issues/362)) ([65f8a4c](https://github.com/guided-traffic/s3-encryption-proxy/commit/65f8a4c95e6673cb228b3fff3497bdfffaed8e02))
+
+
+## 🐳 Docker Images
+
+This release is available as a Docker image:
+
+```bash
+# Latest version
+docker pull guidedtraffic/s3-encryption-proxy:latest
+
+# Specific version
+docker pull guidedtraffic/s3-encryption-proxy:5.1.5
+```
+
+**Supported platforms:** linux/amd64
+
+## 📥 Download Assets
+
+Pre-built binaries and coverage reports are attached to this release:
+- `s3-encryption-proxy-v5.1.5-linux-amd64` - Main proxy binary
+- `s3ep-keygen-v5.1.5-linux-amd64` - Key generation utility
+- `coverage-v5.1.5.out` - Coverage profile (Go format)
+- `coverage-v5.1.5.txt` - Coverage report (human readable)
+
 ## [5.1.4](https://github.com/guided-traffic/s3-encryption-proxy/compare/v5.1.3...v5.1.4) (2026-09-22)
 
 
