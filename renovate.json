@@ -122,7 +122,7 @@
       "datasourceTemplate": "github-releases"
     },
     {
-      "description": "Velero e2e: MinIO backend image. Manages the manifest that is applied; MinIO was deleted from Docker Hub and ships no further community releases, so this is expected to find nothing.",
+      "description": "MinIO backend image of the demo stack, the conformance run and the Velero e2e manifest. MinIO publishes no image of its own any more (Docker Hub deleted, quay.io closed), so this is the pgsty/minio community fork, pinned by tag and digest. A new MinIO release can change a conformance verdict; that is the finding, not a flake.",
       "customType": "regex",
       "managerFilePatterns": [
         "/^test/e2e/velero/manifests/minio\\.yaml$/",
@@ -130,11 +130,11 @@
         "/^docker-compose\\.demo\\.yml$/"
       ],
       "matchStrings": [
-        "quay\\.io/minio/minio:(?<currentValue>RELEASE\\.[0-9TZ-]+)"
+        "pgsty/minio:(?<currentValue>RELEASE\\.[0-9TZ-]+)@(?<currentDigest>sha256:[a-f0-9]{64})"
       ],
-      "depNameTemplate": "minio/minio",
-      "registryUrlTemplate": "https://quay.io",
-      "datasourceTemplate": "docker"
+      "depNameTemplate": "pgsty/minio",
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "regex:^RELEASE\\.(?<major>\\d{4})-(?<minor>\\d{2})-(?<patch>\\d{2})T\\d{2}-\\d{2}-\\d{2}Z$"
     },
     {
       "description": "Velero e2e: kind node image",
