@@ -322,9 +322,12 @@ func (l *MonfailingListener) Close() error {
 }
 
 func TestMonServerStartReportsShutdownFailure(t *testing.T) {
-	// The bind itself fails immediately, so the only listener the server tracks
-	// is the one handed to Serve below - and that one refuses to close.
-	s := NewServer(&Config{BindAddress: "mon-invalid-address", MetricsPath: "/metrics"})
+	// The bind must succeed: a bind that fails races its listen error against the
+	// cancelled context inside Start, and when the listen error wins the shutdown
+	// path under test never runs. Shutdown closes every tracked listener and
+	// reports the first close error, so the one handed to Serve below - which
+	// refuses to close - decides the result.
+	s := NewServer(&Config{BindAddress: "127.0.0.1:0", MetricsPath: "/metrics"})
 
 	base, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)

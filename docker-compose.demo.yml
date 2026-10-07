@@ -1,9 +1,11 @@
 services:
   # MinIO S3-kompatible Object Storage mit HTTPS
   minio:
-    # quay.io, not Docker Hub: minio/minio and minio/mc were deleted from Docker
-    # Hub. Pinned because MinIO ships no further community releases.
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    # pgsty/minio, a community fork: MinIO publishes no image of its own any more
+    # (minio/minio is gone from Docker Hub, quay.io/minio is closed). Same base,
+    # entrypoint, curl and mc as the upstream image. Pinned by digest because the
+    # fork has a single maintainer.
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372
     container_name: minio
     ports:
       - "9000:9000"     # S3 API (HTTPS)

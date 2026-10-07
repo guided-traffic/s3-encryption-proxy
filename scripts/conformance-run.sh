@@ -146,15 +146,15 @@ start_minio() {
   # MinIO serves TLS when it finds a certificate pair in its certs directory.
   # The test PKI is generated, never committed (ADR 0021).
   (cd test/ssl-setup && ./gen-certs.sh --if-needed >/dev/null)
-  # quay.io, not Docker Hub: minio/minio was deleted there. Pinned to the last
-  # community release; MinIO ships no further ones.
-  pull_image quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+  # pgsty/minio, a community fork: MinIO publishes no image of its own any more.
+  # Pinned by digest because the fork has a single maintainer.
+  pull_image pgsty/minio:RELEASE.2026-08-04T00-00-00Z@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   docker run -d --name "$CONTAINER" -p 9100:9000 \
     -v "$PWD/test/ssl-setup/minio.crt:/root/.minio/certs/public.crt:ro" \
     -v "$PWD/test/ssl-setup/minio.key:/root/.minio/certs/private.key:ro" \
     -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 \
-    quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data >/dev/null
+    pgsty/minio:RELEASE.2026-08-04T00-00-00Z@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372 server /data >/dev/null
 }
 
 start_localstack() {
