@@ -1,11 +1,11 @@
 # Crc64nvme
 
-> 14 nodes · cohesion 0.16
+> 15 nodes · cohesion 0.15
 
 ## Key Concepts
 
+- **crc64nvme.go** (6 connections) — `internal/proxy/request/crc64nvme.go`
 - **crc64NVME** (6 connections) — `internal/proxy/request/crc64nvme.go`
-- **crc64nvme.go** (5 connections) — `internal/proxy/request/crc64nvme.go`
 - **newCRC64NVME()** (5 connections) — `internal/proxy/request/crc64nvme.go`
 - **BenchmarkChkCRC64NVME()** (4 connections) — `internal/proxy/request/checksum_test.go`
 - **TestChkCRC64NVMEAllocatesNothingPerWrite()** (3 connections) — `internal/proxy/request/checksum_test.go`
@@ -13,6 +13,7 @@
 - **naiveCRC64NVME()** (3 connections) — `internal/proxy/request/crc64nvme.go`
 - **crc64NVMEUpdate()** (2 connections) — `internal/proxy/request/crc64nvme.go`
 - **.Write()** (2 connections) — `internal/proxy/request/crc64nvme.go`
+- **CRC-64/NVME slicing-by-8 table** (1 connections) — `docs/developer/request-paths.md`
 - **makeCRC64SlicingBy8()** (1 connections) — `internal/proxy/request/crc64nvme.go`
 - **.BlockSize()** (1 connections) — `internal/proxy/request/crc64nvme.go`
 - **.Reset()** (1 connections) — `internal/proxy/request/crc64nvme.go`
@@ -28,12 +29,13 @@
 
 ## Source Files
 
+- `docs/developer/request-paths.md`
 - `internal/proxy/request/checksum_test.go`
 - `internal/proxy/request/crc64nvme.go`
 
 ## Audit Trail
 
-- EXTRACTED: 19 (83%)
+- EXTRACTED: 20 (83%)
 - INFERRED: 4 (17%)
 - AMBIGUOUS: 0 (0%)
 

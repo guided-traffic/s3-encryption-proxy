@@ -1,10 +1,10 @@
 # Checksum
 
-> 18 nodes · cohesion 0.19
+> 19 nodes · cohesion 0.18
 
 ## Key Concepts
 
-- **checksum.go** (14 connections) — `internal/proxy/request/checksum.go`
+- **checksum.go** (16 connections) — `internal/proxy/request/checksum.go`
 - **declaredChecksums()** (10 connections) — `internal/proxy/request/checksum.go`
 - **DeclaresChecksum()** (7 connections) — `internal/proxy/request/checksum.go`
 - **checksumReader** (6 connections) — `internal/proxy/request/checksum.go`
@@ -18,6 +18,7 @@
 - **ChecksumError** (3 connections) — `internal/proxy/request/checksum.go`
 - **malformed()** (2 connections) — `internal/proxy/request/checksum.go`
 - **mismatch()** (2 connections) — `internal/proxy/request/checksum.go`
+- **Verdict()** (2 connections) — `internal/proxy/request/checksum.go`
 - **.Read()** (2 connections) — `internal/proxy/request/checksum.go`
 - **.Error()** (1 connections) — `internal/proxy/request/checksum.go`
 - **.Unwrap()** (1 connections) — `internal/proxy/request/checksum.go`
@@ -25,16 +26,17 @@
 
 ## Relationships
 
-- [Replication and ACL Handlers](Replication_and_ACL_Handlers.md) (6 shared connections)
+- [Bucket ACL and Accelerate Handlers](Bucket_ACL_and_Accelerate_Handlers.md) (6 shared connections)
 - [Checksum Verifier Tests](Checksum_Verifier_Tests.md) (3 shared connections)
 - [Crc64nvme](Crc64nvme.md) (2 shared connections)
 - [S3 Error Mapping](S3_Error_Mapping.md) (2 shared connections)
-- [Multipart Semantics and ETag Marker](Multipart_Semantics_and_ETag_Marker.md) (1 shared connections)
-- [Configuration Loading and Upload Sweeper](Configuration_Loading_and_Upload_Sweeper.md) (1 shared connections)
-- [Response Header Helpers](Response_Header_Helpers.md) (1 shared connections)
-- [Checksum](Checksum.md) (1 shared connections)
+- [Segmented Manager Streaming IO](Segmented_Manager_Streaming_IO.md) (2 shared connections)
+- [Streaming Aws Decoder](Streaming_Aws_Decoder.md) (1 shared connections)
+- [Storage Format Integrity Guarantees](Storage_Format_Integrity_Guarantees.md) (1 shared connections)
+- [Error Conventions](Error_Conventions.md) (1 shared connections)
+- [Object Response Header Helpers](Object_Response_Header_Helpers.md) (1 shared connections)
+- [Payload Hash Verification Tests](Payload_Hash_Verification_Tests.md) (1 shared connections)
 - [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (1 shared connections)
-- [Segmented Manager Streaming IO](Segmented_Manager_Streaming_IO.md) (1 shared connections)
 
 ## Source Files
 
@@ -43,7 +45,7 @@
 
 ## Audit Trail
 
-- EXTRACTED: 43 (90%)
+- EXTRACTED: 46 (90%)
 - INFERRED: 5 (10%)
 - AMBIGUOUS: 0 (0%)
 

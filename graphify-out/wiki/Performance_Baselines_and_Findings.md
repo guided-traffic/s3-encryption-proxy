@@ -1,6 +1,6 @@
 # Performance Baselines and Findings
 
-> 23 nodes · cohesion 0.11
+> 28 nodes · cohesion 0.10
 
 ## Key Concepts
 
@@ -12,29 +12,32 @@
 - **Baseline Run post-v2-wave5 (20260911T101344Z-cc62c05)** (4 connections) — `perf-baseline/20260911T101344Z-cc62c05/REPORT.md`
 - **Baseline Run post-v2-wave5-drained (20260911T102319Z-cc62c05)** (4 connections) — `perf-baseline/20260911T102319Z-cc62c05/REPORT.md`
 - **A Ranged Read Left the Backend Connection Unusable** (4 connections) — `perf-baseline/20260911T103132Z-cc62c05/FINDINGS.md`
+- **throughput Instrument** (4 connections) — `test/perf/README.md`
+- **The Upload Deficit Is Gone** (3 connections) — `perf-baseline/20260911T103132Z-cc62c05/FINDINGS.md`
 - **S3EP_PERF_ALT_PROXY — the Second Proxy uploadpath Needs** (3 connections) — `test/perf/README.md`
+- **Backend Refuses an aws-chunked Chunk Above 16 MiB** (3 connections) — `test/perf/README.md`
 - **rangeread Instrument** (3 connections) — `test/perf/README.md`
 - **wave3 — 1 MiB Ranged Read at 153.8 MiB/s (68 % of Direct)** (2 connections) — `perf-baseline/20260911T064137Z-233d559/REPORT.md`
 - **wave3 Run — uploadpath and memory Skipped** (2 connections) — `perf-baseline/20260911T064137Z-233d559/REPORT.md`
 - **Between-Run Spread — Anything Under 15 % End to End Is the Machine** (2 connections) — `perf-baseline/20260911T103132Z-cc62c05/FINDINGS.md`
 - **The Multipart Leg Moved (+33 % to +47 %)** (2 connections) — `perf-baseline/20260911T103132Z-cc62c05/FINDINGS.md`
+- **Above 4 MiB the Proxy Writes Faster Than the Direct Leg** (2 connections) — `perf-baseline/20260911T103132Z-cc62c05/FINDINGS.md`
 - **The Single-Request Leg Is 0-8 % Slower** (2 connections) — `perf-baseline/20260911T103132Z-cc62c05/FINDINGS.md`
 - **Baseline Run post-v2-wave5 of Record (20260911T103132Z-cc62c05)** (2 connections) — `perf-baseline/20260911T103132Z-cc62c05/REPORT.md`
 - **perf-compare Ratio Verdict** (2 connections) — `test/perf/README.md`
 - **Ratios Are Never Stored (D20)** (2 connections) — `test/perf/README.md`
 - **Spread Threshold — Combined RSD with a 3 % Floor** (2 connections) — `test/perf/README.md`
 - **uploadpath_test.go** (2 connections) — `test/perf/uploadpath_test.go`
-- **Provisional Range Window** (1 connections) — `perf-baseline/20260911T103132Z-cc62c05/FINDINGS.md`
-- **FINDINGS.md — Hand-Written, Written the Day the Numbers Were Taken** (1 connections) — `test/perf/README.md`
-- **Machine Record (ADR 0020 D19)** (1 connections) — `test/perf/README.md`
+- **No Attribution of the Upload Gain to One Change** (1 connections) — `perf-baseline/20260911T103132Z-cc62c05/FINDINGS.md`
+- *... and 3 more nodes in this community*
 
 ## Relationships
 
-- [Readme](Readme.md) (3 shared connections)
-- [Throughput](Throughput.md) (3 shared connections)
-- [Ranged GET Path and Window](Ranged_GET_Path_and_Window.md) (2 shared connections)
+- [Readme](Readme.md) (4 shared connections)
+- [Object Response Header Helpers](Object_Response_Header_Helpers.md) (2 shared connections)
 - [Segmented Manager Streaming IO](Segmented_Manager_Streaming_IO.md) (1 shared connections)
 - [Rangeread](Rangeread.md) (1 shared connections)
+- [Throughput](Throughput.md) (1 shared connections)
 - [Performance Test Client](Performance_Test_Client.md) (1 shared connections)
 
 ## Source Files
@@ -50,8 +53,8 @@
 
 ## Audit Trail
 
-- EXTRACTED: 38 (95%)
-- INFERRED: 2 (5%)
+- EXTRACTED: 44 (96%)
+- INFERRED: 2 (4%)
 - AMBIGUOUS: 0 (0%)
 
 ---

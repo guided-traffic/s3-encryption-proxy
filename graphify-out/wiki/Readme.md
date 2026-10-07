@@ -20,13 +20,13 @@
 
 ## Relationships
 
+- [Performance Baselines and Findings](Performance_Baselines_and_Findings.md) (4 shared connections)
 - [Performance Test Client](Performance_Test_Client.md) (4 shared connections)
-- [Performance Baselines and Findings](Performance_Baselines_and_Findings.md) (3 shared connections)
-- [Throughput](Throughput.md) (2 shared connections)
 - [Smallobject](Smallobject.md) (2 shared connections)
 - [Harness](Harness.md) (2 shared connections)
 - [Values Proxy](Values_Proxy.md) (1 shared connections)
 - [Cryptofloor](Cryptofloor.md) (1 shared connections)
+- [Throughput](Throughput.md) (1 shared connections)
 - [Keygen and KEK Factory](Keygen_and_KEK_Factory.md) (1 shared connections)
 - [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (1 shared connections)
 

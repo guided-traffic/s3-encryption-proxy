@@ -1,47 +1,42 @@
 # Monitoring
 
-> 18 nodes · cohesion 0.12
+> 18 nodes · cohesion 0.11
 
 ## Key Concepts
 
-- **Graceful shutdown ends open uploads** (5 connections) — `docs/operations/configuration.md`
-- **Integration suites under test/integration** (4 connections) — `docs/developer/testing.md`
-- **The exit provider needs no license** (3 connections) — `docs/operations/configuration.md`
-- **GET /livez** (3 connections) — `docs/operations/monitoring.md`
-- **A probe counts only when unsigned and query-free** (3 connections) — `docs/operations/monitoring.md`
-- **encryption-modes starts the proxy in process** (2 connections) — `docs/developer/testing.md`
-- **shutdown integration package** (2 connections) — `docs/developer/testing.md`
-- **TLS integration run reaches the trailer decoder** (2 connections) — `docs/developer/testing.md`
-- **Shipped configuration examples** (2 connections) — `docs/operations/configuration.md`
-- **backend status reports what real traffic showed** (2 connections) — `docs/operations/monitoring.md`
-- **GET /readyz** (2 connections) — `docs/operations/monitoring.md`
-- **s3ep_encryption_provider_info** (2 connections) — `docs/operations/monitoring.md`
-- **GET /status document** (2 connections) — `docs/operations/monitoring.md`
-- **What an unauthenticated request is told** (2 connections) — `docs/operations/s3-api.md`
-- **MinIO accepts SSE-C only over TLS** (2 connections) — `docs/tickets/026-sse-c-passthrough.md`
-- **AbortIncompleteMultipartUpload lifecycle rule** (1 connections) — `docs/operations/configuration.md`
-- **x-amz-request-id is the proxy's own identifier** (1 connections) — `docs/operations/s3-api.md`
-- **TestContext** (1 connections) — `docs/developer/testing.md`
+- **Unauthenticated metrics listener** (14 connections) — `docs/operations/monitoring.md`
+- **Helm chart install** (4 connections) — `docs/operations/deployment.md`
+- **Three installation paths** (2 connections) — `docs/operations/deployment.md`
+- **PrometheusRule alerting rules ship with the chart** (2 connections) — `docs/operations/monitoring.md`
+- **s3ep_backend_transport_failures_total** (2 connections) — `docs/operations/monitoring.md`
+- **Docker Compose deployment** (1 connections) — `docs/operations/deployment.md`
+- **The KEK belongs in a Secret, never in the ConfigMap** (1 connections) — `docs/operations/deployment.md`
+- **endpoint label is the route template** (1 connections) — `docs/operations/monitoring.md`
+- **s3ep_active_connections** (1 connections) — `docs/operations/monitoring.md`
+- **s3ep_backend_last_failure_timestamp** (1 connections) — `docs/operations/monitoring.md`
+- **s3ep_backend_last_response_timestamp** (1 connections) — `docs/operations/monitoring.md`
+- **s3ep_backend_observed** (1 connections) — `docs/operations/monitoring.md`
+- **s3ep_backend_responses_total** (1 connections) — `docs/operations/monitoring.md`
+- **s3ep_license_expiry_timestamp** (1 connections) — `docs/operations/monitoring.md`
+- **s3ep_license_info** (1 connections) — `docs/operations/monitoring.md`
+- **s3ep_request_duration_seconds** (1 connections) — `docs/operations/monitoring.md`
+- **s3ep_requests_total** (1 connections) — `docs/operations/monitoring.md`
+- **s3ep_server_info** (1 connections) — `docs/operations/monitoring.md`
 
 ## Relationships
 
-- [Integrity](Integrity.md) (2 shared connections)
-- [Hardening History](Hardening_History.md) (1 shared connections)
-- [Monitoring](Monitoring.md) (1 shared connections)
-- [Testing](Testing.md) (1 shared connections)
+- [ADR Web: Auth, Checksums, Config](ADR_Web-_Auth,_Checksums,_Config.md) (2 shared connections)
+- [Configuration](Configuration.md) (1 shared connections)
 
 ## Source Files
 
-- `docs/developer/testing.md`
-- `docs/operations/configuration.md`
+- `docs/operations/deployment.md`
 - `docs/operations/monitoring.md`
-- `docs/operations/s3-api.md`
-- `docs/tickets/026-sse-c-passthrough.md`
 
 ## Audit Trail
 
-- EXTRACTED: 17 (74%)
-- INFERRED: 6 (26%)
+- EXTRACTED: 19 (95%)
+- INFERRED: 1 (5%)
 - AMBIGUOUS: 0 (0%)
 
 ---

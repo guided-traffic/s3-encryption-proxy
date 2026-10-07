@@ -16,7 +16,7 @@
 
 - [rclone E2E Suite](rclone_E2E_Suite.md) (2 shared connections)
 - [s3cmd E2E Suite](s3cmd_E2E_Suite.md) (2 shared connections)
-- [Main](Main.md) (1 shared connections)
+- [Harness](Harness.md) (1 shared connections)
 - [DEK Cache and Provider Manager](DEK_Cache_and_Provider_Manager.md) (1 shared connections)
 - [Velero E2E Backup Suite](Velero_E2E_Backup_Suite.md) (1 shared connections)
 

@@ -1,16 +1,15 @@
 # Segmented Session Lifecycle
 
-> 36 nodes · cohesion 0.10
+> 35 nodes · cohesion 0.10
 
 ## Key Concepts
 
 - **SegmentedSession** (37 connections) — `internal/orchestration/segmented_session.go`
 - **Manager** (15 connections) — `internal/orchestration/segmented_session.go`
+- **segmented_session.go** (9 connections) — `internal/orchestration/segmented_session.go`
 - **.SealPart()** (7 connections) — `internal/orchestration/segmented_session.go`
 - **.touch()** (7 connections) — `internal/orchestration/segmented_session.go`
-- **segmented_session.go** (6 connections) — `internal/orchestration/segmented_session.go`
 - **.releaseSessionBudget()** (6 connections) — `internal/orchestration/segmented_session.go`
-- **.SealStreamingPart()** (5 connections) — `internal/orchestration/segmented_session.go`
 - **sessionPart** (5 connections) — `internal/orchestration/segmented_session.go`
 - **touchingReader** (5 connections) — `internal/orchestration/segmented_session.go`
 - **.releaseShortPart()** (4 connections) — `internal/orchestration/segmented_session.go`
@@ -29,21 +28,23 @@
 - **.ReserveTransientBuffer()** (2 connections) — `internal/orchestration/segmented_session.go`
 - **.SegmentedSession()** (2 connections) — `internal/orchestration/segmented_session.go`
 - **.ShortPartBufferSize()** (2 connections) — `internal/orchestration/segmented_session.go`
-- *... and 11 more nodes in this community*
+- **.Parts()** (2 connections) — `internal/orchestration/segmented_session.go`
+- *... and 10 more nodes in this community*
 
 ## Relationships
 
-- [Shutdown](Shutdown.md) (6 shared connections)
+- [Segmented Manager Streaming IO](Segmented_Manager_Streaming_IO.md) (7 shared connections)
+- [Velero E2E Backup Suite](Velero_E2E_Backup_Suite.md) (6 shared connections)
 - [Segmented Session Tests](Segmented_Session_Tests.md) (6 shared connections)
-- [Segmented Manager Streaming IO](Segmented_Manager_Streaming_IO.md) (6 shared connections)
-- [Bucket Website and Create/Delete](Bucket_Website_and_Create-Delete.md) (4 shared connections)
+- [Multipart ListParts Handler](Multipart_ListParts_Handler.md) (5 shared connections)
 - [Segment Seal and Open Internals](Segment_Seal_and_Open_Internals.md) (4 shared connections)
-- [S3 Signing Helper](S3_Signing_Helper.md) (2 shared connections)
-- [Multipart Handler Constructors](Multipart_Handler_Constructors.md) (1 shared connections)
+- [Health Probes and Request Tracker](Health_Probes_and_Request_Tracker.md) (2 shared connections)
+- [Hostile Backend and Key Material ADRs](Hostile_Backend_and_Key_Material_ADRs.md) (1 shared connections)
+- [Transfer Bounds and Shutdown](Transfer_Bounds_and_Shutdown.md) (1 shared connections)
+- [Multipart Handler Wiring](Multipart_Handler_Wiring.md) (1 shared connections)
 - [Integration Corpus Seed and Budget](Integration_Corpus_Seed_and_Budget.md) (1 shared connections)
 - [DEK Cache and Provider Manager](DEK_Cache_and_Provider_Manager.md) (1 shared connections)
-- [MockS3Backend Bucket Operations](MockS3Backend_Bucket_Operations.md) (1 shared connections)
-- [Segment Encrypt Reader Tests](Segment_Encrypt_Reader_Tests.md) (1 shared connections)
+- [MockS3Backend Tagging and Policy](MockS3Backend_Tagging_and_Policy.md) (1 shared connections)
 
 ## Source Files
 
@@ -51,7 +52,7 @@
 
 ## Audit Trail
 
-- EXTRACTED: 93 (100%)
+- EXTRACTED: 94 (100%)
 - INFERRED: 0 (0%)
 - AMBIGUOUS: 0 (0%)
 

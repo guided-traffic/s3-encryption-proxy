@@ -1,9 +1,10 @@
 # Velero E2E Backup Suite
 
-> 93 nodes · cohesion 0.09
+> 99 nodes · cohesion 0.08
 
 ## Key Concepts
 
+- **time.Duration** (29 connections)
 - **preflight()** (23 connections) — `test/e2e/velero/e2e_test.go`
 - **waitBackupCompleted()** (23 connections) — `test/e2e/velero/healthcheck.go`
 - **velero/exec.go** (21 connections) — `test/e2e/velero/exec.go`
@@ -28,23 +29,28 @@
 - **TestV7_RestoreIntoDifferentNamespace()** (15 connections) — `test/e2e/velero/scenarios_metadata_test.go`
 - **backupName()** (14 connections) — `test/e2e/velero/e2e_test.go`
 - **waitDeploymentReady()** (14 connections) — `test/e2e/velero/workloads.go`
-- **deleteNamespaceAndWait()** (13 connections) — `test/e2e/velero/e2e_test.go`
-- *... and 68 more nodes in this community*
+- *... and 74 more nodes in this community*
 
 ## Relationships
 
-- [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (58 shared connections)
-- [MockS3Backend Bucket Operations](MockS3Backend_Bucket_Operations.md) (34 shared connections)
-- [Shutdown](Shutdown.md) (6 shared connections)
-- [Stored](Stored.md) (5 shared connections)
-- [Large Multipart and DEK Cache Tests](Large_Multipart_and_DEK_Cache_Tests.md) (2 shared connections)
-- [Performance Test Client](Performance_Test_Client.md) (1 shared connections)
-- [Rclone](Rclone.md) (1 shared connections)
-- [Proxy Server Lifecycle Tests](Proxy_Server_Lifecycle_Tests.md) (1 shared connections)
-- [S3 Signing Helper](S3_Signing_Helper.md) (1 shared connections)
+- [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (59 shared connections)
+- [MockS3Backend Tagging and Policy](MockS3Backend_Tagging_and_Policy.md) (37 shared connections)
+- [E2E At-Rest Assertions](E2E_At-Rest_Assertions.md) (9 shared connections)
+- [Segmented Session Lifecycle](Segmented_Session_Lifecycle.md) (6 shared connections)
+- [Streaming Integration Test Harness](Streaming_Integration_Test_Harness.md) (5 shared connections)
+- [Segmented Session Tests](Segmented_Session_Tests.md) (3 shared connections)
+- [Health Probes and Request Tracker](Health_Probes_and_Request_Tracker.md) (2 shared connections)
+- [Performance](Performance.md) (2 shared connections)
+- [SigV4 Header and Presign Tests](SigV4_Header_and_Presign_Tests.md) (2 shared connections)
+- [Shutdown](Shutdown.md) (2 shared connections)
+- [Performance Test Client](Performance_Test_Client.md) (2 shared connections)
+- [Throughput](Throughput.md) (2 shared connections)
 
 ## Source Files
 
+- `internal/orchestration/segmented_session.go`
+- `test/e2e/harness/atrest.go`
+- `test/e2e/harness/stored.go`
 - `test/e2e/velero/backend.go`
 - `test/e2e/velero/e2e_test.go`
 - `test/e2e/velero/exec.go`
@@ -58,8 +64,8 @@
 
 ## Audit Trail
 
-- EXTRACTED: 265 (55%)
-- INFERRED: 219 (45%)
+- EXTRACTED: 308 (58%)
+- INFERRED: 223 (42%)
 - AMBIGUOUS: 0 (0%)
 
 ---

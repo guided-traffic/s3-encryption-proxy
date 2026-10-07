@@ -32,10 +32,9 @@
 ## Relationships
 
 - [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (19 shared connections)
-- [Config Loading Coverage Tests](Config_Loading_Coverage_Tests.md) (18 shared connections)
-- [Configuration Struct and Accessors](Configuration_Struct_and_Accessors.md) (10 shared connections)
-- [Configuration Loading and Upload Sweeper](Configuration_Loading_and_Upload_Sweeper.md) (1 shared connections)
-- [Validation](Validation.md) (1 shared connections)
+- [Config Loading Coverage Tests](Config_Loading_Coverage_Tests.md) (17 shared connections)
+- [Configuration Struct and Accessors](Configuration_Struct_and_Accessors.md) (11 shared connections)
+- [Validation](Validation.md) (2 shared connections)
 
 ## Source Files
 

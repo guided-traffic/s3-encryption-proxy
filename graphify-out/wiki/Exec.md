@@ -1,6 +1,6 @@
 # Exec
 
-> 19 nodes · cohesion 0.19
+> 20 nodes · cohesion 0.18
 
 ## Key Concepts
 
@@ -11,6 +11,7 @@
 - **Run()** (7 connections) — `test/e2e/harness/exec.go`
 - **RunWithEnv()** (7 connections) — `test/e2e/harness/exec.go`
 - **bytes.Buffer** (6 connections)
+- **.run()** (6 connections) — `test/e2e/s3cmd/s3cmd_test.go`
 - **teeBuffer** (4 connections) — `test/e2e/harness/exec.go`
 - **.says()** (4 connections) — `test/e2e/rclone/rclone_test.go`
 - **.says()** (4 connections) — `test/e2e/s3cmd/s3cmd_test.go`
@@ -27,13 +28,13 @@
 ## Relationships
 
 - [rclone E2E Suite](rclone_E2E_Suite.md) (5 shared connections)
+- [MockS3Backend Tagging and Policy](MockS3Backend_Tagging_and_Policy.md) (5 shared connections)
 - [s3cmd E2E Suite](s3cmd_E2E_Suite.md) (5 shared connections)
-- [MockS3Backend Bucket Operations](MockS3Backend_Bucket_Operations.md) (4 shared connections)
+- [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (3 shared connections)
 - [S3 Error Document Writer](S3_Error_Document_Writer.md) (2 shared connections)
-- [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (2 shared connections)
-- [ListBuckets Root Handler](ListBuckets_Root_Handler.md) (1 shared connections)
+- [ListBuckets Coverage Tests](ListBuckets_Coverage_Tests.md) (1 shared connections)
 - [Checksum Verifier Tests](Checksum_Verifier_Tests.md) (1 shared connections)
-- [Harness](Harness.md) (1 shared connections)
+- [E2E Harness Environment](E2E_Harness_Environment.md) (1 shared connections)
 
 ## Source Files
 
@@ -43,7 +44,7 @@
 
 ## Audit Trail
 
-- EXTRACTED: 54 (100%)
+- EXTRACTED: 58 (100%)
 - INFERRED: 0 (0%)
 - AMBIGUOUS: 0 (0%)
 

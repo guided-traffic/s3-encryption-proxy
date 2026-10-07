@@ -18,7 +18,7 @@
 - [Performance Baselines and Findings](Performance_Baselines_and_Findings.md) (1 shared connections)
 - [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (1 shared connections)
 - [Report](Report.md) (1 shared connections)
-- [MockS3Backend Bucket Operations](MockS3Backend_Bucket_Operations.md) (1 shared connections)
+- [MockS3Backend Tagging and Policy](MockS3Backend_Tagging_and_Policy.md) (1 shared connections)
 - [Smallobject](Smallobject.md) (1 shared connections)
 
 ## Source Files

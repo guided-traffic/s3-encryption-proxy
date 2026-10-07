@@ -1,6 +1,6 @@
 # Bucket Handler Error Fixtures
 
-> 93 nodes · cohesion 0.07
+> 92 nodes · cohesion 0.07
 
 ## Key Concepts
 
@@ -29,22 +29,22 @@
 - **TestBktListObjectsOwnerIsTheCaller()** (7 connections) — `internal/proxy/handlers/bucket/operations_coverage_test.go`
 - **TestBktListObjectsSizeIsThePlaintextSize()** (7 connections) — `internal/proxy/handlers/bucket/operations_coverage_test.go`
 - **TestBktListObjectsV1IsARealListBucketResult()** (7 connections) — `internal/proxy/handlers/bucket/operations_coverage_test.go`
-- *... and 68 more nodes in this community*
+- *... and 67 more nodes in this community*
 
 ## Relationships
 
 - [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (56 shared connections)
-- [Helpers](Helpers.md) (6 shared connections)
-- [Bucket Crud](Bucket_Crud.md) (5 shared connections)
-- [Multipart Handler Constructors](Multipart_Handler_Constructors.md) (3 shared connections)
-- [S3 Method Error Mapping Tests](S3_Method_Error_Mapping_Tests.md) (2 shared connections)
-- [DeleteObjects Handler Tests](DeleteObjects_Handler_Tests.md) (2 shared connections)
+- [MockS3Backend Listing and Upload Stubs](MockS3Backend_Listing_and_Upload_Stubs.md) (5 shared connections)
+- [Bucket Sub-Resource Handler Registry](Bucket_Sub-Resource_Handler_Registry.md) (5 shared connections)
+- [Multipart Handler Wiring](Multipart_Handler_Wiring.md) (3 shared connections)
+- [Integration Failing Writer Fixtures](Integration_Failing_Writer_Fixtures.md) (2 shared connections)
+- [Object Dispatch Coverage Tests](Object_Dispatch_Coverage_Tests.md) (2 shared connections)
+- [MockS3Backend ListObjects Stub](MockS3Backend_ListObjects_Stub.md) (2 shared connections)
 - [XML Document Marshalling](XML_Document_Marshalling.md) (2 shared connections)
-- [Router](Router.md) (2 shared connections)
-- [ListBuckets Root Handler](ListBuckets_Root_Handler.md) (1 shared connections)
+- [Subresource Chunked Body](Subresource_Chunked_Body.md) (2 shared connections)
+- [ListBuckets Coverage Tests](ListBuckets_Coverage_Tests.md) (1 shared connections)
 - [Configuration Struct and Accessors](Configuration_Struct_and_Accessors.md) (1 shared connections)
 - [Orchestration Manager Coverage](Orchestration_Manager_Coverage.md) (1 shared connections)
-- [Segmented GCM](Segmented_GCM.md) (1 shared connections)
 
 ## Source Files
 
@@ -56,7 +56,7 @@
 
 ## Audit Trail
 
-- EXTRACTED: 298 (79%)
+- EXTRACTED: 296 (79%)
 - INFERRED: 78 (21%)
 - AMBIGUOUS: 0 (0%)
 

@@ -1,11 +1,10 @@
 # Metadata
 
-> 8 nodes · cohesion 0.25
+> 7 nodes · cohesion 0.29
 
 ## Key Concepts
 
 - **MetadataManager** (11 connections) — `internal/orchestration/metadata.go`
-- **metadata.go** (2 connections) — `internal/orchestration/metadata.go`
 - **.BuildSegmentedMetadata()** (1 connections) — `internal/orchestration/metadata.go`
 - **.GetAlgorithm()** (1 connections) — `internal/orchestration/metadata.go`
 - **.GetEncryptedDEK()** (1 connections) — `internal/orchestration/metadata.go`
@@ -15,9 +14,10 @@
 
 ## Relationships
 
-- [Metadata Manager Coverage](Metadata_Manager_Coverage.md) (2 shared connections)
-- [Multipart Handler Constructors](Multipart_Handler_Constructors.md) (2 shared connections)
+- [Multipart Handler Wiring](Multipart_Handler_Wiring.md) (2 shared connections)
 - [Configuration Struct and Accessors](Configuration_Struct_and_Accessors.md) (1 shared connections)
+- [Orchestration Manager Coverage](Orchestration_Manager_Coverage.md) (1 shared connections)
+- [Hostile Backend and Key Material ADRs](Hostile_Backend_and_Key_Material_ADRs.md) (1 shared connections)
 
 ## Source Files
 
@@ -25,7 +25,7 @@
 
 ## Audit Trail
 
-- EXTRACTED: 12 (100%)
+- EXTRACTED: 11 (100%)
 - INFERRED: 0 (0%)
 - AMBIGUOUS: 0 (0%)
 

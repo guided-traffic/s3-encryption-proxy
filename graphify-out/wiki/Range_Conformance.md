@@ -25,13 +25,12 @@
 ## Relationships
 
 - [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (11 shared connections)
-- [S3 Method Error Mapping Tests](S3_Method_Error_Mapping_Tests.md) (6 shared connections)
-- [MockS3Backend Bucket Operations](MockS3Backend_Bucket_Operations.md) (5 shared connections)
-- [Ranged Read and Passthrough Tests](Ranged_Read_and_Passthrough_Tests.md) (5 shared connections)
-- [Authentication Integration Tests](Authentication_Integration_Tests.md) (2 shared connections)
+- [AWS-Chunked Reader Tests](AWS-Chunked_Reader_Tests.md) (7 shared connections)
+- [Ranged Read and Passthrough Tests](Ranged_Read_and_Passthrough_Tests.md) (6 shared connections)
+- [MockS3Backend Tagging and Policy](MockS3Backend_Tagging_and_Policy.md) (5 shared connections)
 - [Streaming Upload and Sealed Checksum](Streaming_Upload_and_Sealed_Checksum.md) (1 shared connections)
 - [Multipart Conformance Suite](Multipart_Conformance_Suite.md) (1 shared connections)
-- [Chunked Streaming Test Harness](Chunked_Streaming_Test_Harness.md) (1 shared connections)
+- [Encryption Mode Proxy Instances](Encryption_Mode_Proxy_Instances.md) (1 shared connections)
 
 ## Source Files
 

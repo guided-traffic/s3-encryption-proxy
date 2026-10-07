@@ -1,6 +1,6 @@
 # S3 Error Mapping
 
-> 31 nodes · cohesion 0.12
+> 26 nodes · cohesion 0.15
 
 ## Key Concepts
 
@@ -19,7 +19,6 @@
 - **TestMapError_SDKErrorChains()** (4 connections) — `internal/proxy/response/error_mapping_test.go`
 - **TestWriteS3Error_InternalErrorIsOpaque()** (4 connections) — `internal/proxy/response/error_mapping_test.go`
 - **TestWriteS3Error_NilError()** (4 connections) — `internal/proxy/response/error_mapping_test.go`
-- **ErrorWriter.writeErrorDocument** (4 connections) — `docs/developer/errors.md`
 - **.WriteChecksumVerdict()** (4 connections) — `internal/proxy/response/errors.go`
 - **TestMapError_InternalErrorsStayGeneric()** (3 connections) — `internal/proxy/response/error_mapping_test.go`
 - **TestMapError_InternalMarkers()** (3 connections) — `internal/proxy/response/error_mapping_test.go`
@@ -27,23 +26,23 @@
 - **TestMapError_TypedErrorWithoutResponse()** (3 connections) — `internal/proxy/response/error_mapping_test.go`
 - **TestMapError_WebsiteConfiguration()** (3 connections) — `internal/proxy/response/error_mapping_test.go`
 - **MappedError** (3 connections) — `internal/proxy/response/error_mapping.go`
-- **One Function Renders the S3 Error Document** (2 connections) — `docs/developer/errors.md`
 - **IsChecksumFailure()** (2 connections) — `internal/proxy/request/checksum.go`
-- *... and 6 more nodes in this community*
+- **IsChecksumUnsupported()** (2 connections) — `internal/proxy/request/checksum.go`
+- **codeForStatus()** (2 connections) — `internal/proxy/response/error_mapping.go`
+- *... and 1 more nodes in this community*
 
 ## Relationships
 
 - [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (14 shared connections)
 - [Error Mapping Coverage Tests](Error_Mapping_Coverage_Tests.md) (11 shared connections)
 - [Copy and Delete Object Handlers](Copy_and_Delete_Object_Handlers.md) (9 shared connections)
-- [Bucket Website and Create/Delete](Bucket_Website_and_Create-Delete.md) (3 shared connections)
+- [Bucket ACL and Accelerate Handlers](Bucket_ACL_and_Accelerate_Handlers.md) (3 shared connections)
 - [Checksum](Checksum.md) (2 shared connections)
-- [Configuration Loading and Upload Sweeper](Configuration_Loading_and_Upload_Sweeper.md) (1 shared connections)
-- [Response Header Helpers](Response_Header_Helpers.md) (1 shared connections)
-- [Ranged GET Path and Window](Ranged_GET_Path_and_Window.md) (1 shared connections)
-- [Multipart Semantics and ETag Marker](Multipart_Semantics_and_ETag_Marker.md) (1 shared connections)
-- [SigV4 Service Coverage Tests](SigV4_Service_Coverage_Tests.md) (1 shared connections)
-- [Multipart Handler Constructors](Multipart_Handler_Constructors.md) (1 shared connections)
+- [Object Response Header Helpers](Object_Response_Header_Helpers.md) (2 shared connections)
+- [Error Conventions](Error_Conventions.md) (1 shared connections)
+- [Short-Part Budget and Memory](Short-Part_Budget_and_Memory.md) (1 shared connections)
+- [SigV4 Header and Presign Tests](SigV4_Header_and_Presign_Tests.md) (1 shared connections)
+- [Multipart Handler Wiring](Multipart_Handler_Wiring.md) (1 shared connections)
 
 ## Source Files
 
@@ -55,8 +54,8 @@
 
 ## Audit Trail
 
-- EXTRACTED: 68 (68%)
-- INFERRED: 32 (32%)
+- EXTRACTED: 63 (66%)
+- INFERRED: 32 (34%)
 - AMBIGUOUS: 0 (0%)
 
 ---

@@ -35,16 +35,14 @@
 
 - [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (34 shared connections)
 - [Segmented Session Lifecycle](Segmented_Session_Lifecycle.md) (6 shared connections)
-- [Shutdown](Shutdown.md) (3 shared connections)
+- [Velero E2E Backup Suite](Velero_E2E_Backup_Suite.md) (3 shared connections)
 - [Segment Encrypt Reader Tests](Segment_Encrypt_Reader_Tests.md) (2 shared connections)
 - [Segmented GCM](Segmented_GCM.md) (2 shared connections)
+- [Object Response Header Helpers](Object_Response_Header_Helpers.md) (2 shared connections)
+- [Orchestration Manager Coverage](Orchestration_Manager_Coverage.md) (2 shared connections)
 - [DEK Cache and Provider Manager](DEK_Cache_and_Provider_Manager.md) (2 shared connections)
 - [Segmented Manager Streaming IO](Segmented_Manager_Streaming_IO.md) (2 shared connections)
-- [Ranged GET Path and Window](Ranged_GET_Path_and_Window.md) (1 shared connections)
-- [Metadata Manager Coverage](Metadata_Manager_Coverage.md) (1 shared connections)
-- [Orchestration Manager Coverage](Orchestration_Manager_Coverage.md) (1 shared connections)
-- [Segmented GCM Range Reader](Segmented_GCM_Range_Reader.md) (1 shared connections)
-- [S3 Signing Helper](S3_Signing_Helper.md) (1 shared connections)
+- [Health Probes and Request Tracker](Health_Probes_and_Request_Tracker.md) (1 shared connections)
 
 ## Source Files
 

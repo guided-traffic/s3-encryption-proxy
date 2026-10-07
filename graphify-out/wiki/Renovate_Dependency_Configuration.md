@@ -1,21 +1,14 @@
 # Renovate Dependency Configuration
 
-> 47 nodes · cohesion 0.04
+> 31 nodes · cohesion 0.06
 
 ## Key Concepts
 
-- **renovate.json** (24 connections) — `renovate.json`
-- **lockFileMaintenance** (10 connections) — `renovate.json`
-- **extends** (6 connections) — `renovate.json`
+- **renovate.json** (25 connections) — `renovate.json`
 - **vulnerabilityAlerts** (5 connections) — `renovate.json`
 - **gomod** (3 connections) — `renovate.json`
 - **dockerfile** (2 connections) — `renovate.json`
 - **github-actions** (2 connections) — `renovate.json`
-- **:automergeDigest** (1 connections) — `renovate.json`
-- **config:recommended** (1 connections) — `renovate.json`
-- **:dependencyDashboard** (1 connections) — `renovate.json`
-- **docker:enableMajor** (1 connections) — `renovate.json`
-- **:semanticCommits** (1 connections) — `renovate.json`
 - **assignAutomerge** (1 connections) — `renovate.json`
 - **automerge** (1 connections) — `renovate.json`
 - **automergeType** (1 connections) — `renovate.json`
@@ -29,11 +22,20 @@
 - **enabled** (1 connections) — `renovate.json`
 - **enabled** (1 connections) — `renovate.json`
 - **postUpdateOptions** (1 connections) — `renovate.json`
-- *... and 22 more nodes in this community*
+- **labels** (1 connections) — `renovate.json`
+- **packageRules** (1 connections) — `renovate.json`
+- **platformAutomerge** (1 connections) — `renovate.json`
+- **prBody** (1 connections) — `renovate.json`
+- **prConcurrentLimit** (1 connections) — `renovate.json`
+- **prHourlyLimit** (1 connections) — `renovate.json`
+- **schedule** (1 connections) — `renovate.json`
+- *... and 6 more nodes in this community*
 
 ## Relationships
 
-- No strong cross-community connections detected
+- [Renovate Presets](Renovate_Presets.md) (1 shared connections)
+- [Renovate Automerge Settings](Renovate_Automerge_Settings.md) (1 shared connections)
+- [CI Pipeline and Renovate Jobs](CI_Pipeline_and_Renovate_Jobs.md) (1 shared connections)
 
 ## Source Files
 
@@ -41,7 +43,7 @@
 
 ## Audit Trail
 
-- EXTRACTED: 46 (100%)
+- EXTRACTED: 33 (100%)
 - INFERRED: 0 (0%)
 - AMBIGUOUS: 0 (0%)
 

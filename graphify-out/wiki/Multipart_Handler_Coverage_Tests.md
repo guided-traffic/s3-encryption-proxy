@@ -1,6 +1,6 @@
 # Multipart Handler Coverage Tests
 
-> 88 nodes · cohesion 0.10
+> 97 nodes · cohesion 0.09
 
 ## Key Concepts
 
@@ -14,9 +14,11 @@
 - **MpuEnv** (24 connections) — `internal/proxy/handlers/multipart/multipart_coverage_test.go`
 - **.MpuComplete()** (19 connections) — `internal/proxy/handlers/multipart/multipart_coverage_test.go`
 - **.upload()** (16 connections) — `internal/proxy/handlers/multipart/multipart_coverage_test.go`
+- **MpuNewExitEnv()** (15 connections) — `internal/proxy/handlers/multipart/multipart_coverage_test.go`
 - **.MpuCaptureParts()** (15 connections) — `internal/proxy/handlers/multipart/multipart_coverage_test.go`
 - **.Header()** (15 connections) — `internal/proxy/handlers/multipart/multipart_coverage_test.go`
 - **TestMpuCompleteStoresAChainThatReadsBack()** (12 connections) — `internal/proxy/handlers/multipart/multipart_coverage_test.go`
+- **.MpuExitUpload()** (12 connections) — `internal/proxy/handlers/multipart/multipart_coverage_test.go`
 - **TestMpuCompleteRefusesAPartListThatIsNotTheUpload()** (11 connections) — `internal/proxy/handlers/multipart/multipart_coverage_test.go`
 - **TestMpuUploadOutOfOrderPartIsStoredImmediately()** (11 connections) — `internal/proxy/handlers/multipart/multipart_coverage_test.go`
 - **.create()** (11 connections) — `internal/proxy/handlers/multipart/multipart_coverage_test.go`
@@ -27,24 +29,22 @@
 - **TestMpuCompleteForwardsBackendResponseHeaders()** (9 connections) — `internal/proxy/handlers/multipart/multipart_coverage_test.go`
 - **TestMpuCompleteRefusesAListOutOfOrder()** (9 connections) — `internal/proxy/handlers/multipart/multipart_coverage_test.go`
 - **TestMpuCompleteTrailerFailureIsReportedAsFailure()** (9 connections) — `internal/proxy/handlers/multipart/multipart_coverage_test.go`
-- **TestMpuListPartsAnswersFromThePartTable()** (9 connections) — `internal/proxy/handlers/multipart/multipart_coverage_test.go`
-- **TestMpuUnderTheExitProviderPassesThrough()** (9 connections) — `internal/proxy/handlers/multipart/multipart_coverage_test.go`
-- *... and 63 more nodes in this community*
+- *... and 72 more nodes in this community*
 
 ## Relationships
 
-- [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (71 shared connections)
-- [Multipart](Multipart.md) (39 shared connections)
-- [Multipart Handler Constructors](Multipart_Handler_Constructors.md) (14 shared connections)
-- [Etag Marker](Etag_Marker.md) (9 shared connections)
+- [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (79 shared connections)
+- [Multipart Checksum Echo Tests](Multipart_Checksum_Echo_Tests.md) (14 shared connections)
+- [Multipart Handler Wiring](Multipart_Handler_Wiring.md) (13 shared connections)
+- [Etag Marker](Etag_Marker.md) (10 shared connections)
 - [XML Document Marshalling](XML_Document_Marshalling.md) (6 shared connections)
-- [Segmented Manager Streaming IO](Segmented_Manager_Streaming_IO.md) (4 shared connections)
-- [Replication and ACL Handlers](Replication_and_ACL_Handlers.md) (3 shared connections)
+- [Bucket ACL and Accelerate Handlers](Bucket_ACL_and_Accelerate_Handlers.md) (4 shared connections)
+- [Multipart Counting Readers](Multipart_Counting_Readers.md) (3 shared connections)
+- [Object Dispatch Coverage Tests](Object_Dispatch_Coverage_Tests.md) (3 shared connections)
+- [Multipart](Multipart.md) (2 shared connections)
 - [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (2 shared connections)
 - [Configuration Struct and Accessors](Configuration_Struct_and_Accessors.md) (2 shared connections)
-- [Bucket Website and Create/Delete](Bucket_Website_and_Create-Delete.md) (2 shared connections)
-- [DeleteObjects Handler Tests](DeleteObjects_Handler_Tests.md) (2 shared connections)
-- [Orchestration Manager Coverage](Orchestration_Manager_Coverage.md) (1 shared connections)
+- [Segmented Manager Streaming IO](Segmented_Manager_Streaming_IO.md) (2 shared connections)
 
 ## Source Files
 
@@ -53,8 +53,8 @@
 
 ## Audit Trail
 
-- EXTRACTED: 524 (94%)
-- INFERRED: 31 (6%)
+- EXTRACTED: 547 (94%)
+- INFERRED: 35 (6%)
 - AMBIGUOUS: 0 (0%)
 
 ---

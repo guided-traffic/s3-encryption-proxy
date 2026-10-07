@@ -1,6 +1,6 @@
 # Monitoring Middleware Tests
 
-> 25 nodes · cohesion 0.13
+> 24 nodes · cohesion 0.13
 
 ## Key Concepts
 
@@ -12,7 +12,6 @@
 - **TestMonHTTPMiddlewareTracksActiveConnections()** (5 connections) — `internal/monitoring/middleware_coverage_test.go`
 - **TestMonHTTPMiddlewareUnknownEndpoint()** (5 connections) — `internal/monitoring/middleware_coverage_test.go`
 - **TestMonResponseWriterForwardsToTheLiveWriter()** (5 connections) — `internal/monitoring/middleware_coverage_test.go`
-- **.Hijack()** (5 connections) — `internal/monitoring/middleware_coverage_test.go`
 - **.Write()** (5 connections) — `internal/monitoring/middleware_coverage_test.go`
 - **.WriteHeader()** (5 connections) — `internal/monitoring/middleware_coverage_test.go`
 - **TestMonHTTPMiddlewareDefaultsToStatus200()** (4 connections) — `internal/monitoring/middleware_coverage_test.go`
@@ -33,12 +32,10 @@
 ## Relationships
 
 - [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (8 shared connections)
-- [Metrics](Metrics.md) (3 shared connections)
-- [S3 Method Error Mapping Tests](S3_Method_Error_Mapping_Tests.md) (3 shared connections)
-- [HTTP Middleware Coverage Tests](HTTP_Middleware_Coverage_Tests.md) (3 shared connections)
-- [Backend Call Observation](Backend_Call_Observation.md) (1 shared connections)
+- [Monitoring Hijack Middleware](Monitoring_Hijack_Middleware.md) (5 shared connections)
+- [Metrics](Metrics.md) (4 shared connections)
+- [Integration Failing Writer Fixtures](Integration_Failing_Writer_Fixtures.md) (3 shared connections)
 - [CORS Middleware and SSE-C Stripping](CORS_Middleware_and_SSE-C_Stripping.md) (1 shared connections)
-- [Middleware](Middleware.md) (1 shared connections)
 
 ## Source Files
 
@@ -47,8 +44,8 @@
 
 ## Audit Trail
 
-- EXTRACTED: 55 (92%)
-- INFERRED: 5 (8%)
+- EXTRACTED: 53 (91%)
+- INFERRED: 5 (9%)
 - AMBIGUOUS: 0 (0%)
 
 ---

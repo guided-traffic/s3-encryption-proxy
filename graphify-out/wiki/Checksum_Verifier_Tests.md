@@ -1,6 +1,6 @@
 # Checksum Verifier Tests
 
-> 31 nodes · cohesion 0.24
+> 30 nodes · cohesion 0.25
 
 ## Key Concepts
 
@@ -29,17 +29,18 @@
 - **TestChkUnimplementedTrailerAlgorithmIsRefused()** (6 connections) — `internal/proxy/request/checksum_test.go`
 - **writeChunks()** (6 connections) — `internal/proxy/request/framing_test.go`
 - **TestChkChecksumControlHeadersAreNotRefused()** (5 connections) — `internal/proxy/request/checksum_test.go`
-- *... and 6 more nodes in this community*
+- *... and 5 more nodes in this community*
 
 ## Relationships
 
-- [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (22 shared connections)
-- [Checksum](Checksum.md) (12 shared connections)
+- [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (21 shared connections)
+- [Payload Hash Verification Tests](Payload_Hash_Verification_Tests.md) (7 shared connections)
 - [aws-chunked Streaming Decoder](aws-chunked_Streaming_Decoder.md) (5 shared connections)
-- [Replication and ACL Handlers](Replication_and_ACL_Handlers.md) (4 shared connections)
+- [Performance](Performance.md) (4 shared connections)
+- [Bucket ACL and Accelerate Handlers](Bucket_ACL_and_Accelerate_Handlers.md) (4 shared connections)
 - [Crc64nvme](Crc64nvme.md) (3 shared connections)
+- [Checksum](Checksum.md) (3 shared connections)
 - [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (3 shared connections)
-- [Performance](Performance.md) (1 shared connections)
 - [Exec](Exec.md) (1 shared connections)
 - [Request Parser and Framing Tests](Request_Parser_and_Framing_Tests.md) (1 shared connections)
 
@@ -50,7 +51,7 @@
 
 ## Audit Trail
 
-- EXTRACTED: 148 (91%)
+- EXTRACTED: 146 (91%)
 - INFERRED: 15 (9%)
 - AMBIGUOUS: 0 (0%)
 

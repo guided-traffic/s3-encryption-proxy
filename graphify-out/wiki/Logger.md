@@ -27,11 +27,12 @@
 ## Relationships
 
 - [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (13 shared connections)
-- [Validator](Validator.md) (9 shared connections)
+- [Validator](Validator.md) (6 shared connections)
 - [Object GET Coverage Tests](Object_GET_Coverage_Tests.md) (3 shared connections)
+- [License Expiry Handling](License_Expiry_Handling.md) (3 shared connections)
 - [Types](Types.md) (2 shared connections)
-- [Configuration Struct and Accessors](Configuration_Struct_and_Accessors.md) (2 shared connections)
-- [Multipart Handler Constructors](Multipart_Handler_Constructors.md) (1 shared connections)
+- [Validation](Validation.md) (2 shared connections)
+- [Multipart Handler Wiring](Multipart_Handler_Wiring.md) (1 shared connections)
 
 ## Source Files
 

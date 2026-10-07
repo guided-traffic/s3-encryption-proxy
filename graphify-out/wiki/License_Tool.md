@@ -34,7 +34,7 @@
 ## Relationships
 
 - [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (15 shared connections)
-- [Shutdown](Shutdown.md) (1 shared connections)
+- [Velero E2E Backup Suite](Velero_E2E_Backup_Suite.md) (1 shared connections)
 - [Validator](Validator.md) (1 shared connections)
 
 ## Source Files

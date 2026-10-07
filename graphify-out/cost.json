@@ -31,6 +31,14 @@
       "input_tokens": 1554452,
       "output_tokens": 0,
       "files": 447
+    },
+    {
+      "date": "2026-10-07T10:48:33.647653+00:00",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "subagent_tokens": 1210782,
+      "note": "incremental --update --wiki with graphify 0.9.79; 8 extraction subagents over 68 changed docs, combined in+out tokens measured by the harness; 9 changed code files re-extracted by AST; 2 deleted docs pruned; communities relabelled",
+      "files": 77
     }
   ],
   "total_input_tokens": 3768399,

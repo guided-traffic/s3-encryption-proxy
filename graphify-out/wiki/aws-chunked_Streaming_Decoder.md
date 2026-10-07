@@ -33,12 +33,12 @@
 - [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (17 shared connections)
 - [Checksum Verifier Tests](Checksum_Verifier_Tests.md) (5 shared connections)
 - [Request Parser and Framing Tests](Request_Parser_and_Framing_Tests.md) (4 shared connections)
-- [Multipart Handler Constructors](Multipart_Handler_Constructors.md) (2 shared connections)
+- [Multipart Handler Wiring](Multipart_Handler_Wiring.md) (2 shared connections)
 - [Streaming Aws Decoder](Streaming_Aws_Decoder.md) (2 shared connections)
-- [Replication and ACL Handlers](Replication_and_ACL_Handlers.md) (2 shared connections)
+- [Bucket ACL and Accelerate Handlers](Bucket_ACL_and_Accelerate_Handlers.md) (2 shared connections)
 - [Segmented Manager Streaming IO](Segmented_Manager_Streaming_IO.md) (1 shared connections)
-- [Multipart Semantics and ETag Marker](Multipart_Semantics_and_ETag_Marker.md) (1 shared connections)
-- [Checksum](Checksum.md) (1 shared connections)
+- [Short-Part Budget and Memory](Short-Part_Budget_and_Memory.md) (1 shared connections)
+- [Payload Hash Verification Tests](Payload_Hash_Verification_Tests.md) (1 shared connections)
 
 ## Source Files
 

@@ -28,11 +28,10 @@
 ## Relationships
 
 - [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (5 shared connections)
-- [Response Header Helpers](Response_Header_Helpers.md) (2 shared connections)
+- [Object Response Header Helpers](Object_Response_Header_Helpers.md) (3 shared connections)
 - [Object Listing Handler](Object_Listing_Handler.md) (1 shared connections)
-- [Bucket Website and Create/Delete](Bucket_Website_and_Create-Delete.md) (1 shared connections)
-- [Complete](Complete.md) (1 shared connections)
-- [Replication and ACL Handlers](Replication_and_ACL_Handlers.md) (1 shared connections)
+- [Multipart ListParts Handler](Multipart_ListParts_Handler.md) (1 shared connections)
+- [Bucket ACL and Accelerate Handlers](Bucket_ACL_and_Accelerate_Handlers.md) (1 shared connections)
 
 ## Source Files
 

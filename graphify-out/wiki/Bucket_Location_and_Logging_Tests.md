@@ -34,9 +34,9 @@
 ## Relationships
 
 - [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (23 shared connections)
-- [Bucket Crud](Bucket_Crud.md) (4 shared connections)
+- [Bucket Sub-Resource Handler Registry](Bucket_Sub-Resource_Handler_Registry.md) (4 shared connections)
 - [MockS3Backend Object Operations](MockS3Backend_Object_Operations.md) (1 shared connections)
-- [Multipart Handler Constructors](Multipart_Handler_Constructors.md) (1 shared connections)
+- [Multipart Handler Wiring](Multipart_Handler_Wiring.md) (1 shared connections)
 
 ## Source Files
 

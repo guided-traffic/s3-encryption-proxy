@@ -1,6 +1,6 @@
 # Object Listing Handler
 
-> 20 nodes · cohesion 0.19
+> 23 nodes · cohesion 0.16
 
 ## Key Concepts
 
@@ -21,27 +21,31 @@
 - **decodeBackendValue()** (3 connections) — `internal/proxy/handlers/bucket/listing_params.go`
 - **encodeForClient()** (3 connections) — `internal/proxy/handlers/bucket/listing_params.go`
 - **parseMaxKeys()** (3 connections) — `internal/proxy/handlers/bucket/listing_params.go`
+- **identity.go** (3 connections) — `internal/proxy/middleware/identity.go`
 - **response/xml.go** (3 connections) — `internal/proxy/response/xml.go`
-- **listing.go** (1 connections) — `internal/proxy/handlers/bucket/listing.go`
+- **Listings report plaintext size** (2 connections) — `docs/developer/request-paths.md`
+- **listing.go** (2 connections) — `internal/proxy/handlers/bucket/listing.go`
 - **ownerEntry** (1 connections)
+- **clientIdentityKey** (1 connections) — `internal/proxy/middleware/identity.go`
 
 ## Relationships
 
-- [Replication and ACL Handlers](Replication_and_ACL_Handlers.md) (5 shared connections)
-- [Bucket Website and Create/Delete](Bucket_Website_and_Create-Delete.md) (4 shared connections)
-- [ACL, CORS and Lifecycle Handlers](ACL,_CORS_and_Lifecycle_Handlers.md) (2 shared connections)
-- [S3 Signing Helper](S3_Signing_Helper.md) (2 shared connections)
-- [Multipart Handler Constructors](Multipart_Handler_Constructors.md) (2 shared connections)
+- [Bucket ACL and Accelerate Handlers](Bucket_ACL_and_Accelerate_Handlers.md) (9 shared connections)
+- [Object Response Header Helpers](Object_Response_Header_Helpers.md) (2 shared connections)
+- [Health Probes and Request Tracker](Health_Probes_and_Request_Tracker.md) (2 shared connections)
+- [Multipart Handler Wiring](Multipart_Handler_Wiring.md) (2 shared connections)
 - [ETag Marker Codec](ETag_Marker_Codec.md) (1 shared connections)
 - [Segmented GCM](Segmented_GCM.md) (1 shared connections)
+- [Storage Format Integrity Guarantees](Storage_Format_Integrity_Guarantees.md) (1 shared connections)
 - [Listing Document](Listing_Document.md) (1 shared connections)
-- [List](List.md) (1 shared connections)
-- [MockS3Backend Bucket Operations](MockS3Backend_Bucket_Operations.md) (1 shared connections)
-- [ListBuckets Root Handler](ListBuckets_Root_Handler.md) (1 shared connections)
+- [ListBuckets Coverage Tests](ListBuckets_Coverage_Tests.md) (1 shared connections)
+- [Multipart ListParts Handler](Multipart_ListParts_Handler.md) (1 shared connections)
+- [MockS3Backend Tagging and Policy](MockS3Backend_Tagging_and_Policy.md) (1 shared connections)
 - [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (1 shared connections)
 
 ## Source Files
 
+- `docs/developer/request-paths.md`
 - `internal/proxy/handlers/bucket/listing.go`
 - `internal/proxy/handlers/bucket/listing_document.go`
 - `internal/proxy/handlers/bucket/listing_params.go`
@@ -51,8 +55,8 @@
 
 ## Audit Trail
 
-- EXTRACTED: 49 (83%)
-- INFERRED: 10 (17%)
+- EXTRACTED: 53 (84%)
+- INFERRED: 10 (16%)
 - AMBIGUOUS: 0 (0%)
 
 ---

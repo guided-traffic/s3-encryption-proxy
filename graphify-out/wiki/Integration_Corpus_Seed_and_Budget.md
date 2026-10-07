@@ -34,12 +34,12 @@
 ## Relationships
 
 - [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (28 shared connections)
-- [Large Multipart and DEK Cache Tests](Large_Multipart_and_DEK_Cache_Tests.md) (4 shared connections)
+- [Streaming Integration Test Harness](Streaming_Integration_Test_Harness.md) (4 shared connections)
 - [Segmented Session Lifecycle](Segmented_Session_Lifecycle.md) (1 shared connections)
 - [Server](Server.md) (1 shared connections)
 - [DEK Cache and Provider Manager](DEK_Cache_and_Provider_Manager.md) (1 shared connections)
-- [Complete](Complete.md) (1 shared connections)
-- [MockS3Backend Bucket Operations](MockS3Backend_Bucket_Operations.md) (1 shared connections)
+- [Encryption Mode Proxy Instances](Encryption_Mode_Proxy_Instances.md) (1 shared connections)
+- [MockS3Backend Tagging and Policy](MockS3Backend_Tagging_and_Policy.md) (1 shared connections)
 - [Performance Test Client](Performance_Test_Client.md) (1 shared connections)
 
 ## Source Files

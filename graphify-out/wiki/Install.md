@@ -4,7 +4,7 @@
 
 ## Key Concepts
 
-- **install.sh** (10 connections) — `deploy/helm/install.sh`
+- **install.sh** (11 connections) — `deploy/helm/install.sh`
 - **main()** (7 connections) — `deploy/helm/install.sh`
 - **install_chart()** (5 connections) — `deploy/helm/install.sh`
 - **check_prerequisites()** (4 connections) — `deploy/helm/install.sh`
@@ -18,7 +18,7 @@
 
 ## Relationships
 
-- No strong cross-community connections detected
+- [Changelog and Project Front Page](Changelog_and_Project_Front_Page.md) (1 shared connections)
 
 ## Source Files
 
@@ -26,7 +26,7 @@
 
 ## Audit Trail
 
-- EXTRACTED: 22 (100%)
+- EXTRACTED: 23 (100%)
 - INFERRED: 0 (0%)
 - AMBIGUOUS: 0 (0%)
 

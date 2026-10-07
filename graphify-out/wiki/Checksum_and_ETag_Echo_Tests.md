@@ -1,6 +1,6 @@
 # Checksum and ETag Echo Tests
 
-> 82 nodes · cohesion 0.10
+> 78 nodes · cohesion 0.11
 
 ## Key Concepts
 
@@ -11,7 +11,6 @@
 - **ObjPutcapturePut()** (28 connections) — `internal/proxy/handlers/object/objectput_coverage_test.go`
 - **ObjPutwireMultipart()** (20 connections) — `internal/proxy/handlers/object/objectput_coverage_test.go`
 - **ObjPutparseError()** (19 connections) — `internal/proxy/handlers/object/objectput_coverage_test.go`
-- **TestObjTagEveryObjectVerbAnswersTheMarker()** (14 connections) — `internal/proxy/handlers/object/etag_marker_test.go`
 - **TestObjPutAutoMultipartRoundTripsThroughEveryStage()** (12 connections) — `internal/proxy/handlers/object/objectput_coverage_test.go`
 - **ObjPutdigest()** (11 connections) — `internal/proxy/handlers/object/objectput_coverage_test.go`
 - **ObjPutreadBack()** (11 connections) — `internal/proxy/handlers/object/objectput_coverage_test.go`
@@ -29,22 +28,23 @@
 - **TestObjCrcARefusedUploadStatesNoChecksum()** (8 connections) — `internal/proxy/handlers/object/checksum_echo_test.go`
 - **ObjPutdropCall()** (8 connections) — `internal/proxy/handlers/object/objectput_coverage_test.go`
 - **TestObjPutAutoMultipartAbortsOnEveryFailureAfterCreate()** (8 connections) — `internal/proxy/handlers/object/objectput_coverage_test.go`
-- *... and 57 more nodes in this community*
+- **TestObjPutAutoMultipartExitProviderStillAbortsTheS3Upload()** (8 connections) — `internal/proxy/handlers/object/objectput_coverage_test.go`
+- *... and 53 more nodes in this community*
 
 ## Relationships
 
-- [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (51 shared connections)
-- [Object GET Coverage Tests](Object_GET_Coverage_Tests.md) (16 shared connections)
-- [MockS3Backend Multipart Operations](MockS3Backend_Multipart_Operations.md) (3 shared connections)
-- [Replication and ACL Handlers](Replication_and_ACL_Handlers.md) (2 shared connections)
-- [DeleteObjects Handler Tests](DeleteObjects_Handler_Tests.md) (1 shared connections)
+- [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (50 shared connections)
+- [Object GET Coverage Tests](Object_GET_Coverage_Tests.md) (10 shared connections)
+- [Bucket ACL and Accelerate Handlers](Bucket_ACL_and_Accelerate_Handlers.md) (2 shared connections)
+- [MockS3Backend Multipart Operations](MockS3Backend_Multipart_Operations.md) (2 shared connections)
+- [Object Dispatch Coverage Tests](Object_Dispatch_Coverage_Tests.md) (1 shared connections)
 - [Orchestration Manager Coverage](Orchestration_Manager_Coverage.md) (1 shared connections)
-- [Multipart Handler Constructors](Multipart_Handler_Constructors.md) (1 shared connections)
+- [Multipart Handler Wiring](Multipart_Handler_Wiring.md) (1 shared connections)
 - [Segmented GCM](Segmented_GCM.md) (1 shared connections)
-- [Response Header Helpers](Response_Header_Helpers.md) (1 shared connections)
+- [Health Probes and Request Tracker](Health_Probes_and_Request_Tracker.md) (1 shared connections)
 - [XML Document Marshalling](XML_Document_Marshalling.md) (1 shared connections)
 - [DEK Cache and Provider Manager](DEK_Cache_and_Provider_Manager.md) (1 shared connections)
-- [MockS3Backend Bucket Operations](MockS3Backend_Bucket_Operations.md) (1 shared connections)
+- [MockS3Backend Abort and ACL Stubs](MockS3Backend_Abort_and_ACL_Stubs.md) (1 shared connections)
 
 ## Source Files
 
@@ -54,8 +54,8 @@
 
 ## Audit Trail
 
-- EXTRACTED: 361 (88%)
-- INFERRED: 51 (12%)
+- EXTRACTED: 352 (89%)
+- INFERRED: 43 (11%)
 - AMBIGUOUS: 0 (0%)
 
 ---

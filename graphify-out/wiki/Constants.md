@@ -12,7 +12,7 @@
 
 ## Relationships
 
-- [Large Multipart and DEK Cache Tests](Large_Multipart_and_DEK_Cache_Tests.md) (1 shared connections)
+- [Streaming Integration Test Harness](Streaming_Integration_Test_Harness.md) (1 shared connections)
 
 ## Source Files
 

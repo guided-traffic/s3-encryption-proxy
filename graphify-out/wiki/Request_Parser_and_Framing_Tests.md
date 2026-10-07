@@ -1,6 +1,6 @@
 # Request Parser and Framing Tests
 
-> 43 nodes · cohesion 0.10
+> 42 nodes · cohesion 0.10
 
 ## Key Concepts
 
@@ -29,17 +29,18 @@
 - **TestReadBody_IdentityBody()** (4 connections) — `internal/proxy/request/parser_test.go`
 - **TestStreamingReader_NilBody()** (4 connections) — `internal/proxy/request/parser_test.go`
 - **TestIsAWSChunkedRequest_Headers()** (4 connections) — `internal/proxy/request/streaming_aws_decoder_test.go`
-- *... and 18 more nodes in this community*
+- *... and 17 more nodes in this community*
 
 ## Relationships
 
 - [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (28 shared connections)
-- [Replication and ACL Handlers](Replication_and_ACL_Handlers.md) (6 shared connections)
+- [Bucket ACL and Accelerate Handlers](Bucket_ACL_and_Accelerate_Handlers.md) (5 shared connections)
 - [aws-chunked Streaming Decoder](aws-chunked_Streaming_Decoder.md) (4 shared connections)
 - [Segmented Manager Streaming IO](Segmented_Manager_Streaming_IO.md) (3 shared connections)
-- [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (3 shared connections)
+- [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (2 shared connections)
 - [Checksum Verifier Tests](Checksum_Verifier_Tests.md) (1 shared connections)
-- [ListBuckets Root Handler](ListBuckets_Root_Handler.md) (1 shared connections)
+- [ListBuckets Coverage Tests](ListBuckets_Coverage_Tests.md) (1 shared connections)
+- [Upload Length Guards and Exit Provider](Upload_Length_Guards_and_Exit_Provider.md) (1 shared connections)
 
 ## Source Files
 
@@ -52,7 +53,7 @@
 
 ## Audit Trail
 
-- EXTRACTED: 96 (72%)
+- EXTRACTED: 94 (72%)
 - INFERRED: 37 (28%)
 - AMBIGUOUS: 0 (0%)
 

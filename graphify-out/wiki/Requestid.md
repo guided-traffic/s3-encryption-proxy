@@ -1,6 +1,6 @@
 # Requestid
 
-> 11 nodes · cohesion 0.33
+> 12 nodes · cohesion 0.29
 
 ## Key Concepts
 
@@ -14,27 +14,28 @@
 - **NewRequestID()** (3 connections) — `internal/proxy/middleware/requestid.go`
 - **TestMwRequestIDIsEmptyOutsideTheMiddleware()** (3 connections) — `internal/proxy/middleware/requestid_test.go`
 - **TestMwRequestIDIsUniquePerRequest()** (3 connections) — `internal/proxy/middleware/requestid_test.go`
+- **.Middleware()** (3 connections) — `internal/proxy/middleware/logging.go`
 - **requestIDKey** (1 connections) — `internal/proxy/middleware/requestid.go`
 
 ## Relationships
 
 - [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (4 shared connections)
+- [Bucket ACL and Accelerate Handlers](Bucket_ACL_and_Accelerate_Handlers.md) (2 shared connections)
+- [CORS Middleware and SSE-C Stripping](CORS_Middleware_and_SSE-C_Stripping.md) (2 shared connections)
 - [Router](Router.md) (1 shared connections)
-- [Bucket Website and Create/Delete](Bucket_Website_and_Create-Delete.md) (1 shared connections)
-- [Replication and ACL Handlers](Replication_and_ACL_Handlers.md) (1 shared connections)
-- [MockS3Backend Bucket Operations](MockS3Backend_Bucket_Operations.md) (1 shared connections)
-- [HTTP Middleware Coverage Tests](HTTP_Middleware_Coverage_Tests.md) (1 shared connections)
-- [CORS Middleware and SSE-C Stripping](CORS_Middleware_and_SSE-C_Stripping.md) (1 shared connections)
+- [MockS3Backend Tagging and Policy](MockS3Backend_Tagging_and_Policy.md) (1 shared connections)
+- [Logging Middleware](Logging_Middleware.md) (1 shared connections)
 
 ## Source Files
 
+- `internal/proxy/middleware/logging.go`
 - `internal/proxy/middleware/requestid.go`
 - `internal/proxy/middleware/requestid_test.go`
 
 ## Audit Trail
 
-- EXTRACTED: 20 (71%)
-- INFERRED: 8 (29%)
+- EXTRACTED: 22 (73%)
+- INFERRED: 8 (27%)
 - AMBIGUOUS: 0 (0%)
 
 ---

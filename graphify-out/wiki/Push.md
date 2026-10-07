@@ -11,7 +11,7 @@
 
 ## Relationships
 
-- [Pipeline](Pipeline.md) (1 shared connections)
+- [CI Pipeline and Renovate Jobs](CI_Pipeline_and_Renovate_Jobs.md) (1 shared connections)
 
 ## Source Files
 

@@ -1,12 +1,11 @@
 # Backend Call Observation
 
-> 21 nodes · cohesion 0.38
+> 20 nodes · cohesion 0.38
 
 ## Key Concepts
 
 - **backend_test.go** (18 connections) — `internal/monitoring/backend_test.go`
 - **MonresetBackendObservation()** (16 connections) — `internal/monitoring/backend_test.go`
-- **MondefaultMetric()** (16 connections) — `internal/monitoring/metrics_coverage_test.go`
 - **ObserveBackendClient()** (13 connections) — `internal/monitoring/backend.go`
 - **.Do()** (13 connections) — `internal/monitoring/backend_test.go`
 - **MonbackendRequest()** (12 connections) — `internal/monitoring/backend_test.go`
@@ -28,25 +27,25 @@
 
 ## Relationships
 
-- [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (15 shared connections)
-- [Backend](Backend.md) (8 shared connections)
-- [Monitoring Status Endpoint](Monitoring_Status_Endpoint.md) (6 shared connections)
-- [Metrics](Metrics.md) (5 shared connections)
-- [Replication and ACL Handlers](Replication_and_ACL_Handlers.md) (2 shared connections)
+- [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (14 shared connections)
+- [Metrics](Metrics.md) (7 shared connections)
+- [Backend](Backend.md) (5 shared connections)
+- [Monitoring Status Endpoint](Monitoring_Status_Endpoint.md) (4 shared connections)
+- [Monitoring Backend Stub](Monitoring_Backend_Stub.md) (2 shared connections)
+- [Bucket ACL and Accelerate Handlers](Bucket_ACL_and_Accelerate_Handlers.md) (2 shared connections)
 - [Backend Client](Backend_Client.md) (1 shared connections)
+- [Monitoring Failing Body Stub](Monitoring_Failing_Body_Stub.md) (1 shared connections)
 - [Monitoring HTTP Server](Monitoring_HTTP_Server.md) (1 shared connections)
-- [Monitoring Middleware Tests](Monitoring_Middleware_Tests.md) (1 shared connections)
 
 ## Source Files
 
 - `internal/monitoring/backend.go`
 - `internal/monitoring/backend_test.go`
-- `internal/monitoring/metrics_coverage_test.go`
 
 ## Audit Trail
 
-- EXTRACTED: 84 (71%)
-- INFERRED: 34 (29%)
+- EXTRACTED: 78 (72%)
+- INFERRED: 31 (28%)
 - AMBIGUOUS: 0 (0%)
 
 ---

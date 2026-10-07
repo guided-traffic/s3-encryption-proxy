@@ -15,19 +15,20 @@
 - **Client part sizes must cover whole 64 KiB segments** (2 connections) — `docs/operations/s3-api.md`
 - **multipart_short_part_buffer_size bounds held last parts** (2 connections) — `docs/operations/s3-api.md`
 - **SSE-C headers answer 501 NotImplemented** (2 connections) — `docs/operations/s3-api.md`
+- **SSE-C buys compatibility, not security** (2 connections) — `docs/tickets/026-sse-c-passthrough.md`
 - **Two-process coverage merge, one toolchain** (1 connections) — `docs/developer/testing.md`
 - **LINT_TAGS covers the tagged trees** (1 connections) — `docs/developer/testing.md`
 - **MinIO is the oracle, AWS docs are the specification** (1 connections) — `docs/developer/testing.md`
 - **Paid-run bucket policy (scoped sub-user)** (1 connections) — `docs/developer/testing.md`
 - **Part numbers run 1 to 9999** (1 connections) — `docs/operations/s3-api.md`
-- **SSE-C buys compatibility, not security** (1 connections) — `docs/tickets/026-sse-c-passthrough.md`
 - **The customer key is never logged, stored or cached** (1 connections) — `docs/tickets/026-sse-c-passthrough.md`
 
 ## Relationships
 
 - [Conformance Run](Conformance_Run.md) (1 shared connections)
-- [Monitoring](Monitoring.md) (1 shared connections)
-- [Integrity](Integrity.md) (1 shared connections)
+- [Multipart Part Layout Decisions](Multipart_Part_Layout_Decisions.md) (1 shared connections)
+- [Integration Test Layers](Integration_Test_Layers.md) (1 shared connections)
+- [Storage Format Integrity Guarantees](Storage_Format_Integrity_Guarantees.md) (1 shared connections)
 
 ## Source Files
 
@@ -37,8 +38,8 @@
 
 ## Audit Trail
 
-- EXTRACTED: 17 (81%)
-- INFERRED: 4 (19%)
+- EXTRACTED: 17 (77%)
+- INFERRED: 5 (23%)
 - AMBIGUOUS: 0 (0%)
 
 ---

@@ -28,18 +28,18 @@
 
 ## Relationships
 
-- [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (39 shared connections)
+- [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (30 shared connections)
 - [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (15 shared connections)
-- [S3 Error Document Writer](S3_Error_Document_Writer.md) (9 shared connections)
 - [S3 Error Mapping](S3_Error_Mapping.md) (9 shared connections)
-- [Multipart Handler Constructors](Multipart_Handler_Constructors.md) (6 shared connections)
+- [S3 Error Document Writer](S3_Error_Document_Writer.md) (8 shared connections)
+- [Bucket Replication Handler](Bucket_Replication_Handler.md) (5 shared connections)
+- [Multipart Handler Wiring](Multipart_Handler_Wiring.md) (5 shared connections)
+- [Bucket Versioning Handler](Bucket_Versioning_Handler.md) (4 shared connections)
 - [CORS Middleware and SSE-C Stripping](CORS_Middleware_and_SSE-C_Stripping.md) (4 shared connections)
 - [Error Mapping Coverage Tests](Error_Mapping_Coverage_Tests.md) (4 shared connections)
-- [Bucket Crud](Bucket_Crud.md) (3 shared connections)
 - [Proxy Server Lifecycle Tests](Proxy_Server_Lifecycle_Tests.md) (3 shared connections)
-- [Multipart Handler Coverage Tests](Multipart_Handler_Coverage_Tests.md) (1 shared connections)
-- [Object GET Coverage Tests](Object_GET_Coverage_Tests.md) (1 shared connections)
-- [ListBuckets Root Handler](ListBuckets_Root_Handler.md) (1 shared connections)
+- [Bucket Lifecycle Handler](Bucket_Lifecycle_Handler.md) (2 shared connections)
+- [Bucket Sub-Resource Handler Registry](Bucket_Sub-Resource_Handler_Registry.md) (1 shared connections)
 
 ## Source Files
 

@@ -1,10 +1,10 @@
 # Ranged Read and Passthrough Tests
 
-> 33 nodes · cohesion 0.22
+> 35 nodes · cohesion 0.21
 
 ## Key Concepts
 
-- **EnsureMinIOAndProxyAvailable()** (122 connections) — `test/integration/minio_test_helper.go`
+- **RandomString()** (65 connections) — `test/integration/minio_test_helper.go`
 - **NewTestContext()** (27 connections) — `test/integration/minio_test_helper.go`
 - **upload_checksum_test.go** (22 connections) — `test/integration/s3-methods/upload_checksum_test.go`
 - **ckSend()** (19 connections) — `test/integration/s3-methods/upload_checksum_test.go`
@@ -27,36 +27,37 @@
 - **ckFramed()** (7 connections) — `test/integration/s3-methods/upload_checksum_test.go`
 - **ckRequireAbsent()** (7 connections) — `test/integration/s3-methods/upload_checksum_test.go`
 - **TestCkCompleteMultipartDoesNotUnescapeIntoMarkup()** (7 connections) — `test/integration/s3-methods/upload_checksum_test.go`
-- **TestRangeReadErrors()** (5 connections) — `test/integration/360-degree-variants/range_read_test.go`
-- **TestRangeReadsOnEncryptedObjects()** (4 connections) — `test/integration/360-degree-variants/range_read_test.go`
-- *... and 8 more nodes in this community*
+- **TestListBucketsOperation()** (5 connections) — `test/integration/s3-methods/list_buckets_test.go`
+- **TestDeleteObjectFunctionality()** (4 connections) — `test/integration/s3-methods/delete_object_test.go`
+- *... and 10 more nodes in this community*
 
 ## Relationships
 
-- [S3 Method Error Mapping Tests](S3_Method_Error_Mapping_Tests.md) (29 shared connections)
+- [AWS-Chunked Reader Tests](AWS-Chunked_Reader_Tests.md) (23 shared connections)
 - [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (22 shared connections)
-- [Multipart Conformance Suite](Multipart_Conformance_Suite.md) (17 shared connections)
-- [Authentication Integration Tests](Authentication_Integration_Tests.md) (17 shared connections)
-- [Streaming Upload and Sealed Checksum](Streaming_Upload_and_Sealed_Checksum.md) (12 shared connections)
-- [Chunked Streaming Test Harness](Chunked_Streaming_Test_Harness.md) (11 shared connections)
-- [DeleteObjects Batch Documents](DeleteObjects_Batch_Documents.md) (10 shared connections)
-- [Encryption-at-Rest Assertions](Encryption-at-Rest_Assertions.md) (10 shared connections)
-- [ListObjects Conformance Fixtures](ListObjects_Conformance_Fixtures.md) (8 shared connections)
-- [Large Multipart and DEK Cache Tests](Large_Multipart_and_DEK_Cache_Tests.md) (7 shared connections)
-- [Range Conformance](Range_Conformance.md) (5 shared connections)
-- [Segment Tamper](Segment_Tamper.md) (3 shared connections)
+- [Integration Failing Writer Fixtures](Integration_Failing_Writer_Fixtures.md) (11 shared connections)
+- [Streaming Upload and Sealed Checksum](Streaming_Upload_and_Sealed_Checksum.md) (10 shared connections)
+- [Range Conformance](Range_Conformance.md) (6 shared connections)
+- [Multipart Conformance Suite](Multipart_Conformance_Suite.md) (5 shared connections)
+- [Streaming Integration Test Harness](Streaming_Integration_Test_Harness.md) (4 shared connections)
+- [DeleteObjects Batch Documents](DeleteObjects_Batch_Documents.md) (4 shared connections)
+- [Conditional Requests](Conditional_Requests.md) (3 shared connections)
+- [S3 Method Error Mapping Tests](S3_Method_Error_Mapping_Tests.md) (3 shared connections)
+- [ListObjects Conformance Fixtures](ListObjects_Conformance_Fixtures.md) (3 shared connections)
+- [Shutdown](Shutdown.md) (1 shared connections)
 
 ## Source Files
 
-- `test/integration/360-degree-variants/range_read_test.go`
 - `test/integration/minio_test_helper.go`
+- `test/integration/s3-methods/delete_object_test.go`
+- `test/integration/s3-methods/list_buckets_test.go`
 - `test/integration/s3-methods/passthrough_operations_test.go`
 - `test/integration/s3-methods/upload_checksum_test.go`
 
 ## Audit Trail
 
-- EXTRACTED: 269 (97%)
-- INFERRED: 7 (3%)
+- EXTRACTED: 217 (99%)
+- INFERRED: 2 (1%)
 - AMBIGUOUS: 0 (0%)
 
 ---

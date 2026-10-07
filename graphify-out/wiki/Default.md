@@ -4,18 +4,17 @@
 
 ## Key Concepts
 
-- **values.yaml (chart defaults)** (5 connections) — `deploy/helm/s3-encryption-proxy/values.yaml`
-- **The image default is aes, not exit, so a missing key refuses the start** (2 connections) — `config/default.yaml`
+- **values.yaml (chart defaults)** (4 connections) — `deploy/helm/s3-encryption-proxy/values.yaml`
 - **config/default.yaml (the configuration the image starts with)** (2 connections) — `config/default.yaml`
 - **values-production.yaml** (2 connections) — `deploy/helm/s3-encryption-proxy/values-production.yaml`
 - **Chart version, appVersion and image tag rewritten from the release tag** (1 connections) — `.github/workflows/push.yml`
+- **The image default is aes, not exit, so a missing key refuses the start** (1 connections) — `config/default.yaml`
 - **values-development.yaml** (1 connections) — `deploy/helm/s3-encryption-proxy/values-development.yaml`
 - **values-monitoring.yaml** (1 connections) — `deploy/helm/s3-encryption-proxy/values-monitoring.yaml`
 
 ## Relationships
 
-- [Hostile Backend Threat Model](Hostile_Backend_Threat_Model.md) (1 shared connections)
-- [Configmap](Configmap.md) (1 shared connections)
+- No strong cross-community connections detected
 
 ## Source Files
 
@@ -28,8 +27,8 @@
 
 ## Audit Trail
 
-- EXTRACTED: 6 (75%)
-- INFERRED: 2 (25%)
+- EXTRACTED: 5 (83%)
+- INFERRED: 1 (17%)
 - AMBIGUOUS: 0 (0%)
 
 ---

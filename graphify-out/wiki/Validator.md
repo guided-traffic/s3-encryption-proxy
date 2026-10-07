@@ -1,6 +1,6 @@
 # Validator
 
-> 18 nodes · cohesion 0.18
+> 15 nodes · cohesion 0.21
 
 ## Key Concepts
 
@@ -11,9 +11,6 @@
 - **LicforeignKey()** (5 connections) — `internal/license/validator_coverage_test.go`
 - **LicsignWith()** (5 connections) — `internal/license/validator_coverage_test.go`
 - **LicclaimsFor()** (4 connections) — `internal/license/validator_coverage_test.go`
-- **LicclearLicenseEnv()** (4 connections) — `internal/license/validator_coverage_test.go`
-- **TestLicLoadLicenseFromEnvIsOneName()** (4 connections) — `internal/license/validator_coverage_test.go`
-- **TestLicLoadLicensePrefersEnvironment()** (4 connections) — `internal/license/validator_coverage_test.go`
 - **TestLicParseEmbeddedPublicKey()** (4 connections) — `internal/license/validator_coverage_test.go`
 - **TestLicStopIsIdempotent()** (4 connections) — `internal/license/validator_coverage_test.go`
 - **TestLicStopReturnsWhenMonitoringNeverStarted()** (4 connections) — `internal/license/validator_coverage_test.go`
@@ -25,11 +22,12 @@
 
 ## Relationships
 
-- [Validator](Validator.md) (13 shared connections)
-- [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (12 shared connections)
+- [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (9 shared connections)
+- [License Expiry Handling](License_Expiry_Handling.md) (8 shared connections)
+- [License Loading](License_Loading.md) (6 shared connections)
 - [Logger](Logger.md) (6 shared connections)
 - [Types](Types.md) (2 shared connections)
-- [Shutdown](Shutdown.md) (1 shared connections)
+- [Velero E2E Backup Suite](Velero_E2E_Backup_Suite.md) (1 shared connections)
 - [License Tool](License_Tool.md) (1 shared connections)
 
 ## Source Files
@@ -38,8 +36,8 @@
 
 ## Audit Trail
 
-- EXTRACTED: 55 (89%)
-- INFERRED: 7 (11%)
+- EXTRACTED: 50 (91%)
+- INFERRED: 5 (9%)
 - AMBIGUOUS: 0 (0%)
 
 ---

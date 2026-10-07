@@ -1,33 +1,33 @@
 # EnsureMinIOAndProxyAvailable()
 
-> God node · 122 connections · `test/integration/minio_test_helper.go`
+> God node · 109 connections · `test/integration/minio_test_helper.go`
 
-**Community:** [Ranged Read and Passthrough Tests](Ranged_Read_and_Passthrough_Tests.md)
+**Community:** [AWS-Chunked Reader Tests](AWS-Chunked_Reader_Tests.md)
 
 ## Connections by Relation
 
 ### calls
-- TestEncEveryPutPathStoresCiphertext() `EXTRACTED`
-- TestEncAWSChunkedFramingStoresCiphertext() `EXTRACTED`
-- TestSegmentChainRefusesTamperedBytes() `EXTRACTED`
-- TestEncClientDrivenMultipartStoresCiphertext() `EXTRACTED`
 - TestMpuThreePartRoundTrip() `EXTRACTED`
 - TestComprehensiveMultipartUpload() `EXTRACTED`
-- TestEncClientMetadataInsideThePrefixIsRefused() `EXTRACTED`
 - TestMpuPartsUploadedOutOfOrder() `EXTRACTED`
 - TestComprehensiveSinglePartUpload() `EXTRACTED`
 - TestDelBatchDeleteThreeExistingKeys() `EXTRACTED`
-- TestEncCopyObjectNeverStoresPlaintext() `EXTRACTED`
 - TestMpuHeldPartResentAtStreamingSize() `EXTRACTED`
 - TestSinglePartUploadCornerCases() `EXTRACTED`
+- TestSegmentChainRefusesTamperedBytes() `EXTRACTED`
 - TestDelBatchDeleteIntegrityHeaderIsEnforced() `EXTRACTED`
 - TestDelBatchDeleteKeysNeedingXMLEscaping() `EXTRACTED`
 - TestDelBatchDeleteMixOfExistingAndMissingKeys() `EXTRACTED`
 - TestDelBatchDeleteQuietMode() `EXTRACTED`
-- TestEncStreamedPutWithoutContentLengthStoresCiphertext() `EXTRACTED`
-- TestEncUploadPartCopyNeverStoresPlaintext() `EXTRACTED`
 - lstNewRefFixture() `EXTRACTED`
-- *…and 100 more `calls` connection(s) not listed (lowest-degree first to go)*
+- TestLstListingDocumentOnTheWire() `EXTRACTED`
+- TestMpuAbortRemovesTheUpload() `EXTRACTED`
+- TestMpuCompleteWithBadPartReferences() `EXTRACTED`
+- TestMpuCompleteWithPartsOutOfOrder() `EXTRACTED`
+- TestHdrETagIsPresentAndStableAcrossRepeatedHeads() `EXTRACTED`
+- TestHdrHeadReturnsTheSameHeaderSetAsGet() `EXTRACTED`
+- TestDelBatchDeleteRemovesLargeEncryptedObjects() `EXTRACTED`
+- *…and 87 more `calls` connection(s) not listed (lowest-degree first to go)*
 
 ### contains
 - minio_test_helper.go `EXTRACTED`

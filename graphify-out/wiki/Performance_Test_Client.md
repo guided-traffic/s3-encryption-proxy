@@ -1,6 +1,6 @@
 # Performance Test Client
 
-> 23 nodes · cohesion 0.19
+> 24 nodes · cohesion 0.18
 
 ## Key Concepts
 
@@ -24,6 +24,7 @@
 - **testCAPool()** (3 connections) — `test/perf/client.go`
 - **capturePprof()** (3 connections) — `test/perf/memory_test.go`
 - **randomPayload()** (3 connections) — `test/perf/memory_test.go`
+- **crypto/x509.CertPool** (2 connections)
 - **.peak()** (2 connections) — `test/perf/memory_test.go`
 - **isAlreadyOwned()** (2 connections) — `test/perf/client.go`
 - **profileSeconds()** (2 connections) — `test/perf/memory_test.go`
@@ -32,16 +33,16 @@
 
 - [Smallobject](Smallobject.md) (8 shared connections)
 - [Harness](Harness.md) (7 shared connections)
-- [Large Multipart and DEK Cache Tests](Large_Multipart_and_DEK_Cache_Tests.md) (5 shared connections)
-- [MockS3Backend Bucket Operations](MockS3Backend_Bucket_Operations.md) (4 shared connections)
+- [Streaming Integration Test Harness](Streaming_Integration_Test_Harness.md) (5 shared connections)
+- [MockS3Backend Tagging and Policy](MockS3Backend_Tagging_and_Policy.md) (4 shared connections)
 - [Rangeread](Rangeread.md) (4 shared connections)
 - [Throughput](Throughput.md) (4 shared connections)
 - [Readme](Readme.md) (4 shared connections)
 - [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (3 shared connections)
 - [Report](Report.md) (3 shared connections)
-- [Main](Main.md) (2 shared connections)
-- [Backend](Backend.md) (1 shared connections)
-- [Velero E2E Backup Suite](Velero_E2E_Backup_Suite.md) (1 shared connections)
+- [Velero E2E Backup Suite](Velero_E2E_Backup_Suite.md) (2 shared connections)
+- [Perf Stack Detection](Perf_Stack_Detection.md) (2 shared connections)
+- [E2E Harness Backend Client](E2E_Harness_Backend_Client.md) (1 shared connections)
 
 ## Source Files
 
@@ -52,7 +53,7 @@
 
 ## Audit Trail
 
-- EXTRACTED: 62 (62%)
+- EXTRACTED: 63 (62%)
 - INFERRED: 38 (38%)
 - AMBIGUOUS: 0 (0%)
 

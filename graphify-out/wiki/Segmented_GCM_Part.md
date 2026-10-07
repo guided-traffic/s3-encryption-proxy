@@ -18,7 +18,7 @@
 ## Relationships
 
 - [Config Accessors and Dashboard Contract](Config_Accessors_and_Dashboard_Contract.md) (8 shared connections)
-- [Segmented GCM Vector](Segmented_GCM_Vector.md) (1 shared connections)
+- [Segment Encrypt Reader Tests](Segment_Encrypt_Reader_Tests.md) (1 shared connections)
 - [Segmented GCM](Segmented_GCM.md) (1 shared connections)
 
 ## Source Files
