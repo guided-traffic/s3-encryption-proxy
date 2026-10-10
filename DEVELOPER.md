@@ -89,6 +89,8 @@ scripts/
   gen-keys.sh            generates the local key material into the ignored .env; no usable
                          key is tracked, so the demo bring-up, the e2e bring-up and
                          continuous integration call it first
+tools/go.mod             a module of its own pinning golangci-lint, gosec and govulncheck,
+                         which the gates run with `go tool`; Renovate moves it with Go
 docs/
   adr/                   every decision, permanent, with no references into the code
   developer/             the pages above
@@ -179,8 +181,8 @@ read.
 
 | Target | What it does |
 |---|---|
-| `tools` | golangci-lint at the version CI uses, and air for `dev`. `gosec` and `vuln` install nothing: they `go run` their pinned version |
-| `fmt` / `lint` / `static` | formatting, golangci-lint (pinned, v2 module path), `go vet` |
+| `tools` | air for `dev`, and golangci-lint for editors at the version [tools/go.mod](tools/go.mod) pins. No gate needs it: `lint`, `gosec` and `vuln` run their tool through `go tool` against that file |
+| `fmt` / `lint` / `static` | formatting, golangci-lint (pinned in `tools/go.mod`), `go vet` |
 | `quality` | `fmt static lint`, in that order |
 | `gosec` / `vuln` | security scan, vulnerability check |
 | `all-checks` | `quality security` |
@@ -201,8 +203,8 @@ Four rules that are not obvious and have each cost a day:
   the tree at all; `make lint` is the way in, and `make tools` installs the same
   pinned golangci-lint coordinate CI uses.
 - **`make lint` sees the tagged trees too, since 2026-09-13.** `LINT_TAGS` in the
-  Makefile is `integration,conformance,e2e,perf`, and both `go vet` and
-  golangci-lint run once without it and once with it. Before that a change that
+  Makefile is `integration,conformance,e2e,perf`; `go vet` runs once without it
+  and once with it, golangci-lint runs once, with it. Before that a change that
   broke only a tagged tree passed `lint` — most of the Go files in this
   repository were outside it, which is a green that means "not looked at". If you
   add a build tag, add it to `LINT_TAGS` in the same change.
@@ -219,8 +221,40 @@ Spelled out in exactly two files, which must always agree: `Containerfile`
 (`FROM golang:<version>-alpine`, the source of truth for the shipped image, which
 the Makefile parses into `GO_VERSION`) and `go.mod` (`go <version>`, which every
 `setup-go` step reads through `go-version-file`). Everything else derives it.
-Renovate bumps both in one pull request under the group "Go version". Never add a
+Renovate bumps both in one pull request under the group "Go toolchain". Never add a
 third literal.
+
+### The analysis tools move with it
+
+golangci-lint, gosec and govulncheck are pinned in [tools/go.mod](tools/go.mod), a
+module of its own, and the Makefile runs them with `go tool -modfile=tools/go.mod`
+— there is no PATH binary in the gates and no second pin in a workflow. Every
+update to that file joins the "Go toolchain" pull request
+([ADR 0039](docs/adr/0039-the-analysis-tools-move-with-the-go-toolchain.md)):
+
+- **The tools read the compiler's export data** through the `golang.org/x/tools`
+  they are built with, and an older x/tools cannot: Go 1.27.2 writes version 5,
+  x/tools v0.49.0 reads up to 4, and Code Linting and GoSec failed with
+  `export data version 5 is greater than maximum supported version 4` — gosec
+  printing it as "package has type errors". `tools/go.mod` therefore requires
+  x/tools above what the tools ask for, and Renovate keeps it current although it
+  is an indirect requirement. A Go release never waits for a tool release.
+- **One pull request, because two deadlock.** A newly published Go
+  vulnerability fails Vulnerability Check on every pull request until the Go bump
+  lands, and the Go bump fails the other two gates until the tools move. On
+  2026-10-09 that held four Renovate pull requests.
+- **A module of its own, not the root `go.mod`**: the tools' dependencies must not
+  take part in version selection for the shipped binary. `./...` stops at the
+  nested module, so neither the build, the tests nor the gates see it.
+- **Its `go` line is not a pin.** `go mod tidy` derives it from what the tools
+  require. The toolchain that builds them is the one the root `go.mod` selects —
+  CI's `setup-go`, `GO_PIN` for `vuln` — which is why the Makefile runs them from
+  the repository root with `-modfile` and never from inside `tools/`: there the
+  floor would let a workstation build them with whatever Go is on its PATH, and a
+  golangci-lint built with Go 1.26 refuses a module that says 1.27. To move a tool
+  by hand, edit inside `tools/` and run nothing else there:
+  `cd tools && go get <module>@<version> && go mod tidy`; a new tool comes in with
+  `go get -tool <package>@<version>`.
 
 ## Continuous integration and the release
 

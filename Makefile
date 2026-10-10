@@ -1,4 +1,4 @@
-.PHONY: helm-unittest-plugin build build-keygen build-all license-tool generate-license test test-unit test-unit-race test-integration test-integration-race test-integration-tls test-integration-all test-integration-performance test-integration-shutdown test-conformance test-conformance-minio test-conformance-localstack test-conformance-parallel test-conformance-wasabi test-conformance-wasabi-seed perf-baseline perf-baseline-quick perf-baseline-offline perf-compare e2e-up e2e-down test-e2e-velero e2e-velero e2e-rclone-up e2e-rclone-down test-e2e-rclone e2e-rclone e2e-s3cmd-up e2e-s3cmd-down test-e2e-s3cmd e2e-s3cmd coverage test-unit-coverage coverage-integration-collect coverage-report clean run dev deps lint fmt security gosec vuln static quality all-checks helm-lint helm-test helm-install helm-dev helm-prod helm-monitoring run-monitoring test-monitoring
+.PHONY: helm-unittest-plugin build build-keygen build-all license-tool generate-license test test-unit test-unit-race test-integration test-integration-race test-integration-tls test-integration-all test-integration-performance test-integration-shutdown test-conformance test-conformance-minio test-conformance-localstack test-conformance-parallel test-conformance-wasabi test-conformance-wasabi-seed perf-baseline perf-baseline-quick perf-baseline-offline perf-compare e2e-up e2e-down test-e2e-velero e2e-velero e2e-rclone-up e2e-rclone-down test-e2e-rclone e2e-rclone e2e-s3cmd-up e2e-s3cmd-down test-e2e-s3cmd e2e-s3cmd coverage test-unit-coverage coverage-integration-collect coverage-report clean run dev deps tools lint fmt security gosec vuln static quality all-checks helm-lint helm-test helm-install helm-dev helm-prod helm-monitoring run-monitoring test-monitoring
 
 # Go toolchain. The Containerfile FROM line is the single source of truth for
 # the Go version in this repo (see CLAUDE.md, "Go toolchain version"); nothing
@@ -6,6 +6,24 @@
 # lets go download it once if it is not installed.
 GO_VERSION := $(shell sed -n 's/^FROM golang:\([0-9][0-9.]*\)-.*/\1/p' Containerfile)
 GO_PIN := GOTOOLCHAIN=go$(GO_VERSION)
+
+# Analysis tools. golangci-lint, gosec and govulncheck are pinned in
+# tools/go.mod, a module of its own, and run through `go tool` against it --
+# never a PATH binary, never a second pin in a workflow. They read the
+# compiler's export data through the x/tools they are built with, so an x/tools
+# older than the toolchain cannot type-check anything: "export data version 5 is
+# greater than maximum supported version 4" on Go 1.27.2. tools/go.mod therefore
+# requires x/tools above what the tools ask for, and Renovate moves the whole
+# file in one pull request with the Go version (renovate.json, "Go toolchain").
+# Not the root go.mod: the tools' dependencies must not take part in version
+# selection for the shipped binary. Always from the repository root with
+# -modfile, never from inside tools/: the go command picks its toolchain from the
+# go.mod of the directory it runs in, and tools/go.mod states only a floor, so
+# inside tools/ a workstation builds the tools with whatever Go is on its PATH.
+TOOLS_MODFILE := tools/go.mod
+GO_TOOL := go tool -modfile=$(TOOLS_MODFILE)
+# The version tools/go.mod pins for a module, for the log line of each gate.
+tool_version = $(shell go list -modfile=$(TOOLS_MODFILE) -m -f '{{.Version}}' $(1))
 
 # Build variables
 BINARY_NAME=s3-encryption-proxy
@@ -363,7 +381,8 @@ lint: ## Run linting
 		echo "$$unformatted"; \
 		exit 1; \
 	fi
-	golangci-lint run --timeout=5m --build-tags $(LINT_TAGS)
+	@echo "golangci-lint $(call tool_version,github.com/golangci/golangci-lint/v2)"
+	$(GO_TOOL) golangci-lint run --timeout=5m --build-tags $(LINT_TAGS)
 
 # Format the code
 fmt:
@@ -378,46 +397,28 @@ clean:
 	rm -rf $(COVERAGE_DIR)
 
 # Install development tools
-# GOLANGCI_LINT_VERSION is the coordinate CI installs. It must stay identical to
-# the one in .github/workflows/release.yml: .golangci.yml is a v2 configuration
-# and the v1 binary refuses it, so a drift means CI and the workstation lint
-# different trees. The path carries /v2 on purpose -- cmd/golangci-lint@latest
-# still resolves to the last v1 release.
-GOLANGCI_LINT_VERSION := v2.13.1
-
 tools:
 	@echo "Installing development tools..."
 	@# The last unpinned coordinate in this repository. air is a live-reload
 	@# convenience for `make dev` and builds nothing that ships, so a moving
-	@# version cannot change an artifact; gosec, govulncheck and golangci-lint
-	@# are all pinned because they gate.
+	@# version cannot change an artifact. golangci-lint is installed for editors
+	@# only, at the version tools/go.mod pins: `make lint` does not use it.
 	go install github.com/cosmtrek/air@latest
-	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	go install -modfile=$(TOOLS_MODFILE) github.com/golangci/golangci-lint/v2/cmd/golangci-lint
 	@echo "Installed to $$(go env GOPATH)/bin -- make sure it is on your PATH."
 
 # Gosec security scan only
-# gosec loads packages through the go/packages of the x/tools it was built with, so a
-# binary built against an older Go cannot read the export data of a newer toolchain and
-# dies with 'package X without types'. v2.22.8 did exactly that on Go 1.27, in CI and on
-# a workstation whose Homebrew gosec was built with 1.26. go run builds the pinned version
-# with the toolchain that compiles the code, and never picks up a stray PATH binary.
-# Not managed by Renovate; bump by hand together with the Go version.
-GOSEC_VERSION := v2.29.0
-
 gosec:
-	@echo "Running gosec $(GOSEC_VERSION)..."
-	GOFLAGS="-buildvcs=false" go run github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION) ./...
+	@echo "Running gosec $(call tool_version,github.com/securego/gosec/v2)..."
+	GOFLAGS="-buildvcs=false" $(GO_TOOL) gosec ./...
 
 # Vulnerability check
-# Same reasoning as GOSEC_VERSION: a govulncheck built with an older Go refuses packages
-# that require a newer one ("application built with go1.26"), so the binary must be built
-# by the toolchain that compiles the code. The vulnerability database is fetched at run
-# time regardless of the binary version, so pinning costs no freshness.
-GOVULNCHECK_VERSION := v1.7.0
-
+# GO_PIN runs it under the Go version the image is built with, so the standard
+# library it judges is the one that ships. The vulnerability database is fetched
+# at run time regardless of the binary version, so pinning costs no freshness.
 vuln:
-	@echo "Checking for vulnerabilities with govulncheck $(GOVULNCHECK_VERSION)..."
-	$(GO_PIN) GOFLAGS="-buildvcs=false" go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+	@echo "Checking for vulnerabilities with govulncheck $(call tool_version,golang.org/x/vuln)..."
+	$(GO_PIN) GOFLAGS="-buildvcs=false" $(GO_TOOL) govulncheck ./...
 
 # Static analysis. The formatting check lives in `lint`, which fails on it; a
 # second, non-failing copy of it here is how the first one got trusted.

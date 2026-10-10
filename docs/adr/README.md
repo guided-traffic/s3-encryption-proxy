@@ -122,6 +122,7 @@ this column is a reading aid.
 | [0029](0029-the-shutdown-budget-finishes-work-and-sweeps-what-cannot-be-finished.md) | Graceful shutdown goes readiness-false, stop accepting, finish what is running, then end every upload that can no longer be finished | Implemented |
 | [0035](0035-the-readme-advertises-the-reference-lives-under-docs.md) | The README advertises the product and carries the configuration key reference; operator and client reference lives under `docs/operations/` | Implemented; D5 superseded by ADR 0038 |
 | [0038](0038-the-security-architecture-is-one-page-per-perspective.md) | The security architecture is a directory of one page per perspective, each ending with what it does not cover; an open gap keeps a stable `H-<n>` beside its mechanism and a closed one becomes prose, nothing there takes the shape of a ticket, and vulnerability reporting is `SECURITY.md` at the root | Implemented |
+| [0039](0039-the-analysis-tools-move-with-the-go-toolchain.md) | The analysis tools that gate a pull request are pinned in a module of their own, built against the newest `golang.org/x/tools`, and move in one pull request with the Go version; a Go release that needs a tool release keeps that pull request red | Implemented |
 
 ## Related documents
 

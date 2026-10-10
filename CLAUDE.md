@@ -197,10 +197,16 @@ Derived, no literal, do not add one:
 - `Makefile`: `GO_VERSION` / `GO_PIN` (parsed from the Containerfile)
 - `.github/workflows/test-pipeline.yml`: `go-version-file: go.mod` (no `GO_VERSION` env)
 - `README.md` and `.github/release-template.hbs`: the Go badge is the shields.io `go-mod/go-version` endpoint that reads go.mod
+- `tools/go.mod`: its `go` line is not a pin. It is the floor `go mod tidy` derives from what the analysis tools themselves require, and never selects the toolchain that builds them — CI's `setup-go` and `GO_PIN` do. Leave it to `go mod tidy`
 
-Renovate (`renovate.json`) bumps both literals in one PR, group "Go version": the
+Renovate (`renovate.json`) bumps both literals in one PR, group "Go toolchain": the
 `dockerfile` manager handles the Containerfile (depName `golang`), a custom regex
-manager handles the go directive in go.mod (depName `go`). No Renovate PR has
+manager handles the go directive in go.mod (depName `go`), and every update in
+`tools/go.mod` — golangci-lint, gosec, govulncheck and the `golang.org/x/tools`
+they are built with — joins the same PR. The tools read the compiler's export
+data, so a Go bump without them fails Code Linting and GoSec, and a Go
+vulnerability fails Vulnerability Check on every PR until the bump lands: two
+separate PRs wait for each other forever (ADR 0039). No Renovate PR has
 ever bumped the go directive deliberately (the one gomod-manager "Update
 dependency go" PR moved only the since-removed `toolchain` line), which is why
 the regex manager exists. If you introduce a new place that needs the version, derive it
