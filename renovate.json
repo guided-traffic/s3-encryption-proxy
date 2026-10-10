@@ -382,6 +382,16 @@
         "security"
       ],
       "prPriority": 10
+    },
+    {
+      "description": "Routine updates in tools/go.mod are not security updates. The rule above labels every update of an indirect Go requirement 'security' with top priority; until golang.org/x/tools in tools/go.mod became an indirect requirement Renovate moves on purpose, only vulnerability alerts ever reached it. A real alert still gets its security label from the vulnerabilityAlerts block, which Renovate applies after these rules.",
+      "matchFileNames": [
+        "tools/go.mod"
+      ],
+      "labels": [
+        "dependencies"
+      ],
+      "prPriority": 0
     }
   ],
   "vulnerabilityAlerts": {
