@@ -44,6 +44,13 @@ permissions:
 jobs:
   semantic-release-dry-run:
     name: Semantic-Release (dry run)
+    # Open pull requests only. After every release @semantic-release/github labels
+    # the pull requests it shipped `released`, and that `labeled` event arrives
+    # when the head branch is already deleted: the checkout failed, the inspection
+    # below ran on an empty workspace, and every release left one red run per
+    # shipped pull request behind -- 23 of them by 2026-10-10. A closed pull
+    # request has nothing left to gate.
+    if: github.event.pull_request.state == 'open'
     runs-on: self-hosted
     steps:
       # Two checkouts, one condition, and exactly one of them runs.
@@ -146,8 +153,12 @@ jobs:
 
           echo "$findings"
 
-          if [ "$status" -eq 2 ]; then
-            echo "::error::the breaking-change detector failed to run"
+          # Anything but 0 (no marker) and 1 (marker found) means the detector did
+          # not judge: 2 is its usage error, 127 a missing script. Only a 1 may be
+          # reported as a marker -- a missing script once was, on a pull request
+          # whose branch no longer existed.
+          if [ "$status" -ne 0 ] && [ "$status" -ne 1 ]; then
+            echo "::error::the breaking-change detector failed to run (exit $status)"
             exit 1
           fi
 
