@@ -43,11 +43,13 @@ make deps
 make tools
 ```
 
-`make tools` installs `air` (live reload) and `golangci-lint` at the version CI
-pins, v2.13.1. The module path carries `/v2` on purpose:
-`cmd/golangci-lint@latest` still resolves to the last v1 release, and a v1 binary
-refuses the `version: "2"` in [.golangci.yml](.golangci.yml) outright. `gosec`
-and `govulncheck` install nothing — they `go run` their pinned version.
+`make tools` installs `air` (live reload) and, for your editor, the
+`golangci-lint` that [tools/go.mod](tools/go.mod) pins. No gate needs it:
+`make lint`, `make gosec` and `make vuln` run golangci-lint, gosec and
+govulncheck through `go tool` against that file, at exactly the versions CI runs.
+A golangci-lint from anywhere else has to be v2: `cmd/golangci-lint@latest`
+still resolves to the last v1 release, and a v1 binary refuses the
+`version: "2"` in [.golangci.yml](.golangci.yml) outright.
 
 ## Development Workflow
 

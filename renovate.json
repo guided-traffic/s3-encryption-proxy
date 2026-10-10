@@ -25,7 +25,7 @@
   "forkProcessing": "disabled",
   "customManagers": [
     {
-      "description": "Go toolchain: the go directive in go.mod. Renovate's gomod manager has never bumped it here (the two Go version PRs #306 and #323 touched only the Containerfile and the Makefile), so it is matched explicitly and grouped with the Containerfile image by the 'Go version' rule below. Note on the field name, which every custom manager here uses: managerFilePatterns is the current name of what Renovate used to call fileMatch. A locally resolved renovate-config-validator may be Renovate 37, which predates that rename and rejects the field, so a local validation failure on managerFilePatterns means the validator is stale and not that this config is wrong. The Renovate that actually reads this file is renovatebot/github-action@v46.2.5, pinned in .github/workflows/renovate.yml.",
+      "description": "Go toolchain: the go directive in go.mod. Renovate's gomod manager has never bumped it here (the two Go version PRs #306 and #323 touched only the Containerfile and the Makefile), so it is matched explicitly and grouped with the Containerfile image by the 'Go toolchain' rules below. Note on the field name, which every custom manager here uses: managerFilePatterns is the current name of what Renovate used to call fileMatch. A locally resolved renovate-config-validator may be Renovate 37, which predates that rename and rejects the field, so a local validation failure on managerFilePatterns means the validator is stale and not that this config is wrong. The Renovate that actually reads this file is the one renovatebot/github-action runs, pinned in .github/workflows/renovate.yml.",
       "customType": "regex",
       "managerFilePatterns": [
         "/^go\\.mod$/"
@@ -278,12 +278,12 @@
       ]
     },
     {
-      "description": "All Go version pins move in one PR: the Containerfile image (dockerfile manager, depName golang) and the go directive in go.mod (custom manager above, depName go). The Makefile derives its pin from the Containerfile and CI reads go.mod, so nothing else needs touching; see CLAUDE.md, Go toolchain version.",
+      "description": "All Go version pins move in one PR: the Containerfile image (dockerfile manager, depName golang) and the go directive in go.mod (custom manager above, depName go). The Makefile derives its pin from the Containerfile and CI reads go.mod, so nothing else needs touching; see CLAUDE.md, Go toolchain version. The analysis tools join the same group, by the tools/go.mod rule further down.",
       "matchDepNames": [
         "golang",
         "go"
       ],
-      "groupName": "Go version",
+      "groupName": "Go toolchain",
       "automerge": true
     },
     {
@@ -306,6 +306,24 @@
       "matchPackageNames": [
         "/^golang.org/x//"
       ]
+    },
+    {
+      "description": "The analysis tools in tools/go.mod (golangci-lint, gosec, govulncheck, and the x/tools they are built with) move in the Go toolchain PR, never on their own. They read the compiler's export data, so a Go bump that leaves them behind fails Code Linting and GoSec; and a newly published Go vulnerability fails Vulnerability Check on every PR until the Go bump lands. Separate PRs deadlock on exactly that: the Go PR waits for the tools, the tools PR for the Go fix. That held four PRs on 2026-10-09 (Go 1.27.2). Listed after the golang.org/x rule so x/tools and x/vuln from this file do not land in that group.",
+      "matchFileNames": [
+        "tools/go.mod"
+      ],
+      "groupName": "Go toolchain",
+      "automerge": true
+    },
+    {
+      "description": "golang.org/x/tools is an indirect requirement in tools/go.mod, and Renovate leaves indirect requirements alone by default; the tool modules themselves are enabled by their tool directives. x/tools is the one that has to move first: it is what reads the export data a new Go release writes, and tools/go.mod requires it above what the tools ask for so a Go release never waits for a tool release.",
+      "matchFileNames": [
+        "tools/go.mod"
+      ],
+      "matchPackageNames": [
+        "golang.org/x/tools"
+      ],
+      "enabled": true
     },
     {
       "description": "Group non-Go Docker base image updates",
