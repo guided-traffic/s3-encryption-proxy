@@ -1,3 +1,45 @@
+## [5.1.8](https://github.com/guided-traffic/s3-encryption-proxy/compare/v5.1.7...v5.1.8) (2026-10-10)
+
+
+## 📊 Quality Metrics
+
+![Coverage](https://img.shields.io/badge/coverage-93.2%25-brightgreen)
+![Go Version](https://img.shields.io/github/go-mod/go-version/guided-traffic/s3-encryption-proxy?logo=go)
+![Security](https://img.shields.io/badge/security-✅%20passed-green)
+![Linting](https://img.shields.io/badge/linting-✅%20passed-green)
+
+**Test Coverage**: 93.2% of code is covered by tests
+
+
+### Bug Fixes
+
+* **deps:** Update aws-sdk-go-v2 monorepo ([#366](https://github.com/guided-traffic/s3-encryption-proxy/issues/366)) ([0e0eae0](https://github.com/guided-traffic/s3-encryption-proxy/commit/0e0eae0755f28048f213a7aed3809f447c1f7eb2))
+* **deps:** Update module github.com/prometheus/client_golang to v1.25.0 ([#368](https://github.com/guided-traffic/s3-encryption-proxy/issues/368)) ([e622a54](https://github.com/guided-traffic/s3-encryption-proxy/commit/e622a5453d46175f4c38e99f2e5b5ec329325f79))
+* **deps:** Update module google.golang.org/grpc to v1.83.2 [SECURITY] ([#370](https://github.com/guided-traffic/s3-encryption-proxy/issues/370)) ([a9a6466](https://github.com/guided-traffic/s3-encryption-proxy/commit/a9a64668f66dc55facc11ad168f615a9abebbb17))
+
+
+## 🐳 Docker Images
+
+This release is available as a Docker image:
+
+```bash
+# Latest version
+docker pull guidedtraffic/s3-encryption-proxy:latest
+
+# Specific version
+docker pull guidedtraffic/s3-encryption-proxy:5.1.8
+```
+
+**Supported platforms:** linux/amd64
+
+## 📥 Download Assets
+
+Pre-built binaries and coverage reports are attached to this release:
+- `s3-encryption-proxy-v5.1.8-linux-amd64` - Main proxy binary
+- `s3ep-keygen-v5.1.8-linux-amd64` - Key generation utility
+- `coverage-v5.1.8.out` - Coverage profile (Go format)
+- `coverage-v5.1.8.txt` - Coverage report (human readable)
+
 ## [5.1.7](https://github.com/guided-traffic/s3-encryption-proxy/compare/v5.1.6...v5.1.7) (2026-10-10)
 
 
