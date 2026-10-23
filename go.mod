@@ -8,7 +8,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.9
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.23.15
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.4
-	github.com/aws/smithy-go v1.28.5
+	github.com/aws/smithy-go v1.28.6
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
