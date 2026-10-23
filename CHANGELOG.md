@@ -1,3 +1,44 @@
+## [5.1.15](https://github.com/guided-traffic/s3-encryption-proxy/compare/v5.1.14...v5.1.15) (2026-10-23)
+
+
+## 📊 Quality Metrics
+
+![Coverage](https://img.shields.io/badge/coverage-93.2%25-brightgreen)
+![Go Version](https://img.shields.io/github/go-mod/go-version/guided-traffic/s3-encryption-proxy?logo=go)
+![Security](https://img.shields.io/badge/security-✅%20passed-green)
+![Linting](https://img.shields.io/badge/linting-✅%20passed-green)
+
+**Test Coverage**: 93.2% of code is covered by tests
+
+
+### Bug Fixes
+
+* **deps:** Update hashicorp/vault Docker tag to v2.2.1 ([#384](https://github.com/guided-traffic/s3-encryption-proxy/issues/384)) ([273f66a](https://github.com/guided-traffic/s3-encryption-proxy/commit/273f66ad7e3d77f4d2145e866a93c1233109633c))
+* **deps:** Update module github.com/aws/smithy-go to v1.28.6 ([#382](https://github.com/guided-traffic/s3-encryption-proxy/issues/382)) ([0f2e2cd](https://github.com/guided-traffic/s3-encryption-proxy/commit/0f2e2cd8fa9e896501b914f4b582c7a1bf94c533))
+
+
+## 🐳 Docker Images
+
+This release is available as a Docker image:
+
+```bash
+# Latest version
+docker pull guidedtraffic/s3-encryption-proxy:latest
+
+# Specific version
+docker pull guidedtraffic/s3-encryption-proxy:5.1.15
+```
+
+**Supported platforms:** linux/amd64
+
+## 📥 Download Assets
+
+Pre-built binaries and coverage reports are attached to this release:
+- `s3-encryption-proxy-v5.1.15-linux-amd64` - Main proxy binary
+- `s3ep-keygen-v5.1.15-linux-amd64` - Key generation utility
+- `coverage-v5.1.15.out` - Coverage profile (Go format)
+- `coverage-v5.1.15.txt` - Coverage report (human readable)
+
 ## [5.1.14](https://github.com/guided-traffic/s3-encryption-proxy/compare/v5.1.13...v5.1.14) (2026-10-22)
 
 
