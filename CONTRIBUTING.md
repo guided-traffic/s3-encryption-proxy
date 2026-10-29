@@ -13,12 +13,6 @@ We welcome contributions to the S3 Encryption Proxy project! Please read this gu
   against, and for the throwaway MinIO and LocalStack containers the conformance
   suite starts
 - Make
-- A license token for the integration, conformance and end-to-end suites. Any
-  active provider other than `exit` fails startup without a valid license (ADR
-  [0016](docs/adr/0016-the-license-is-a-startup-gate.md)); `exit` is licence-free
-  on purpose, so that getting data out never depends on one. The token is
-  supplied out of band as `S3EP_LICENSE_TOKEN` or as `config/license.jwt`, which
-  is gitignored
 - Only for the Velero end-to-end suite: `kind`, `kubectl`, `helm`, `velero`,
   `openssl`
 - Only for the client end-to-end suites: `unzip` and `curl` (rclone), `python3`
@@ -219,7 +213,7 @@ The repository layout, the core flows and the extension checklists are
   cannot use its fingerprint to supply a data key (ADR
   [0001](docs/adr/0001-the-backend-is-hostile.md), ADR
   [0004](docs/adr/0004-one-local-key-provider.md))
-- **Key material and license tokens are never committed** — a key is generated
+- **Key material is never committed** — a key is generated
   with `build/s3ep-keygen` (`make build-keygen`), the test PKI by
   `test/ssl-setup/gen-certs.sh`, and both are gitignored (ADR
   [0021](docs/adr/0021-key-material-is-generated-never-committed.md))
@@ -254,4 +248,7 @@ conventions.
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the same license as the project.
+The project is licensed under the [Apache License, Version 2.0](LICENSE) (ADR
+[0016](docs/adr/0016-the-proxy-is-apache-licensed-and-checks-no-license.md)). By
+contributing, you agree that your contributions are licensed under the same
+terms, as section 5 of the license states.

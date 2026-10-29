@@ -59,9 +59,8 @@ not replace these. A name the Service actually answers to and the certificate do
 failure the operator only sees when a client refuses the connection.
 
 **D3. The chart adds the `tls:` block to the rendered configuration; it never edits what the
-operator wrote.** The ConfigMap template already prepends a key this way — `license_file` — so the
-mechanism is not new. The one hazard is a duplicate key, and it is closed by refusing rather than
-by merging: **if `serviceTLS` is enabled and the operator's own `config` already carries a `tls`
+operator wrote.** `tls:` is the only key the chart adds to the rendered configuration. The one
+hazard is a duplicate key, and it is closed by refusing rather than by merging: **if `serviceTLS` is enabled and the operator's own `config` already carries a `tls`
 key, the render fails and says so.** Two sources for one setting is how the trap gets rebuilt; the
 chart takes the setting or the operator does, never both.
 

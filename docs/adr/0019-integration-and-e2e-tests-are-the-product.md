@@ -11,8 +11,7 @@ a preflight and twelve Velero backup and restore scenarios — with the encrypti
 assertions read straight from the backend; the end-to-end environment is created and destroyed
 by the same scripts on a workstation and on a CI runner (`make e2e-up`, `make e2e-down`), while
 the integration stack is started from the same compose file in both places but not by the same
-script; the end-to-end job blocks the release job; the end-to-end bring-up refuses to run without
-a license token supplied out of band; test doubles have been moved out of the production build
+script; the end-to-end job blocks the release job; test doubles have been moved out of the production build
 and the resulting coverage jump was reported as a denominator correction rather than as new
 testing; tests that pin behaviour the next storage format replaces carry an in-source marker
 saying so.
@@ -55,12 +54,9 @@ request is refused, and an access key no configuration declares, a signature tha
 and a request 20 minutes out of the skew window are each refused under the error code that says
 which check failed.
 
-The unit-suite item in this block was closed with the same wave: the test that loads the
-configuration the image ships with takes its licence from the environment or from the gitignored
-licence file, and on a runner a run without one fails instead of skipping; on a workstation with
-neither it still skips. That residual skip turns on an environment value rather than on an
-unreachable dependency, so it is not the skip D4 allows; it stands because the licence is never
-committed (ADR 0021) and costs nothing on the runner, where the run fails instead.
+The test that loads the configuration the image ships with runs everywhere without a condition,
+and no unit, integration, conformance or end-to-end run needs a secret the repository does not
+generate itself: the proxy checks no license (ADR 0016).
 
 **Closed 2026-09-12:** three of the six items that stood here went with the code they were in —
 the integration subtest whose body was a bare skip with no condition, the unit-test file that was
@@ -244,8 +240,8 @@ supposed to give.)*
   or a pulled image blocks the release train, and by D9 there is no way around it but a fix.
 - Two transports roughly double one CI job, and the end-to-end job needs a forty-five minute
   budget on a runner that is shared with everything else.
-- A contributor without Docker, a kind cluster and a license token cannot reach the "done" bar
-  in D3 on their own machine. That is accepted: the alternative is a bar that means nothing.
+- A contributor without Docker and a kind cluster cannot reach the "done" bar in D3 on their
+  own machine. That is accepted: the alternative is a bar that means nothing.
 - **Superseded 2026-09-10.** This bullet said that because handler-level unit coverage is
   deferred until the storage format change lands, a regression in header handling or request
   routing surfaces in a ten-minute suite whose failure mode is "a backup did not complete", not
@@ -353,7 +349,7 @@ chart must move together.
 - ADR 0018 — A major release is declared by a label, never discovered at merge
 - ADR 0031 — a test states the target and stays red until the product meets it; it generalises D1 and D4 of this record to every test layer and supplies the target-versus-current distinction.
 - ADR 0020 — Performance is measured before and after, never asserted
-- ADR 0021 — Key material and licenses are generated, never committed
+- ADR 0021 — Key material is generated, never committed
 - [docs/operations/clients/](../operations/clients/) — the client configuration the end-to-end environment must run
 - [docs/security/](../security/) — the threat model and the gaps the suites are evidence against
 - [CLAUDE.md](../../CLAUDE.md) — project conventions, the testing strategy and the build and test targets

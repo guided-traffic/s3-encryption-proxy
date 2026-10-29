@@ -7,7 +7,7 @@
     "url": "https://github.com/guided-traffic/s3-encryption-proxy.git"
   },
   "author": "Hans Fischer",
-  "license": "BUSL 1.1",
+  "license": "Apache-2.0",
   "private": false,
   "devDependencies": {
     "@semantic-release/changelog": "^7.0.0",

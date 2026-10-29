@@ -310,7 +310,6 @@ and `/version` until then.*
 - ADR 0013 — A configuration key exists only if code reads it, and an unworkable configuration
   refuses to start
 - ADR 0015 — A transfer is bounded by the client and by shutdown, not by a server wall clock
-- ADR 0016 — The license is a startup gate with an explicit expiry
 - ADR 0018 — A major release is declared by a label, never discovered at merge
 - [README.md](../../README.md) — the `s3_clients` and `s3_security` configuration reference, and
   the pre-signed URL section

@@ -48,7 +48,7 @@ ever reused across objects, and no nonce is ever reused under one DEK.
 | `type` | KEK operation | Where the secret lives | Notes |
 |---|---|---|---|
 | `aes` | **AES-256-GCM** wrap of the DEK under a key derived per wrap: HKDF-SHA256 expands the pseudorandom key extracted from the master key with a fresh 16-byte salt, and the 76-byte value stored in `s3ep-encrypted-dek` is `salt ‖ nonce ‖ ciphertext ‖ tag` ([aes.go](../../pkg/encryption/keyencryption/aes.go)). A flipped bit anywhere in it, or a wrap made under another key, fails to unwrap with a named error before any body byte is read | `encryption.providers[].config.aes_key`, base64 of exactly 32 random bytes, in the config file or via `${ENV_VAR}` | The only key provider that encrypts. The fingerprint is `hex(HKDF-Expand(HKDF-Extract(master key), "s3ep-kek-fingerprint"))`, not a hash of the key (ADR 0004; *Why the fingerprint is derived rather than hashed* below) |
-| `exit` | **No wrap at all.** The provider holds no key material and answers both `EncryptDEK` and `DecryptDEK` with an error ([exit.go:34-46](../../pkg/encryption/keyencryption/exit.go#L34)). Under it every write path stores the body as the client sent it, with no `s3ep-*` metadata: the single request ([operations.go:437-442](../../internal/proxy/handlers/object/operations.go#L437)), the proxy's own multipart producer ([operations.go:875](../../internal/proxy/handlers/object/operations.go#L875)) and a client-driven upload ([create.go:89-93](../../internal/proxy/handlers/multipart/create.go#L89), [upload.go:109-118](../../internal/proxy/handlers/multipart/upload.go#L109), [complete.go:178-195](../../internal/proxy/handlers/multipart/complete.go#L178)). A read decides **per object**: one carrying the current format's metadata is decrypted through the provider its own fingerprint names, anything else is served verbatim ([operations.go:52-56](../../internal/proxy/handlers/object/operations.go#L52), [range.go:167-183](../../internal/proxy/handlers/object/range.go#L167)) | — | The provider an operator selects to **leave the product**. Needs no license. New objects have no protection from the backend at all — that is the declared intent, not a defect |
+| `exit` | **No wrap at all.** The provider holds no key material and answers both `EncryptDEK` and `DecryptDEK` with an error ([exit.go:34-46](../../pkg/encryption/keyencryption/exit.go#L34)). Under it every write path stores the body as the client sent it, with no `s3ep-*` metadata: the single request ([operations.go:437-442](../../internal/proxy/handlers/object/operations.go#L437)), the proxy's own multipart producer ([operations.go:875](../../internal/proxy/handlers/object/operations.go#L875)) and a client-driven upload ([create.go:89-93](../../internal/proxy/handlers/multipart/create.go#L89), [upload.go:109-118](../../internal/proxy/handlers/multipart/upload.go#L109), [complete.go:178-195](../../internal/proxy/handlers/multipart/complete.go#L178)). A read decides **per object**: one carrying the current format's metadata is decrypted through the provider its own fingerprint names, anything else is served verbatim ([operations.go:52-56](../../internal/proxy/handlers/object/operations.go#L52), [range.go:167-183](../../internal/proxy/handlers/object/range.go#L167)) | — | The provider an operator selects to **leave the product**. New objects have no protection from the backend at all — that is the declared intent, not a defect |
 
 There are two provider types and no third. `type: "tink"` is still **refused at
 startup**, *tink encryption is not yet implemented with the new architecture*,
@@ -72,9 +72,7 @@ client sent it, so the backend — and anyone who can read the bucket — has th
 object itself, not ciphertext. **That is the operator's declared intent, not a
 defect in the model.** It is how you leave the product: you stop encrypting,
 your existing data stays readable, and you copy it out. The proxy states it in a
-warning line at every start, and the license gate lets the configuration run
-without a license precisely so that a lapsed license can never be the reason the
-data cannot be read.
+warning line at every start.
 
 Three properties survive the switch, and they are what keeps it from being a
 back door into the encrypted objects:
@@ -183,7 +181,7 @@ and since 2026-09-13 also bounds the one read that no session owns — a
 pass-through part whose length the request does not declare (ADR 0011 D5). Until
 that date such a part was read whole with no bound at all: any client holding an
 `s3_clients` credential could end the process with a single large part against a
-proxy running the `exit` provider, which needs no licence. A part whose length
+proxy running the `exit` provider. A part whose length
 the request declares is now forwarded to the backend while it arrives and is
 never held — for the life of the process. The sweep now walks the live map
 ([manager.go:134-167](../../internal/orchestration/manager.go#L134),

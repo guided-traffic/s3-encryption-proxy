@@ -40,21 +40,7 @@ log "ensuring local key material"
 . "$REPO/.env"
 export S3EP_AES_KEY
 
-# --- 1. license ------------------------------------------------------------
-# Any provider other than "exit" hard-fails without a license, so the pod would
-# crashloop with a message that looks nothing like a licensing problem.
-if [ -z "${S3EP_LICENSE_TOKEN:-}" ]; then
-  if [ -f "$REPO/config/license.jwt" ]; then
-    S3EP_LICENSE_TOKEN="$(tr -d '\n' < "$REPO/config/license.jwt")"
-  else
-    echo "S3EP_LICENSE_TOKEN is unset and config/license.jwt is missing" >&2
-    echo "export S3EP_LICENSE_TOKEN, or place a token at config/license.jwt" >&2
-    exit 1
-  fi
-fi
-export S3EP_LICENSE_TOKEN
-
-# --- 2. cluster ------------------------------------------------------------
+# --- 1. cluster ------------------------------------------------------------
 if kind get clusters 2>/dev/null | grep -qx "$KIND_CLUSTER_NAME"; then
   log "kind cluster $KIND_CLUSTER_NAME already exists"
 else
@@ -82,7 +68,7 @@ if ! k cluster-info >/dev/null 2>&1; then
   k cluster-info >/dev/null
 fi
 
-# --- 3. proxy image --------------------------------------------------------
+# --- 2. proxy image --------------------------------------------------------
 # The published image is amd64-only and kind nodes carry no binfmt emulation,
 # so the image must be built for the node architecture and side-loaded.
 ARCH="$(docker info --format '{{.Architecture}}')"
@@ -113,7 +99,7 @@ kind load docker-image "$PROXY_IMAGE" --name "$KIND_CLUSTER_NAME"
 # so it goes into the pod template and the rollout follows from it.
 PROXY_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$PROXY_IMAGE")"
 
-# --- 4. MinIO backend ------------------------------------------------------
+# --- 3. MinIO backend ------------------------------------------------------
 log "installing MinIO"
 k create namespace "$MINIO_NAMESPACE" --dry-run=client -o yaml | k apply -f -
 # MinIO looks for public.crt/private.key in --certs-dir.
@@ -129,7 +115,7 @@ k apply -f "$HERE/manifests/minio.yaml"
 k -n "$MINIO_NAMESPACE" rollout status deploy/minio --timeout=5m
 k -n "$MINIO_NAMESPACE" wait --for=condition=complete job/minio-mkbucket --timeout=3m
 
-# --- 5. CSI hostpath driver + snapshotter ----------------------------------
+# --- 4. CSI hostpath driver + snapshotter ----------------------------------
 RAW_SNAP="https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/${SNAPSHOTTER_VERSION}"
 # kubernetes-latest and kubernetes-1.35 are git symlinks upstream; a raw URL to
 # them returns the link target as plain text, not YAML.
@@ -158,7 +144,7 @@ k -n default rollout status statefulset/csi-hostpathplugin --timeout=8m
 k apply -f "$RAW_HP/examples/csi-storageclass.yaml"
 k apply -f "$HERE/manifests/snapshotclass.yaml"
 
-# --- 6. proxy --------------------------------------------------------------
+# --- 5. proxy --------------------------------------------------------------
 log "installing s3-encryption-proxy"
 k create namespace "$PROXY_NAMESPACE" --dry-run=client -o yaml | k apply -f -
 k -n "$PROXY_NAMESPACE" create secret tls s3ep-tls \
@@ -167,9 +153,6 @@ k -n "$PROXY_NAMESPACE" create secret tls s3ep-tls \
   --dry-run=client -o yaml | k apply -f -
 k -n "$PROXY_NAMESPACE" create secret generic s3ep-ca \
   --from-file=ca.crt="$REPO/test/ssl-setup/ca.crt" \
-  --dry-run=client -o yaml | k apply -f -
-k -n "$PROXY_NAMESPACE" create secret generic s3ep-license \
-  --from-literal=license.jwt="$S3EP_LICENSE_TOKEN" \
   --dry-run=client -o yaml | k apply -f -
 # Not --set-string: a base64 key carries '=' and '+', which the helm value
 # parser reads as syntax.
@@ -209,7 +192,7 @@ fi
 # fails loudly when a rejected configuration crashloops the pod.
 k -n "$PROXY_NAMESPACE" rollout status deploy/s3ep-proxy --timeout=5m
 
-# --- 7. Velero -------------------------------------------------------------
+# --- 6. Velero -------------------------------------------------------------
 log "installing Velero ${VELERO_VERSION} (chart ${VELERO_CHART_VERSION})"
 k create namespace "$VELERO_NAMESPACE" --dry-run=client -o yaml | k apply -f -
 

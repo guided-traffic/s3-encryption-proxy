@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -40,18 +39,6 @@ type AESProxyTestInstance struct {
 // StartAESProviderProxyInstance starts a new proxy instance with aes-example.yaml config
 func StartAESProviderProxyInstance(t *testing.T) *AESProxyTestInstance {
 	t.Helper()
-
-	// Ensure license is available - use environment variable or fallback to license file
-	// This supports both CI pipeline (with S3EP_LICENSE_TOKEN) and local development
-	if os.Getenv("S3EP_LICENSE_TOKEN") == "" && os.Getenv("S3EP_LICENSE") == "" {
-		// Load license from file and set as environment variable for this test
-		licensePath := filepath.Join("..", "..", "..", "config", "license.jwt")
-		if licenseData, err := os.ReadFile(licensePath); err == nil {
-			t.Setenv("S3EP_LICENSE_TOKEN", strings.TrimSpace(string(licenseData)))
-		} else {
-			t.Fatalf("No license found in environment variables and failed to read license file: %v", err)
-		}
-	}
 
 	// Find available port
 	listener, err := net.Listen("tcp", ":0")

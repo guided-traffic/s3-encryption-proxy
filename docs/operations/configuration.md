@@ -146,14 +146,11 @@ value it needs from an environment variable. It is what makes a plain
 | `S3EP_CLIENT_SECRET_KEY` | `s3_clients[0].secret_key` | Minimum 16 characters |
 | `S3EP_AES_KEY` | `encryption.providers[0].config.aes_key` | The key encryption key: base64 of exactly 32 random bytes |
 
-`S3EP_LICENSE_TOKEN` is read directly rather than through the configuration, and
-an encrypting provider needs it.
-
 **All seven are mandatory, and that is the point.** A `${VAR}` that is unset or
 empty is a named startup error, so there is no half-configured start, no empty
 credential and no empty key. The shipped file names an **`aes`** provider for
-the same reason: an `exit` provider would start with no key and no licence and
-store every object as plaintext — a deployment that looks encrypted and is not.
+the same reason: an `exit` provider would start with no key and store every
+object as plaintext — a deployment that looks encrypted and is not.
 
 Everything this file does not mention keeps the proxy's own default; the keys
 and their defaults are in
@@ -235,10 +232,6 @@ encryption:
       config:
         aes_key: "${S3EP_AES_KEY}"
 ```
-
-The exit provider is the one type the startup license gate admits without a
-license, because the gate looks only at the active provider. That is the point:
-getting the data out must not depend on a valid license.
 
 > No usable key is tracked in this repository (ADR 0021). Every example above
 > references `${S3EP_AES_KEY}`; `scripts/gen-keys.sh` generates one into the

@@ -18,6 +18,13 @@ package names) so it stays true when the tree moves. The product's own vocabular
 — configuration keys, `s3ep-*` metadata keys, S3 error codes, header and
 algorithm names — is not a code reference and must be exact.
 
+**An ADR states the current decision and nothing else** (ADR 0022 D9). When a
+decision changes, rewrite the ADR that holds it — every section, title and
+filename included — instead of writing a new ADR that supersedes it. No ADR
+invalidates another, no rule is kept as an "Amended" or "Superseded" entry, and
+no section collects a dated history of earlier states; version control keeps
+what a record used to say.
+
 **A ticket is a work list and nothing else.** It lives in `docs/tickets/`, it
 exists while work is outstanding, and it is closed by **moving the file to
 `docs/tickets/archive/`** when the work lands. Before moving it, move anything
@@ -169,8 +176,7 @@ provider — on GET, HEAD and ranged GET alike, with no pass-through opt-out.
 ```bash
 make build              # Build main binary to build/s3-encryption-proxy
 make build-keygen       # Build AES key generator to build/s3ep-keygen
-make license-tool       # Build the license tool to build/license-tool
-make build-all          # All three binaries
+make build-all          # Both binaries
 make test-unit          # Unit tests (-short)
 make test-integration   # Integration tests against the plain-HTTP proxy (requires ./start-demo.sh)
 make test-integration-tls          # Same suites against the TLS endpoint (aws-sdk-go-v2 emits STREAMING-UNSIGNED-PAYLOAD-TRAILER framing only over HTTPS, so only this run reaches the trailer decoder)
@@ -224,12 +230,9 @@ go.mod but silently corrupt that merge.
 ```bash
 # AES keys (cmd/keygen prints a banner around the key; sed -n 2p takes the key line)
 make build-keygen && ./build/s3ep-keygen
-
-# Development license: config/license.jwt (gitignored) or S3EP_LICENSE_TOKEN, supplied
-# out of band. `make generate-license` builds and runs cmd/license-tool, which needs
-# license_private_key.pem / license_public_key.pem next to the binary (not in the repo,
-# ADR 0021). There is no setup-dev-license target.
 ```
+
+There is no license to generate: the proxy is Apache-2.0 and checks none (ADR 0016).
 
 ### Testing Strategy
 - **Unit tests**: `make test-unit` - Fast tests with `-short` flag
@@ -250,7 +253,6 @@ make build-keygen && ./build/s3ep-keygen
 - **e2e tests**: `make test-e2e-velero` - build tag `//go:build e2e`, 13 tests: a preflight plus the V1-V10 backup/restore scenarios (V1b and V8b included), with encryption-at-rest assertions read directly from the MinIO backend
 - Environment: `make e2e-up` brings it up, `make e2e-down` tears it down, `make e2e-velero` does up + run for a cold machine. Both scripts live next to the tests (`test/e2e/velero/e2e-up.sh`, `e2e-down.sh`) and CI runs the identical scripts, so a workstation and a runner cannot drift apart
 - Bring-up cost is nothing like the 30 seconds of `./start-demo.sh`: `e2e-up` generates the test PKI when needed, creates a kind cluster, builds and side-loads the proxy image for the local architecture, installs MinIO over TLS, the CSI hostpath driver + snapshotter, the proxy via its own Helm chart and Velero, and waits for the BackupStorageLocation to go Available. It is idempotent and reloads a freshly built image, so retest a code change with `make e2e-up && make test-e2e-velero` rather than recreating the cluster. The suite itself ran 592s on 2026-09-06; the CI job budgets 45 minutes for up + run + down
-- `e2e-up` needs a license or the proxy pod never becomes ready: it takes `S3EP_LICENSE_TOKEN`, falls back to `config/license.jwt`, and aborts if neither exists. Supply the token out of band (CI injects the `S3EP_LICENSE_TOKEN` secret)
 - The no-skip rule above covers this suite: it is the end-user experience of one supported S3 client exercised end to end, and `e2e-velero` is a deliberate release gate in `.github/workflows/test-pipeline.yml`
 
 #### Client e2e suites (`test/e2e/rclone/`, `test/e2e/s3cmd/`)
@@ -436,8 +438,10 @@ monitoring:
   pprof_enabled: false                  # default
   pprof_bind_address: "127.0.0.1:6060"  # default; with pprof_enabled: true it must be a loopback IP or "localhost" or startup fails (heap holds DEKs); unchecked while pprof is off
 
-# License
-license_file: "config/license.jwt"  # default
+# Accepted and ignored: no license is read (ADR 0016). No default; a configuration
+# that writes it starts with a warning naming the key, and the next major release
+# refuses it
+# license_file: "config/license.jwt"
 
 # Encryption Configuration
 encryption:
@@ -491,9 +495,9 @@ No environment variable overrides a configuration key: the one mechanism is a
 `${VAR}` reference written into one of the fields that are expanded — the four
 per entry under `s3_backends`, the two per entry under `s3_clients`, and every
 string under `encryption.providers[].config` — and an unset or empty one refuses
-the start. A `${VAR}` anywhere else is kept verbatim. The license token is the
-exception, read from `S3EP_LICENSE_TOKEN` before `license_file` is opened; that
-key names the one file read, with no well-known locations behind it. The image
+the start. A `${VAR}` anywhere else is kept verbatim. Nothing else reaches the
+proxy from the environment: the license token went with the license check
+(ADR 0016), and `license_file` is decoded and read by nothing. The image
 starts from `config/default.yaml`, which takes every value it needs that way
 ([docs/developer/configuration.md](docs/developer/configuration.md)).
 

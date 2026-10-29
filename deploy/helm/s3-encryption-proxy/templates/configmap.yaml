@@ -7,9 +7,6 @@ metadata:
     {{- include "s3-encryption-proxy.labels" . | nindent 4 }}
 data:
   config.yaml: |
-    {{- if or .Values.license.existingSecret .Values.license.jwt }}
-    license_file: "/app/license/license.jwt"
-    {{- end }}
     {{- /*
       Added, never merged (ADR 0026 D3). A tls: key in .Values.config alongside
       serviceTLS.enabled is refused by validateTLS rather than resolved here:

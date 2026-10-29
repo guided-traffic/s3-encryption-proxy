@@ -13,7 +13,6 @@ import (
 	"strings"
 
 	"github.com/go-viper/mapstructure/v2"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/license"
 	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
 	"github.com/spf13/viper"
 )
@@ -170,8 +169,11 @@ type Config struct {
 	S3Clients  []S3ClientCredentials `mapstructure:"s3_clients"`
 	S3Security S3SecurityConfig      `mapstructure:"s3_security"`
 
-	// License configuration
-	LicenseFile string `mapstructure:"license_file"` // Path to license file (default: config/license.jwt)
+	// LicenseFile is accepted and never read. The proxy has no license gate
+	// (ADR 0016), and the key stays decodable so that a configuration written
+	// for a release that had one still starts; main names it in a startup
+	// warning. The next major release removes it.
+	LicenseFile string `mapstructure:"license_file"`
 
 	// Encryption configuration
 	Encryption EncryptionConfig `mapstructure:"encryption"`
@@ -357,39 +359,6 @@ func Load() (*Config, error) {
 	return &cfg, nil
 }
 
-// licenseFileIsBinding reports whether the operator wrote license_file. When
-// they did, that path is the only one read (ADR 0016); when they did not, the
-// license loader falls back to the well-known locations.
-//
-// InConfig, not IsSet: setDefaults fills license_file, and viper's IsSet
-// consults the defaults, so it answers true whether or not the key was written.
-func licenseFileIsBinding() bool {
-	return viper.InConfig("license_file")
-}
-
-// LoadAndStartLicense loads configuration and returns license validator for runtime monitoring
-func LoadAndStartLicense() (*Config, *license.LicenseValidator, error) {
-	cfg, err := Load()
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// Create and configure license validator for runtime monitoring
-	licenseToken, err := license.LoadLicense(cfg.LicenseFile, licenseFileIsBinding())
-	if err != nil {
-		return nil, nil, err
-	}
-	validator := license.NewValidator()
-	result := validator.ValidateLicense(licenseToken)
-
-	// Start runtime monitoring if license is valid
-	if result.Valid {
-		validator.StartRuntimeMonitoring()
-	}
-
-	return cfg, validator, nil
-}
-
 // setDefaults sets default configuration values
 func setDefaults() {
 	viper.SetDefault("bind_address", "0.0.0.0:8080")
@@ -417,9 +386,6 @@ func setDefaults() {
 	viper.SetDefault("monitoring.metrics_path", "/metrics")
 	viper.SetDefault("monitoring.pprof_enabled", false)
 	viper.SetDefault("monitoring.pprof_bind_address", "127.0.0.1:6060")
-
-	// License defaults
-	viper.SetDefault("license_file", "config/license.jwt")
 
 	// Optimizations defaults
 	viper.SetDefault("optimizations.multipart_part_size", 12*1024*1024)       // 12MB default
@@ -504,8 +470,7 @@ func validate(cfg *Config) error {
 		}
 	}
 
-	// Validate license and encryption configuration
-	if err := validateLicenseAndEncryption(cfg); err != nil {
+	if err := validateEncryption(cfg); err != nil {
 		return err
 	}
 
@@ -763,44 +728,6 @@ func createProviderFromProviderMap(providerMap map[string]interface{}) (Encrypti
 	}
 
 	return provider, nil
-}
-
-// validateLicenseAndEncryption validates both license and encryption configuration
-func validateLicenseAndEncryption(cfg *Config) error {
-	// Load and validate license
-	licenseToken, err := license.LoadLicense(cfg.LicenseFile, licenseFileIsBinding())
-	if err != nil {
-		return err
-	}
-	validator := license.NewValidator()
-	result := validator.ValidateLicense(licenseToken)
-
-	// Log license information
-	license.LogLicenseInfo(result)
-
-	// Validate encryption configuration
-	if err := validateEncryption(cfg); err != nil {
-		return err
-	}
-
-	// Check if encryption provider requires license
-	if cfg.Encryption.EncryptionMethodAlias != "" {
-		// Find the active provider
-		for _, provider := range cfg.Encryption.Providers {
-			if provider.Alias == cfg.Encryption.EncryptionMethodAlias {
-				// Log provider restriction info
-				license.LogProviderRestriction(provider.Type, provider.Alias, result.Valid)
-
-				// Validate provider type against license
-				if err := validator.ValidateProviderType(provider.Type); err != nil {
-					return err
-				}
-				break
-			}
-		}
-	}
-
-	return nil
 }
 
 // metadataKeyPrefixPattern is what encryption.metadata_key_prefix must match.

@@ -5,10 +5,12 @@ page says what each one is for and where it is implemented, because the
 interesting part is what is **not** here: no configuration key is bound to an
 environment variable, so a key written in the file is changed in the file.
 
-One thing reaches the proxy from outside the file, and it is named here so that
-list stays honest: the license token is read from `S3EP_LICENSE_TOKEN` before
-`license_file` is opened — during validation, where it decides whether an
-encrypting provider may be used at all. Nothing else does. The binary declares
+Nothing reaches the proxy from outside the file. The license token that used to
+— `S3EP_LICENSE_TOKEN`, read during validation — went with the license check
+(ADR 0016). `license_file` is still decoded so that a configuration written for a
+licensed release starts, but nothing reads the file it names; its one effect is
+the warning `startupWarnings` in `cmd/s3-encryption-proxy/main.go` logs, and it
+has no default. The binary declares
 one flag, `--config`; the `--monitoring` and `--monitoring-port` flags that used
 to overrule `monitoring.enabled` and `monitoring.bind_address` are gone, and the
 Helm chart renders a `monitoring:` block into its ConfigMap instead

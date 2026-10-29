@@ -43,7 +43,7 @@ monitoring listener answers `/livez` beside `/metrics` and `/status`. Nothing in
 acts on the status document automatically.
 
 **D2. Liveness is a constant success on the serving listener, and covers nothing else.** Not
-backend reachability, not the configuration, not the licence, not any other precondition. A
+backend reachability, not the configuration, not any other precondition. A
 liveness probe answers one question — *would a restart repair this?* — and for every precondition
 the answer is no:
 
@@ -55,8 +55,6 @@ the answer is no:
 * **The configuration cannot be false at run time.** The loader decodes strictly and an unknown
   key refuses the start (ADR 0013), so a process that answers at all has a configuration that
   parsed. That is a startup fact, not a runtime signal.
-* **The licence already ends the process itself on expiry** (ADR 0016). A restart would find the
-  same expired token, so a probe would only convert a clean stop into a crash loop.
 
 What is left is the single case a liveness probe is for: the process is alive but can no longer
 answer HTTP — a wedged accept path, a deadlock. A constant-success handler on the *serving*
@@ -78,10 +76,10 @@ This is the general rule behind D2 and D4, and it binds every probe added later.
 the process is shared: a dependency that fails takes every instance out at the same moment, so a
 probe that reads it converts a partial outage into a total one.
 
-**D6. Dependency health is a fourth category: reported, never acted on.** Backend reachability,
-the active provider with its type and key fingerprint, and the licence time remaining are what an
-operator wants to see and to alert on, and no automatic actor may act on them. They are the
-status document and the metrics.
+**D6. Dependency health is a fourth category: reported, never acted on.** Backend reachability
+and the active provider with its type and key fingerprint are what an operator wants to see and
+to alert on, and no automatic actor may act on them. They are the status document and the
+metrics.
 
 **A backend transport failure is reported three ways, and each answers a different question.**
 The status document says *what state the backend is in now*. A last-seen timestamp says *when it
@@ -117,7 +115,7 @@ exactly what must not be readable without authentication from the data path. Bui
 goes with it: the serving listener answers two probe paths with constant answers and no
 operational data at all.
 
-**D9. No startup probe while the startup path does no network I/O.** Configuration, licence and
+**D9. No startup probe while the startup path does no network I/O.** Configuration and
 providers are all resolved in process before the listener binds, and every failure on that path is
 fatal — there is no "started but not yet usable" window for a startup probe to cover. What the
 liveness probe gets instead is a small initial delay rather than a blind half-minute. Work that
@@ -239,9 +237,8 @@ front of the person who can act on it.
 * [ADR 0030](0030-the-network-boundary-belongs-to-the-administrator.md) — the boundary the status
   document sits behind.
 * [ADR 0025](0025-leaving-is-a-supported-mode.md) — why the active provider is a sensitive field.
-* [ADR 0016](0016-the-license-is-a-startup-gate.md) and
-  [ADR 0013](0013-a-configuration-key-exists-only-if-code-reads-it.md) — the two preconditions D2 rules
-  out, and why each is already answered without a probe.
+* [ADR 0013](0013-a-configuration-key-exists-only-if-code-reads-it.md) — the configuration
+  precondition D2 rules out, and why it is already answered without a probe.
 * [ADR 0018](0018-a-major-release-is-declared-by-a-label.md) — weighed and not observed for the
   endpoint removal, by the owner's decision.
 * [docs/operations/monitoring.md](../operations/monitoring.md) — the endpoints as an operator meets them.

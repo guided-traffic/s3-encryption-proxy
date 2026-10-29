@@ -3,7 +3,7 @@
 [![Build Status](https://github.com/guided-traffic/s3-encryption-proxy/actions/workflows/test-pipeline.yml/badge.svg)](https://github.com/guided-traffic/s3-encryption-proxy/actions)
 [![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/guided-traffic/s3-encryption-proxy/main/.github/badges/coverage.json)](https://github.com/guided-traffic/s3-encryption-proxy)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/guided-traffic/s3-encryption-proxy?logo=go)](go.mod)
-[![License](https://img.shields.io/badge/License-BSL%201.1-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 **Put it in front of any S3 bucket and every object lands encrypted — without
 changing a single client.** The proxy speaks S3 on both sides: your tools keep
@@ -38,7 +38,8 @@ flowchart LR
 - 🧾 **Your checksums are verified** — every `Content-MD5` or `x-amz-checksum-*` you declare is checked against the plaintext before a byte reaches the backend, and the proxy seals its own CRC32C and serves it back on `GET` and `HEAD`
 - 🔐 **SigV4 client authentication** — the `Authorization` header form and pre-signed URLs, against statically configured clients. No S3 path is anonymous; the two probe endpoints are, and answer nothing about your data
 - 🔄 **Key rotation without re-encryption** — every object names the key that wrapped it, so a retired key keeps reading what it wrote while a new one writes
-- 🚪 **An exit that needs no licence** — the `exit` provider stores what the client sends and still decrypts everything written before the switch. Getting your data out never depends on a valid licence
+- 🚪 **A supported way out** — the `exit` provider stores what the client sends and still decrypts everything written before the switch, so leaving encryption never strands your data
+- 🆓 **Free for everyone** — Apache 2.0, no licence key, no feature gate and nothing that expires
 - 📊 **Prometheus metrics, two probes and a status document** — including a counter for reads that failed to authenticate, which is the one series worth an alert
 - 🧪 **Proven against real clients** — Velero, rclone and s3cmd each run an end-to-end suite against a pinned release of the real binary, every release
 
@@ -52,12 +53,11 @@ Every deterministic name the proxy produces:
 | Object metadata keys | `s3ep-dek-algorithm`, `s3ep-encrypted-dek`, `s3ep-kek-algorithm`, `s3ep-kek-fingerprint` | Exactly four, never more. `s3ep-` is `encryption.metadata_key_prefix`, and the prefix is the proxy's exclusive namespace in both directions |
 | Metadata prefix rule | `^[a-z0-9][a-z0-9-]{2,}-$` | Anything else refuses the start |
 | Container environment | `S3EP_BACKEND_ENDPOINT`, `S3EP_BACKEND_REGION`, `S3EP_BACKEND_ACCESS_KEY_ID`, `S3EP_BACKEND_SECRET_KEY`, `S3EP_CLIENT_ACCESS_KEY_ID`, `S3EP_CLIENT_SECRET_KEY`, `S3EP_AES_KEY` | The seven the shipped image reads, all mandatory |
-| Licence token | `S3EP_LICENSE_TOKEN`, else `license_file` | Those two and nothing else |
 | Metrics | `s3ep_*` | Plus the Go runtime and process collectors |
 | Unsigned endpoints | `GET /livez`, `GET /readyz` on the S3 listener; `/metrics`, `/status`, `/livez` on the monitoring listener | A signed or query-carrying request to `/livez` or `/readyz` is an S3 request for a bucket of that name |
 | Entity tag marker | `"<32 hex>-0"` | A change token, never a digest of your content |
 | Request id | 16 uppercase hex in `x-amz-request-id` | The proxy's own, minted per request, echoed in the access log |
-| Binaries | `build/s3-encryption-proxy`, `build/s3ep-keygen`, `build/license-tool` | `make build-all` |
+| Binaries | `build/s3-encryption-proxy`, `build/s3ep-keygen` | `make build-all` |
 
 ## 📚 Documentation
 
@@ -75,15 +75,14 @@ Every deterministic name the proxy produces:
 > [docs/operations/upgrading.md](./docs/operations/upgrading.md) first. Objects
 > written by an earlier release cannot be read by 5.x, and a 4.x configuration
 > file stops the proxy at startup until it is brought forward. Both breaks are
-> deliberate.
+> deliberate. Already on 5.x, the same page lists the licence settings that now
+> do nothing.
 
 ## 🚀 Fast start
 
 ### The local demo
 
 ```bash
-# Needs a licence: export S3EP_LICENSE_TOKEN, or put the token in
-# config/license.jwt, which the script picks up on its own.
 ./start-demo.sh
 ```
 
@@ -110,7 +109,6 @@ environment variable, so nothing has to be mounted. Generate the key once and
 export S3EP_AES_KEY="$(openssl rand -base64 32)"
 
 docker run -p 8080:8080 \
-  -e S3EP_LICENSE_TOKEN="$S3EP_LICENSE_TOKEN" \
   -e S3EP_BACKEND_ENDPOINT="https://s3.eu-central-1.amazonaws.com" \
   -e S3EP_BACKEND_REGION="eu-central-1" \
   -e S3EP_BACKEND_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
@@ -184,7 +182,6 @@ wrapped. The data layer is not pluggable: it is the segment chain, always
 | What it is for | Every deployment that stores data | Leaving the product with your data readable |
 | New objects at rest | 🟢 Sealed segment chain, AES-256-GCM | ⚪ Stored exactly as the client sent them |
 | Reads what this proxy encrypted | ✅ | ✅ via the `aes` provider that still holds the key |
-| Licence required | ✅ | ❌ |
 | Key rotation | 🔄 Add the retired key as a second provider | — holds no key material |
 
 Two types exist and nothing else: `type: "none"` is refused by name and pointed
@@ -243,8 +240,8 @@ unreadable.** Every listed provider can decrypt; only the alias writes.
 
 ### `exit` — leaving is a supported mode
 
-The provider you select to **leave the product**. It needs no licence, and that
-is the point: getting your data out must never depend on a licence being valid
+The provider you select to **leave the product**: getting your data out must
+never depend on keeping the encryption running
 ([ADR 0025](./docs/adr/0025-leaving-is-a-supported-mode.md)).
 
 ```yaml
@@ -424,8 +421,10 @@ monitoring:
   pprof_enabled: false      # default; /debug/pprof on its OWN listener, not this one
   pprof_bind_address: "127.0.0.1:6060"  # default; with pprof_enabled it must be loopback or startup fails
 
-# License
-license_file: "config/license.jwt"  # default
+# Accepted and ignored: no licence is read (ADR 0016). There is no default; a
+# configuration that writes it starts with a warning naming the key, and the next
+# major release refuses it. Delete it from your configuration.
+# license_file: "config/license.jwt"  # example of what to delete
 
 # Encryption Configuration
 encryption:
@@ -478,8 +477,8 @@ listener always answers two unsigned probe paths.
 |---|---|---|
 | `GET /livez` | S3 | A liveness probe. A constant `200`, on purpose |
 | `GET /readyz` | S3 | A readiness probe. `503` from the moment a `SIGTERM` starts the drain |
-| `GET /metrics` | monitoring | Prometheus. Thirteen `s3ep_*` series plus the Go runtime collectors |
-| `GET /status` | monitoring | A human: build, active provider, what the backend last did, licence. **Nothing automatic may act on it** |
+| `GET /metrics` | monitoring | Prometheus. Eleven `s3ep_*` series plus the Go runtime collectors |
+| `GET /status` | monitoring | A human: build, active provider, what the backend last did. **Nothing automatic may act on it** |
 
 `s3ep_object_integrity_failures_total` is the one series worth an alert — it
 counts reads where an object did not authenticate, and it is expected to stay at
@@ -531,15 +530,8 @@ and [docs/developer/](./docs/developer/) carries the per-subsystem invariants.
 
 ## 📄 License
 
-The proxy is a licensed product and the licence is a startup gate: with an active
-provider of type `aes` and no valid licence it refuses to start and names what is
-missing ([ADR 0016](./docs/adr/0016-the-license-is-a-startup-gate.md)). The token
-is read from `S3EP_LICENSE_TOKEN`, and otherwise from `license_file` — that one
-file, with no well-known locations behind it.
-
-**The `exit` provider needs no licence, and that is deliberate.** A licence that
-has expired, or one you no longer hold, must never be the reason you cannot read
-your own data. What stops is new encryption
-([the exit provider](#the-exit-provider)).
-
-Source code terms: [LICENSE](./LICENSE).
+Copyright 2025-2026 Hans Fischer. Licensed under the
+[Apache License, Version 2.0](./LICENSE): free to use, modify and redistribute,
+commercially included. The proxy checks no licence — no key, no feature gate,
+nothing that expires
+([ADR 0016](./docs/adr/0016-the-proxy-is-apache-licensed-and-checks-no-license.md)).

@@ -11,7 +11,7 @@ start it, which clients are supported. Everything it links to for detail is here
 | [s3-api.md](s3-api.md) | A client behaves differently against the proxy than against plain S3: ranges, listings, conditional requests, pre-signed URLs, sub-resources, what a read costs |
 | [integrity.md](integrity.md) | You need to know what is guaranteed about the bytes: the stored format, the metadata, foreign objects, checksums, entity tags |
 | [monitoring.md](monitoring.md) | You are wiring up Prometheus, probes or the `/status` document |
-| [upgrading.md](upgrading.md) | You are coming from 3.x or 4.x. **Read it before you upgrade** — stored objects and configuration files both break |
+| [upgrading.md](upgrading.md) | You are coming from 3.x or 4.x — **read it before you upgrade**, stored objects and configuration files both break — or from a 5.x release that still checked a licence, which leaves settings to delete |
 | [clients/](clients/) | You run Velero, rclone or s3cmd against the proxy |
 
 ## Supported clients

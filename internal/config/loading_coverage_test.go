@@ -21,15 +21,6 @@ func CfgResetViper(t *testing.T) {
 	t.Cleanup(viper.Reset)
 }
 
-// CfgNoLicense neutralises every environment variable the license loader reads
-// so that license dependent behaviour is deterministic.
-func CfgNoLicense(t *testing.T) {
-	t.Helper()
-	t.Setenv("S3EP_LICENSE", "")
-	t.Setenv("S3EP_LICENSE_TOKEN", "")
-	t.Setenv("S3_ENCRYPTION_PROXY_LICENSE", "")
-}
-
 // CfgWriteConfigFile writes body to <dir>/<name> and returns the full path.
 func CfgWriteConfigFile(t *testing.T, dir, name, body string) string {
 	t.Helper()
@@ -38,7 +29,7 @@ func CfgWriteConfigFile(t *testing.T, dir, name, body string) string {
 	return path
 }
 
-// CfgMinimalYAML is a complete, valid configuration that requires no license.
+// CfgMinimalYAML is a complete, valid configuration under the exit provider.
 const CfgMinimalYAML = `
 s3_backends:
   - target_endpoint: "https://minio:9000"
@@ -154,7 +145,6 @@ func TestCfgNoConfigurationKeyIsBoundToAnEnvironmentVariable(t *testing.T) {
 // The two security controls the removed binding could flip from outside the
 // configuration file. Named separately because these are the reason it went.
 func TestCfgSecurityControlsCannotBeFlippedFromTheEnvironment(t *testing.T) {
-	CfgNoLicense(t)
 	CfgResetViper(t)
 	t.Setenv("S3EP_S3_BACKEND.INSECURE_SKIP_VERIFY", "true")
 	t.Setenv("S3EP_MONITORING.PPROF_ENABLED", "true")
@@ -204,7 +194,7 @@ func TestCfgSetDefaults(t *testing.T) {
 	assert.False(t, viper.GetBool("monitoring.enabled"))
 	assert.Equal(t, ":9090", viper.GetString("monitoring.bind_address"))
 	assert.Equal(t, "/metrics", viper.GetString("monitoring.metrics_path"))
-	assert.Equal(t, "config/license.jwt", viper.GetString("license_file"))
+	assert.Nil(t, viper.Get("license_file"), "a key no code reads has no default")
 
 	assert.Equal(t, 12*1024*1024, viper.GetInt("optimizations.multipart_part_size"))
 	assert.Equal(t, 300, viper.GetInt("optimizations.multipart_session_cleanup_interval"))
@@ -218,7 +208,6 @@ func TestCfgSetDefaults(t *testing.T) {
 
 func TestCfgLoadFromYAMLFile(t *testing.T) {
 	CfgResetViper(t)
-	CfgNoLicense(t)
 
 	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", CfgMinimalYAML)
 	require.NoError(t, InitConfig(path))
@@ -249,7 +238,6 @@ func TestCfgLoadFromYAMLFile(t *testing.T) {
 
 func TestCfgLoadProviderConfigFromYAMLKeepsNestedValues(t *testing.T) {
 	CfgResetViper(t)
-	CfgNoLicense(t)
 
 	body := `
 s3_backends:
@@ -280,7 +268,6 @@ s3_clients:
 }
 
 func TestCfgMetadataKeyPrefix(t *testing.T) {
-	CfgNoLicense(t)
 
 	tests := []struct {
 		name      string
@@ -360,7 +347,6 @@ s3_clients:
 
 func TestCfgLoadExpandsEnvironmentVariables(t *testing.T) {
 	CfgResetViper(t)
-	CfgNoLicense(t)
 	t.Setenv("CFG_BACKEND_KEY", "expanded-backend-key")
 	t.Setenv("CFG_BACKEND_SECRET", "expanded-backend-secret")
 	t.Setenv("CFG_CLIENT_SECRET", "expanded-client-secret")
@@ -398,7 +384,6 @@ s3_clients:
 
 func TestCfgLoadFailsOnUnsetEnvironmentVariable(t *testing.T) {
 	CfgResetViper(t)
-	CfgNoLicense(t)
 
 	body := `
 s3_backends:
@@ -440,7 +425,6 @@ func TestCfgLoadFailsOnUnmarshalError(t *testing.T) {
 
 func TestCfgLoadFailsOnValidationError(t *testing.T) {
 	CfgResetViper(t)
-	CfgNoLicense(t)
 	setDefaults()
 	viper.Set("s3_backends", []map[string]interface{}{{"target_endpoint": "https://minio:9000"}})
 	viper.Set("encryption.encryption_method_alias", "way-out")
@@ -458,7 +442,6 @@ func TestCfgLoadFailsOnValidationError(t *testing.T) {
 
 func TestCfgLoadFailsWhenProvidersAreNotASequence(t *testing.T) {
 	CfgResetViper(t)
-	CfgNoLicense(t)
 
 	body := `
 s3_backends:
@@ -589,38 +572,51 @@ func TestCfgCreateProviderFromProviderMap(t *testing.T) {
 	}
 }
 
-func TestCfgLoadAndStartLicenseWithoutLicense(t *testing.T) {
+// ADR 0016 D2: no provider type needs a license. An aes configuration loads
+// with no token in the environment and no license_file anywhere.
+func TestCfgLoadNeedsNoLicense(t *testing.T) {
 	CfgResetViper(t)
-	CfgNoLicense(t)
 
-	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", CfgMinimalYAML)
+	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", `
+s3_backends:
+  - target_endpoint: "https://minio:9000"
+encryption:
+  encryption_method_alias: "current"
+  providers:
+    - alias: "current"
+      type: "aes"
+      config:
+        aes_key: "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE="
+s3_clients:
+  - type: "static"
+    access_key_id: "clientkey01"
+    secret_key: "0123456789abcdef"
+`)
 	require.NoError(t, InitConfig(path))
-	viper.Set("license_file", filepath.Join(t.TempDir(), "absent.jwt"))
 
-	cfg, validator, err := LoadAndStartLicense()
+	cfg, err := Load()
 	require.NoError(t, err)
-	require.NotNil(t, cfg)
-	require.NotNil(t, validator)
-	// NOTE: validator.Stop() is deliberately not called here - it blocks forever
-	// when runtime monitoring was never started (see the defect report).
-
-	assert.Equal(t, "https://minio:9000", cfg.Backend().TargetEndpoint)
-	// Without a valid license only the exit provider is permitted.
-	assert.Error(t, validator.ValidateProviderType("aes"))
-	assert.NoError(t, validator.ValidateProviderType("exit"))
+	provider, err := cfg.GetActiveProvider()
+	require.NoError(t, err)
+	assert.Equal(t, "aes", provider.Type)
+	assert.Empty(t, cfg.LicenseFile)
 }
 
-func TestCfgLoadAndStartLicensePropagatesLoadError(t *testing.T) {
+// ADR 0016 D3: license_file is accepted and read by nothing. A configuration
+// written for a release that had a license gate still starts, even when the
+// file it names does not exist, and the value is kept only so that the startup
+// warning can name the key.
+func TestCfgLicenseFileIsAcceptedAndIgnored(t *testing.T) {
 	CfgResetViper(t)
-	CfgNoLicense(t)
-	setDefaults()
-	// No target endpoint configured at all.
 
-	cfg, validator, err := LoadAndStartLicense()
-	require.Error(t, err)
-	assert.Nil(t, cfg)
-	assert.Nil(t, validator)
-	assert.Contains(t, err.Error(), "s3_backends is required")
+	absent := filepath.Join(t.TempDir(), "absent.jwt")
+	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml",
+		CfgMinimalYAML+"\nlicense_file: \""+absent+"\"\n")
+	require.NoError(t, InitConfig(path))
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, absent, cfg.LicenseFile)
 }
 
 // ADR 0013 D11. A key this version does not define refuses the start, and the
@@ -628,7 +624,6 @@ func TestCfgLoadAndStartLicensePropagatesLoadError(t *testing.T) {
 // an operator upgrading: without it the key is dropped in silence and the setting
 // they believe is in force is not.
 func TestCfgUnknownKeyRefusesTheStart(t *testing.T) {
-	CfgNoLicense(t)
 
 	// %s marks where a key under `encryption:` goes; extraTopLevel is appended
 	// to the document. Two seams, because a removed key can sit at either depth
@@ -696,8 +691,8 @@ s3_clients:
 // mapstructure clears the unused-key set before it applies the unknown-key check.
 // Asserted rather than assumed — every provider type would break at once.
 //
-// The exit provider is the subject on purpose: it needs no licence, so this tests
-// the decoding boundary and nothing else.
+// The exit provider is the subject on purpose: it reads no provider key at all,
+// so this tests the decoding boundary and nothing else.
 // A provider's `config:` block is not a place unknown keys survive. D11 makes
 // every key the proxy does not read a startup refusal, and until 5.0.0 this
 // block was the one exception: the provider read the key it wanted and dropped
@@ -753,7 +748,6 @@ func TestCfgProviderConfigRefusesAKeyTheProviderDoesNotRead(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			CfgNoLicense(t)
 			CfgResetViper(t)
 
 			body := `
@@ -783,7 +777,6 @@ encryption:
 // so that it is consumed there rather than falling into the config block, where
 // it would now be refused.
 func TestCfgProviderDescriptionIsNotAConfigKey(t *testing.T) {
-	CfgNoLicense(t)
 	CfgResetViper(t)
 
 	body := `
@@ -813,10 +806,10 @@ s3_clients:
 // Every configuration this repository ships has to survive the unknown-key
 // refusal of ADR 0013 D11, and a shipped file that does not is a release defect
 // rather than a test failure. Only the decode stage is exercised: the aes
-// examples need a licence to pass full validation, and the licence is not what
-// this is about.
+// examples take their key from the environment, and that is not what this is
+// about. license_file is decodable and read by nothing (ADR 0016 D3), so a
+// shipped example carrying it would teach a key that does nothing.
 func TestCfgShippedExamplesCarryNoUnknownKeys(t *testing.T) {
-	CfgNoLicense(t)
 
 	matches, err := filepath.Glob(filepath.Join("..", "..", "config", "*.yaml"))
 	require.NoError(t, err)
@@ -834,6 +827,8 @@ func TestCfgShippedExamplesCarryNoUnknownKeys(t *testing.T) {
 			})
 			require.NoError(t, err,
 				"%s carries a key no code reads; it would refuse the start", filepath.Base(path))
+			assert.Empty(t, cfg.LicenseFile,
+				"%s writes license_file, which the proxy ignores", filepath.Base(path))
 		})
 	}
 }
@@ -861,7 +856,6 @@ optimizations:
 `
 
 	for _, value := range []int{0, -1} {
-		CfgNoLicense(t)
 		CfgResetViper(t)
 		path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", fmt.Sprintf(body, value))
 		require.NoError(t, InitConfig(path))
@@ -894,7 +888,6 @@ s3_security:
 		want    bool
 	}{{"true", true}, {"false", false}} {
 		t.Run(tc.written, func(t *testing.T) {
-			CfgNoLicense(t)
 			CfgResetViper(t)
 			path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", fmt.Sprintf(body, tc.written))
 			require.NoError(t, InitConfig(path))
@@ -910,7 +903,6 @@ s3_security:
 // Absent is off: the default is what an operator who writes nothing gets, and it
 // is the one that costs nothing (ADR 0012 D15).
 func TestCfgVerifyPayloadHashDefaultsToOff(t *testing.T) {
-	CfgNoLicense(t)
 	CfgResetViper(t)
 	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", `
 bind_address: "0.0.0.0:8080"
@@ -946,7 +938,6 @@ optimizations:
 `
 
 	for _, value := range []int{0, -1} {
-		CfgNoLicense(t)
 		CfgResetViper(t)
 		path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", fmt.Sprintf(body, value))
 		require.NoError(t, InitConfig(path))
@@ -961,7 +952,6 @@ optimizations:
 // The key left out entirely is the common case and must keep working: the
 // default is what fills it, and the check above must not fire on an absent key.
 func TestCfgAbsentSessionIdleTimeoutTakesTheDefault(t *testing.T) {
-	CfgNoLicense(t)
 	CfgResetViper(t)
 
 	path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", `
@@ -987,7 +977,6 @@ encryption:
 }
 
 func TestCfgRetiredSessionMaxAgeIsRefusedByName(t *testing.T) {
-	CfgNoLicense(t)
 	CfgResetViper(t)
 
 	body := `
@@ -1030,7 +1019,6 @@ s3_backends:
 	}
 
 	t.Run("the old singular key is refused by name", func(t *testing.T) {
-		CfgNoLicense(t)
 		CfgResetViper(t)
 
 		body := `
@@ -1051,7 +1039,6 @@ s3_clients:
 	})
 
 	t.Run("one entry is served, and its region defaults", func(t *testing.T) {
-		CfgNoLicense(t)
 		CfgResetViper(t)
 
 		path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml",
@@ -1067,7 +1054,6 @@ s3_clients:
 	})
 
 	t.Run("a second entry is refused, not ignored", func(t *testing.T) {
-		CfgNoLicense(t)
 		CfgResetViper(t)
 
 		path := CfgWriteConfigFile(t, t.TempDir(), "proxy.yaml", backendYAML(
@@ -1089,7 +1075,6 @@ s3_clients:
 	// is no ordering to get wrong between expanding and resolving. That was a real
 	// bug for the length of one edit, and the shape is what closed it, not a test.
 	t.Run("a ${VAR} in an entry reaches the served backend expanded", func(t *testing.T) {
-		CfgNoLicense(t)
 		CfgResetViper(t)
 		t.Setenv("CFG_BACKEND_ENDPOINT_TEST", "https://expanded:9000")
 
@@ -1104,7 +1089,6 @@ s3_clients:
 }
 
 func TestCfgRenamedSegmentSizeIsRefusedByName(t *testing.T) {
-	CfgNoLicense(t)
 	CfgResetViper(t)
 
 	body := `
@@ -1143,7 +1127,6 @@ func TestCfgMultipartPartSizeKeepsItsChecks(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			CfgNoLicense(t)
 			CfgResetViper(t)
 
 			body := `

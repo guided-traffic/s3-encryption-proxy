@@ -127,13 +127,12 @@ default rather than something tighter.
   by anything that can route to the pod once the monitoring listener runs
   (`monitoring.enabled`, plus `monitoring.service.enabled` for a Service in front
   of it), until the operator writes a policy of their own.
-  Thirteen metrics are declared. None carries a bucket name or an object key — the
+  Eleven metrics are declared. None carries a bucket name or an object key — the
   request labels are the gorilla/mux path *template*, not the request path
-  ([middleware.go:79-86](../../internal/monitoring/middleware.go#L79)) — and none names
-  the **licensee**: `licensed_to` and `company` were labels of
-  `s3ep_license_info` and are gone, because a metric is scraped widely and
-  retained long, and an unauthenticated endpoint is the wrong place for a
-  customer name. What remains of the licence is its validity and its expiry.
+  ([middleware.go:79-86](../../internal/monitoring/middleware.go#L79)) — and none
+  identifies the deployment or its operator. The licence series that once carried
+  a customer name, and later only an expiry, are gone with the licence check
+  ([ADR 0016](../adr/0016-the-proxy-is-apache-licensed-and-checks-no-license.md)).
 
   **What this listener does disclose, deliberately, is the active provider.**
   `s3ep_encryption_provider_info` carries `alias`, `type` and `kek_fingerprint`,
@@ -156,7 +155,7 @@ default rather than something tighter.
   the metrics with it.
 
   The rest of `/status` is the build, the backend's last observed answer or
-  transport failure with its class, and the licence expiry — the same facts the
+  transport failure with its class — the same facts the
   metrics carry, rendered for a human. The endpoint issues no request of its own,
   so reading it cannot be used to make this proxy touch the backend
   (ADR 0034 D7). So the listener discloses little beyond the provider; it is

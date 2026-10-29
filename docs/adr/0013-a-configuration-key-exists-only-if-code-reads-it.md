@@ -4,15 +4,12 @@
 
 **Accepted.** Date: 2026-09-07.
 
-**Amended 2026-09-13: D12, D13 and D14 added — the configuration file itself, the license file
-the operator names, and the command line. All three were decided on 2026-09-12 and all three
-landed 2026-09-13.** They carry this record's theme outwards from the keys to the inputs that
-deliver them. What each one ended: a configuration file that could not be opened, or whose YAML
-did not parse, was read as no file at all, so the start failed on the missing
-`s3_backend.target_endpoint` and told the operator the wrong thing (D12); a written
-`license_file` that did not resolve fell through to a fixed list of well-known locations, so a
-mistyped path could start the proxy on a token nobody chose (D13); and `--monitoring` and
-`--monitoring-port` overruled `monitoring.enabled` and `monitoring.bind_address`, the second of
+**Amended 2026-09-13: D12 and D14 added — the configuration file itself and the command line.
+Both were decided on 2026-09-12 and landed 2026-09-13.** They carry this record's theme outwards
+from the keys to the inputs that deliver them. What each one ended: a configuration file that
+could not be opened, or whose YAML did not parse, was read as no file at all, so the start failed
+on the missing `s3_backend.target_endpoint` and told the operator the wrong thing (D12); and
+`--monitoring` and `--monitoring-port` overruled `monitoring.enabled` and `monitoring.bind_address`, the second of
 them unable to express its own default as an override (D14). The binary now declares one flag,
 `--config`. D1 through D11 are unaffected and stay as described below.
 
@@ -171,16 +168,14 @@ The same review found configurations that are accepted today and destroy data or
 disable protection: an empty or non-lowercase `encryption.metadata_key_prefix` makes stored
 objects read back as pass-through, serving ciphertext to the client with a 200.
 
-**A second review, on 2026-09-12, found the same shape one level further out (D12–D14).** It
-read every claim in this repository's documentation against the code, and three of its findings
+**A second review, on 2026-09-12, found the same shape one level further out (D12, D14).** It
+read every claim in this repository's documentation against the code, and two of its findings
 were not documentation defects at all: the inputs that carry the configuration treat themselves
 as advisory. A configuration file that cannot be read is discarded and the process continues on
 defaults, so the operator is told their backend endpoint is missing when the truth is that
-their file was never read. A `license_file` the operator wrote is only the first candidate in a
-fixed list of well-known locations, so a mistyped path yields a different token and no message.
-And two command-line flags overrule the monitoring keys, one of them unable to say what its own
-default says. A key is worth no more than the file it arrives in, the path it names and the
-command line that can quietly replace it.
+their file was never read. And two command-line flags overrule the monitoring keys, one of them
+unable to say what its own default says. A key is worth no more than the file it arrives in and
+the command line that can quietly replace it.
 
 ## Decision
 
@@ -328,30 +323,15 @@ route found the file does not enter into it — *found it and it does not parse*
 legitimate outcome, with or without `--config`. Verified before the decision: every invocation
 this project ships that starts the proxy passes `--config`, and a run without it locates no file
 today and fails on `s3_backend.target_endpoint` regardless, so D12 changes which error is printed
-rather than whether anything that works today keeps working. It also compounds with D13 — once a
-written `license_file` binds, a configuration file that was never read means that key never
-arrives either, and the message points in the wrong direction a second time.
+rather than whether anything that works today keeps working.
 
-**D13, decided 2026-09-12.** A configured `license_file` is binding. Where the key is written,
-the file it names is the only file: if that file cannot be read the proxy refuses to start, and
-the error names the path. Discovery of the well-known locations applies only where the key is
-**not** written — the key's own default is not a statement by the operator, so a deployment that
-says nothing about the license keeps the discovery it has today, the container paths included.
-A gate that silently substitutes a different token for the one the operator named is not a gate
-(ADR 0016 D1), and the substitution is not hypothetical: an image carrying a token from some
-build step starts happily when the mounted secret is missing or misnamed, and a running proxy is
-no evidence that the intended token was found. The bite lands exactly where it should — the
-operator made a statement and it was overruled. The token's environment routes are untouched by
-this rule (ADR 0016 D6).
-
-**Amended 2026-09-14: the discovery half of D13 is gone.** `license_file` names the one file
-read, its own default included; there are no well-known locations behind it, and a deployment
-that says nothing gets the default path and nothing else. The reasoning that kept discovery for
-the *said nothing* case was that the key's default is not a statement by the operator — true, and
-beside the point: the paths it fell through to were not a statement by anyone. Where the key is
-not written the default path is an offer rather than a promise, so a proxy whose active provider
-needs no license still starts without one; what changed is that the offer is one path. The
-environment route narrowed with it, to the single name ADR 0016 D6 always stated.
+**D13.** `license_file` is accepted and read by nothing. The proxy checks no license
+(ADR 0016), so the key binds nothing: it has no default, the file it names is never opened, and a
+configuration that writes it starts with a warning that names the key as ignored. It stays
+decodable so that a configuration written for a release that checked a license still starts. The
+next major release removes it, and from then on D11 refuses it like any other unknown key. It is
+the one key that exists without code reading it for its purpose, and the one compatibility shim
+of the kind the alternatives below reject for removed keys.
 
 **D14, decided 2026-09-12.** A command-line flag does not override a configuration key.
 `--monitoring` and `--monitoring-port` are removed: what monitoring does is expressed in the
@@ -455,10 +435,9 @@ of that feature that breaks anything, and a major release is where a break is pa
   configuration file that parses; what changes is that a file which was quietly ignored stops the
   process and says which file it was, instead of surfacing a few checks later as missing client
   credentials.
-- **A mistyped `license_file` becomes a refusal to start** (D13). **Decided 2026-09-12, not
-  built:** a deployment that named a path which does not resolve — and was, knowingly or not,
-  running on whatever discovery found instead — stops starting until the path is corrected. That
-  is the intent: the alternative is a license gate honoured against a token nobody chose.
+- **A configuration carrying `license_file` starts with a warning** (D13) until the next major
+  release, which refuses it under D11. The warning is the only notice an operator gets before
+  then.
 
 ## Alternatives Considered
 
@@ -495,14 +474,6 @@ of that feature that breaks anything, and a major release is where a break is pa
 - **Keep discarding the read error and extend the required-field message with a hint**
   (D12). Rejected: it decorates the wrong error instead of removing it, and every hint of that
   kind is a sentence that has to stay true as the checks around it move.
-- **Keep the license fallback list and log at warn level which path was used** (D13). Rejected:
-  it relies on somebody reading a start-up warning, and for a gate whose effect only shows at
-  expiry that is far too late.
-- **Drop the license fallback list entirely** (D13). Rejected here, **taken 2026-09-14** — see
-  the amendment to D13. The rejection rested on the image living on discovery, which it does not:
-  the image ships a configuration carrying `license_file`'s default, so dropping the list costs
-  the image nothing, and the convenience it bought elsewhere was a token the operator could not
-  name and therefore could not rotate.
 - **Make the monitoring flags honest — branch on whether the flag was given rather than on its
   value** (D14). Rejected: it fixes `--monitoring-port` and keeps a second way to say the same
   thing, which is the part that was wrong.
@@ -532,10 +503,7 @@ of that feature that breaks anything, and a major release is where a break is pa
   moved to loopback. What that listener exports was checked in this tree and is now narrow:
   request counts and durations labelled by HTTP method, route template and status code — the
   route template, not the requested path, so no bucket or object name reaches a label — a
-  connection gauge, and build and license information. **Narrowed 2026-09-12:** the licensee's
-  name and company are no longer labels; what the license metrics still disclose is the expiry
-  date, as a label and as a timestamp gauge, so whoever reaches the port learns when the
-  deployment's license runs out but not whose it is.
+  connection gauge, and build information.
 - **Closed 2026-09-12: there is no pass-through exception left to measure.** D5's split — refuse
   under an encrypting provider, warn under the `exit` one — was measured before it was removed:
   under `exit` against a plain-HTTP backend the proxy started and answered `500` to every
@@ -565,15 +533,8 @@ of that feature that breaks anything, and a major release is where a break is pa
   client's URL lifetime was measured. **Updated 2026-09-12:** the key exists and every pre-signed
   URL is bounded by it, so an unmeasured number is now in force rather than merely proposed. The
   measurement is still owed.
-- **Built 2026-09-13: D12, D13 and D14.** A configuration file that cannot be read now refuses
-  the start and the error names it, a written `license_file` that does not resolve refuses the
-  start instead of falling through to discovery, and the monitoring flags are gone.
-- **Closed 2026-09-14: *which token is this proxy running on* is answerable from the
-  configuration alone.** D13 as first written left three environment variable names and the
-  discovery list wherever the key was not written, so it was not. There is now one variable and
-  one file, and every route to the token is named in the configuration or in the one variable
-  beside it. The cost is a breaking one and is carried in the release notes: a deployment on
-  either other variable name, or on a well-known path, is refused at startup rather than read.
+- **Built 2026-09-13: D12 and D14.** A configuration file that cannot be read now refuses the
+  start and the error names it, and the monitoring flags are gone.
 - **Unverified: whether anything outside this repository passes the monitoring flags.** Inside
   it the chart and the project's own local run targets passed them, and all of those moved to
   configuration under D14; no survey was made of deployments or scripts elsewhere, and for them
@@ -595,8 +556,8 @@ of that feature that breaks anything, and a major release is where a break is pa
 - ADR 0012 — Client checksums are verified against the plaintext, never forwarded and never stored
 - ADR 0014 — Authentication is SigV4 on both forms; there is no rate limiting and no IP blocking
 - ADR 0015 — A transfer is bounded by the client and by shutdown, not by a server wall clock
-- ADR 0016 — The license is a startup gate with an explicit expiry; D13 makes the path the
-  operator writes binding on that gate
+- ADR 0016 — The proxy is licensed under Apache 2.0 and checks no license; D13 is the one key
+  it leaves behind
 - ADR 0017 — Stored data compatibility is not owed; a major release may break the format
 - ADR 0018 — A major release is declared by a label, never discovered at merge
 - ADR 0025 — Leaving is a supported mode: the exit provider writes plaintext and still decrypts

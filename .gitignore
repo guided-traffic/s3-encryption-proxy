@@ -49,6 +49,7 @@ node_modules/
 certs/
 temp/
 proxy.log
+# A token left over from the releases that had a license gate (ADR 0016).
 config/license.jwt
 
 # Performance test results

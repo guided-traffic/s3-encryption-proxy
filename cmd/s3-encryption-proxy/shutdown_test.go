@@ -194,4 +194,17 @@ func TestMainStartupWarnings(t *testing.T) {
 		require.Len(t, warnings, 1)
 		assert.Contains(t, warnings[0].message, "new objects are stored unencrypted")
 	})
+
+	t.Run("a written license_file is named as ignored", func(t *testing.T) {
+		// The key is accepted so that a configuration written for a release
+		// with a license gate still starts, and the warning is what tells the
+		// operator it does nothing (ADR 0016 D3).
+		cfg := exitCfg("https://backend:9000")
+		cfg.LicenseFile = "config/license.jwt"
+		warnings := startupWarnings(cfg)
+		require.Len(t, warnings, 2)
+		assert.Equal(t, "license_file", warnings[0].fields["key"])
+		assert.Contains(t, warnings[0].message, "license_file is ignored")
+		assert.Contains(t, warnings[1].message, "new objects are stored unencrypted")
+	})
 }

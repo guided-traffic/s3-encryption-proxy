@@ -170,9 +170,7 @@ long as objects written under it must stay readable.
   shipped artefact does, so the cost falls on unknown external users only.
 - One key shape, one generator, one rotation procedure, one fingerprint algorithm, one
   wrap. Roughly 1,800 lines of provider, tests, integration suite and example go with the
-  asymmetric provider, and PEM handling leaves the encryption path entirely — the only PEM
-  the product still parses belongs to the license gate and to the tool that issues its keys
-  (ADR 0016).
+  asymmetric provider, and PEM handling leaves the product entirely.
 - Sub-microsecond unwrap stays the reference point for the read path, which keeps the
   latency budget of a future KMS-backed provider meaningful: the difference between local
   and remote custody is then a clean measurement rather than a comparison of two unrelated
@@ -289,9 +287,8 @@ family as the data layer and as what key management services use internally.
 - ADR 0005 — A KMS-backed key encryption key is a provider, not a mode
 - ADR 0009 — The metadata prefix is the proxy's namespace
 - ADR 0013 — A configuration key exists only if code reads it, and an unworkable configuration refuses to start
-- ADR 0016 — The license is a startup gate with an explicit expiry
 - ADR 0017 — Stored data compatibility is not owed; a major release may break the format
 - ADR 0020 — Performance is measured before and after, never asserted
-- ADR 0021 — Key material and licenses are generated, never committed
+- ADR 0021 — Key material is generated, never committed
 - [README.md](../../README.md) — provider reference and key generation
 - [docs/security/key-management.md](../security/key-management.md) — key providers, where each secret lives, rotation, and why the fingerprint is derived

@@ -110,7 +110,7 @@ each section became.
 | §6.4a the client leg | `upload-integrity.md` |
 | §6.5 handlers that refuse | `refusals.md` |
 | §4 isolation, §5 privilege footprint | `tenancy-and-privilege.md` |
-| §7.3–7.5 propagation, chart default, licence expiry (H-4) | `operational-security.md` |
+| §7.3–7.5 propagation, chart default (H-4) | `operational-security.md` |
 | §8 residual risks | the closing section of the page whose mechanism has the gap |
 | §9 reporting a vulnerability | `SECURITY.md` at the repository root |
 

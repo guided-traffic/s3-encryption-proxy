@@ -271,8 +271,7 @@ binds a free port and drives that. Three consequences:
 - it exercises your working tree, so it is the one suite a container rebuild does
   not affect — and the one that catches a config example the code no longer
   accepts, which is what a removed configuration key breaks first;
-- it needs MinIO reachable at `https://localhost:9000` and, for the `aes` half, a
-  license in `S3EP_LICENSE_TOKEN` or at `config/license.jwt`;
+- it needs MinIO reachable at `https://localhost:9000`;
 - it ignores `S3EP_TEST_PROXY_ENDPOINT`, so the TLS run repeats it over plain
   HTTP unchanged.
 
@@ -281,15 +280,14 @@ binds a free port and drives that. Three consequences:
 Integration needs the demo stack, which takes about 30 seconds:
 
 ```bash
-S3EP_LICENSE_TOKEN="$(cat config/license.jwt)" ./start-demo.sh
+./start-demo.sh
 ```
 
-The stack reads the token from the environment, and the proxy will not start
-without one. After changing proxy code, rebuild before you retest — the container
-runs the built binary, not your working tree:
+After changing proxy code, rebuild before you retest — the container runs the
+built binary, not your working tree:
 
 ```bash
-S3EP_LICENSE_TOKEN="$(cat config/license.jwt)" ./start-demo.sh rebuild
+./start-demo.sh rebuild
 ```
 
 `docker logs proxy | tail -50` for the plain listener, `proxy-tls` for the other.
@@ -297,9 +295,7 @@ S3EP_LICENSE_TOKEN="$(cat config/license.jwt)" ./start-demo.sh rebuild
 The Velero suite costs much more: `make e2e-up` generates the test PKI when it is
 missing, creates a kind cluster, installs MinIO over TLS, the CSI hostpath driver
 and snapshotter, the proxy chart and Velero, and waits for the
-BackupStorageLocation to go Available. It needs a license the same way, and
-aborts up front if neither `S3EP_LICENSE_TOKEN` nor `config/license.jwt` exists.
-It is idempotent and reloads a freshly built image, so retest a change with
+BackupStorageLocation to go Available. It is idempotent and reloads a freshly built image, so retest a change with
 `make e2e-up && make test-e2e-velero` rather than recreating the cluster. Thirteen
 tests: a preflight and the V1–V10 scenarios, V1b and V8b included.
 

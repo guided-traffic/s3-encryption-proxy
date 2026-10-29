@@ -1,5 +1,10 @@
 # 038 — s3-encryption-operator: proxy instances provisioned by Custom Resources
 
+> **2026-10-29: the license check is gone (ADR 0016).** The proxy is Apache-2.0 and checks
+> no license: no gate, no token, no expiry, no license tool, no license metrics. Every passage
+> below that plans around the gate, the token, its expiry or its distribution is moot. Read it
+> as the history of the question and drop it when this ticket is next refined.
+
 ## Decided 2026-09-14, before any of this is built
 
 **The operator is a separate program**, with an entry point of its own rather
@@ -293,7 +298,7 @@ the file (`internal/license/validator.go:372-389` reads the variable first,
 the container environment while putting the KEK into it (finding AG). What
 bounds the severity of what this hands out is ADR 0016 D12, verbatim: "The
 license gate is a commercial control and is never presented as a security one"
-(`docs/adr/0016-the-license-is-a-startup-gate.md:138`). A stolen copy grants
+(`docs/adr/0016-the-proxy-is-apache-licensed-and-checks-no-license.md:138`). A stolen copy grants
 no read of any stored object, no key material, no backend credential and no
 position on any data path; the loss is revenue. What that D-number does
 **not** bound is three things and each is a cost of this decision: it does not
@@ -303,7 +308,7 @@ many copies as humans chose to make; it does not bound the duration, because
 there is no revocation of any kind — `checkClaims` refuses a token with no
 `exp` claim (`internal/license/validator.go:123-149`, ADR 0016 D3) and refuses
 one whose expiry has passed, which is the running-proxy rule of ADR 0016 D4
-(`docs/adr/0016-the-license-is-a-startup-gate.md:101-104`), and nothing else
+(`docs/adr/0016-the-proxy-is-apache-licensed-and-checks-no-license.md:101-104`), and nothing else
 is checked: `k8s_cluster_id` is parsed (`internal/license/types.go:19`),
 logged (`internal/license/logger.go:41-42`) and compared to nothing, and the
 trust anchor is a public key compiled into the binary, so withdrawing a copy
@@ -560,7 +565,7 @@ short of a new keypair and a rebuild of every image. It is accepted on ADR
 gate is a commercial control and is never presented as a security one, while
 its *lapse* is documented as a security-relevant availability property, since
 an expired licence stops all new encryption and stops reads as well until the
-operator acts (`docs/adr/0016-the-license-is-a-startup-gate.md:138-144`). So a
+operator acts (`docs/adr/0016-the-proxy-is-apache-licensed-and-checks-no-license.md:138-144`). So a
 stolen token buys the ability to run the product and no byte of anyone's data,
 and the thing with a blast radius is expiry rather than theft — which is
 finding AM's subject. The mitigation that carries it is one and it exists
@@ -832,7 +837,7 @@ owner.
 **D. A licence that lapses while the proxy runs ends the process.** The runtime
 monitor calls a shutdown that exits 1 (`internal/license/validator.go:244-259`),
 and the startup gate then refuses the restart
-([ADR 0016](../adr/0016-the-license-is-a-startup-gate.md)) — so a pod does not
+([ADR 0016](../adr/0016-the-proxy-is-apache-licensed-and-checks-no-license.md)) — so a pod does not
 degrade, it crash-loops. With one token across a fleet, every instance does it
 inside the same minute. What says why: the pod log, and
 `s3ep_license_expiry_timestamp`, which is set once at startup and only when
@@ -1992,7 +1997,7 @@ decision did *not* settle is the part a later reader gets wrong.
     trade-off is recorded under *Accepted residual risks, 2026-09-16*, on ADR
     0016 D12's own split: the gate is a commercial control, its lapse is a
     security-relevant availability property
-    (`docs/adr/0016-the-license-is-a-startup-gate.md:138-144`). **One
+    (`docs/adr/0016-the-proxy-is-apache-licensed-and-checks-no-license.md:138-144`). **One
     precondition remains and it blocks the licence ADR rather than the
     decision: whether the commercial terms permit one token across many
     namespaces.** That is not in this tree and cannot be settled in it. It
@@ -2616,7 +2621,7 @@ decision did *not* settle is the part a later reader gets wrong.
   ([ADR 0021](../adr/0021-key-material-is-generated-never-committed.md)).
 - **The licence gate.** Fatal at startup, no grace period, and `exit` is the one
   provider type admitted without a token
-  ([ADR 0016](../adr/0016-the-license-is-a-startup-gate.md),
+  ([ADR 0016](../adr/0016-the-proxy-is-apache-licensed-and-checks-no-license.md),
   [ADR 0025](../adr/0025-leaving-is-a-supported-mode.md)).
 - **The metadata namespace.** The prefix is the proxy's alone and is not a
   per-tenant value (ADR 0009).
@@ -2737,7 +2742,7 @@ decision did *not* settle is the part a later reader gets wrong.
   0016 D6 makes `S3EP_LICENSE_TOKEN` the route the licence reaches every
   environment by and keeps `license_file` as "the on-disk route for a
   deployment that mounts the token as a file"
-  (`docs/adr/0016-the-license-is-a-startup-gate.md:110-114`) — which is the
+  (`docs/adr/0016-the-proxy-is-apache-licensed-and-checks-no-license.md:110-114`) — which is the
   permission this takes, not a departure from it. `LoadLicense` reads the
   variable before the file (`internal/license/validator.go:372-389`,
   `:332-341`), so rendering both makes the environment win silently and

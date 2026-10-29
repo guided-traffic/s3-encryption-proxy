@@ -88,24 +88,6 @@ var (
 		[]string{"method", "endpoint"},
 	)
 
-	// License metrics. The licensee's name and company are deliberately not
-	// labels: the listener is unauthenticated by design, and a metric is read
-	// widely and kept for a long time.
-	LicenseInfo = factory.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "s3ep_license_info",
-			Help: "License information (1 = valid, 0 = invalid/expired)",
-		},
-		[]string{"expires_at"},
-	)
-
-	LicenseExpiryTime = factory.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "s3ep_license_expiry_timestamp",
-			Help: "License expiry time as Unix timestamp",
-		},
-	)
-
 	// Server metrics
 	ServerInfo = factory.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -223,20 +205,4 @@ func RecordObjectIntegrityFailure(reason, phase string) {
 func SetServerInfo(version, commit, buildTime string) {
 	ServerInfo.WithLabelValues(version, commit, buildTime).Set(1)
 	setStatusBuild(version, commit, buildTime)
-}
-
-// SetLicenseInfo sets license information. It is called once, at startup, which
-// is why no gauge here is a remaining-time figure: that would be frozen at the
-// value it had when the process began and could never fall, so an alert on it
-// could never fire. The expiry timestamp is correct whenever it is scraped, and
-// the remaining time belongs in the query:
-// (s3ep_license_expiry_timestamp - time()) / 86400
-func SetLicenseInfo(expiresAt string, valid bool, expiryTimestamp float64) {
-	value := float64(0)
-	if valid {
-		value = 1
-	}
-	LicenseInfo.WithLabelValues(expiresAt).Set(value)
-	LicenseExpiryTime.Set(expiryTimestamp)
-	setStatusLicense(expiresAt, valid, expiryTimestamp)
 }

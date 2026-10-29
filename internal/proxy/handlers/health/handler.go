@@ -37,8 +37,7 @@ func (h *Handler) SetRequestTracker(onStart, onEnd func()) {
 }
 
 // Live answers the liveness probe, and it answers 200 unconditionally: it
-// reports neither the drain, nor the backend, nor the licence, nor the
-// configuration. The only reaction kubelet has to a failing liveness probe is to
+// reports neither the drain, nor the backend, nor the configuration. The only reaction kubelet has to a failing liveness probe is to
 // kill the container and restart it, and a restart repairs none of those — for
 // the backend it would turn a foreign outage into a crash loop that strands
 // exactly the multipart uploads the shutdown sweep exists to end (ADR 0028,

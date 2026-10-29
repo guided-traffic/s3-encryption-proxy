@@ -32,7 +32,7 @@ encryption:
   providers:
     # aes, not exit, and that is the safety property of this file: without
     # S3EP_AES_KEY the proxy refuses to start. An exit provider here would start
-    # without a key and without a licence and store every object as plaintext,
+    # without a key and store every object as plaintext,
     # which is a deployment that looks encrypted and is not.
     - alias: "aes"
       type: "aes"

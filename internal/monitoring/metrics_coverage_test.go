@@ -1,8 +1,8 @@
 package monitoring
 
 import (
+	"strings"
 	"testing"
-	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
@@ -161,93 +161,15 @@ func TestMonSetServerInfo(t *testing.T) {
 	assert.Equal(t, float64(1), got.Value)
 }
 
-func TestMonSetLicenseInfo(t *testing.T) {
-	tests := []struct {
-		name          string
-		valid         bool
-		expiryOffset  time.Duration
-		expectedGauge float64
-	}{
-		{
-			name:          "valid license expiring in ten days",
-			valid:         true,
-			expiryOffset:  10 * 24 * time.Hour,
-			expectedGauge: 1,
-		},
-		{
-			name:          "invalid license still records expiry",
-			valid:         false,
-			expiryOffset:  2 * 24 * time.Hour,
-			expectedGauge: 0,
-		},
-		{
-			name:          "an expired license records the expiry that has passed",
-			valid:         false,
-			expiryOffset:  -48 * time.Hour,
-			expectedGauge: 0,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			expiry := time.Now().Add(tt.expiryOffset)
-			expiresAt := expiry.Format(time.RFC3339)
-			expiryTimestamp := float64(expiry.Unix())
-
-			SetLicenseInfo(expiresAt, tt.valid, expiryTimestamp)
-
-			info := MondefaultMetric(t, "s3ep_license_info", map[string]string{
-				"expires_at": expiresAt,
-			})
-			require.True(t, info.Found)
-			assert.Equal(t, tt.expectedGauge, info.Value)
-
-			// The timestamp is the whole statement: it is right whenever it is
-			// scraped, where a remaining-time gauge set once at startup could
-			// never fall and so could never raise an alert.
-			expiryGauge := MondefaultMetric(t, "s3ep_license_expiry_timestamp", map[string]string{})
-			require.True(t, expiryGauge.Found)
-			assert.Equal(t, expiryTimestamp, expiryGauge.Value)
-		})
-	}
-}
-
-// ADR 0030 D4: the scrape names no licensee, and that is the premise the
-// unauthenticated listener rests on (D2). The licensee's name and company were
-// labels of s3ep_license_info until 5.0.0, leaving a customer name on an
-// endpoint built to be scraped widely and retained for a long time.
-func TestMonLicenseInfoCarriesNoLicenseeIdentity(t *testing.T) {
-	expiry := time.Now().Add(24 * time.Hour)
-	SetLicenseInfo(expiry.Format(time.RFC3339), true, float64(expiry.Unix()))
-
-	families, err := Gatherer().Gather()
-	require.NoError(t, err)
-
-	var seen bool
-	for _, family := range families {
-		if family.GetName() != "s3ep_license_info" {
-			continue
-		}
-		seen = true
-		for _, metric := range family.GetMetric() {
-			for _, label := range metric.GetLabel() {
-				assert.NotContains(t, []string{"licensed_to", "company"}, label.GetName(),
-					"the licensee's identity must not be a metric label (ADR 0030 D4)")
-			}
-		}
-	}
-	require.True(t, seen, "s3ep_license_info must still be exported")
-}
-
-// ADR 0030 D4. Removed in 5.0.0: it was written once at startup and never
-// refreshed, so a dashboard threshold on it sat on a value that could not fall.
-// s3ep_license_expiry_timestamp is the honest primitive and the remaining days
-// are a query.
-func TestMonLicenseDaysRemainingIsGone(t *testing.T) {
+// ADR 0016: the proxy reads no license, so no series describes one. The
+// validity, the expiry and the countdown removed in 5.0.0 are all gone, and a
+// dashboard or an alert still querying them finds nothing rather than a value
+// that no longer means anything.
+func TestMonNoLicenseSeriesIsExported(t *testing.T) {
 	families, err := Gatherer().Gather()
 	require.NoError(t, err)
 	for _, family := range families {
-		assert.NotEqual(t, "s3ep_license_days_remaining", family.GetName(),
-			"the license countdown is not a series (ADR 0030 D4)")
+		assert.False(t, strings.HasPrefix(family.GetName(), "s3ep_license_"),
+			"%s describes a license the proxy does not have", family.GetName())
 	}
 }

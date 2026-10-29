@@ -7,9 +7,6 @@
 # object this proxy encrypted earlier names the key that wrapped it in its own
 # s3ep-kek-fingerprint metadata, and that provider is what unwraps it. Remove
 # it and those objects stop being readable.
-#
-# The startup license gate looks only at the active provider, so this file
-# starts the proxy without a license - which is the point of the exit provider.
 
 # Server configuration
 bind_address: "0.0.0.0:8080"  # default
@@ -56,10 +53,6 @@ monitoring:
   enabled: true          # example; default false
   bind_address: ":9090"  # default
   metrics_path: "/metrics"  # default
-
-# license_file has no entry here on purpose: the exit provider is admitted
-# without a license. Point it at a token only if you plan to switch the active
-# alias back to an encrypting provider.
 
 # Encryption configuration - the exit setup
 encryption:

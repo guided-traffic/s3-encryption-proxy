@@ -61,26 +61,4 @@ spec:
               this is the network or the backend being gone, not a permission problem. The
               proxy's log names the class, the host and the error for each one; /status on the
               monitoring listener shows the last failure and its class.
-
-        - alert: S3EPLicenseExpiringSoon
-          expr: (s3ep_license_expiry_timestamp - time()) / 86400 < {{ .Values.monitoring.prometheusRule.license.warnDays }}
-          for: 1h
-          labels:
-            severity: warning
-          annotations:
-            summary: "The license expires in less than {{ .Values.monitoring.prometheusRule.license.warnDays }} days"
-            description: >-
-              The proxy ends itself gracefully when the token expires, so this is a planned
-              outage with a date on it. Replace the token before then.
-
-        - alert: S3EPLicenseExpired
-          expr: s3ep_license_info == 0
-          for: 0m
-          labels:
-            severity: critical
-          annotations:
-            summary: "The license is not valid"
-            description: >-
-              The proxy admits only the exit provider without a valid license, and it shuts
-              down gracefully when a running token expires. Expect the instance to stop.
 {{- end }}

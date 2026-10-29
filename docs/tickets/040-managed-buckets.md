@@ -1,5 +1,10 @@
 # 040 — Managed buckets: a startup readability verdict, and a pass that moves a bucket onto the current KEK
 
+> **2026-10-29: the license check is gone (ADR 0016).** The proxy is Apache-2.0 and checks
+> no license: no gate, no token, no expiry, no license tool, no license metrics. Every passage
+> below that plans around the gate, the token, its expiry or its distribution is moot. Read it
+> as the history of the question and drop it when this ticket is next refined.
+
 Raised 2026-09-14 by the owner. **Planning only. Nothing in this file is
 decided** — every fork under *Open questions* is settled in ticket refining, not
 before. Everything under *What the tree looks like today* was verified against

@@ -23,8 +23,6 @@ format. What it actually exports today:
 | `s3ep_server_info` | gauge | `version`, `commit`, `build_time` |
 | `s3ep_active_connections` | gauge | — |
 | `s3ep_object_integrity_failures_total` | counter | `reason`, `phase` |
-| `s3ep_license_info` | gauge | `expires_at` |
-| `s3ep_license_expiry_timestamp` | gauge | — |
 | `s3ep_backend_last_response_timestamp` | gauge | — |
 | `s3ep_backend_last_failure_timestamp` | gauge | `class` |
 | `s3ep_backend_observed` | gauge | — |
@@ -46,19 +44,12 @@ increase(s3ep_object_integrity_failures_total[15m]) > 0
 
 Every series carries `kubernetes_namespace`, `kubernetes_pod_name`,
 `helm_release` and `helm_chart_version` when those are present in the
-environment; the chart sets them. The two license gauges appear once a valid
-license is loaded.
+environment; the chart sets them.
 
-The listener carries no authentication, so it names no licensee: `licensed_to`
-and `company` were labels of `s3ep_license_info` until 5.0.0 and are gone.
-Restricting who can reach the metrics port is the operator's, and the chart ships
+The listener carries no authentication. Restricting who can reach the metrics port is the operator's, and the chart ships
 no NetworkPolicy of its own: which namespaces may reach the pod is a property of
 the cluster, not of the chart (ADR 0030). Write one against the proxy pod, or run
 without one knowingly.
-
-There is no remaining-days gauge. It would be written once, at startup, and
-could never fall, so an alert on it could never fire. Ask the timestamp
-instead: `(s3ep_license_expiry_timestamp - time()) / 86400`.
 
 `endpoint` is the **route template** — `/{bucket}/{key:.*}`, not the path the
 client requested — so no bucket or key name reaches a scrape.
@@ -75,7 +66,10 @@ The Go runtime and process collectors (`go_*`, `process_*`) are served as well.
 
 Anything else an older dashboard charts — S3 operation counters, encryption or
 HMAC timings, throughput gauges, provider info — no longer exists: those metrics
-were removed together with the code that never observed them.
+were removed together with the code that never observed them. `s3ep_license_info`
+and `s3ep_license_expiry_timestamp` are gone as well, because the proxy checks no
+licence ([ADR 0016](../adr/0016-the-proxy-is-apache-licensed-and-checks-no-license.md)):
+a rule comparing against them goes silent, one written with `absent()` fires.
 
 ## Probe endpoints
 
@@ -89,9 +83,8 @@ question ([ADR 0034](../adr/0034-a-probe-reports-the-process-never-its-dependenc
 
 `/livez` is constant on purpose. The only reaction to a failing liveness probe is
 to kill the container and restart it, and no precondition this proxy has is
-repaired by a restart: a backend outage is not, a configuration that did not parse
-never got the process this far, and an expired licence makes the process end
-itself. What a restart *does* destroy is the multipart uploads this process is
+repaired by a restart: a backend outage is not, and a configuration that did not
+parse never got the process this far. What a restart *does* destroy is the multipart uploads this process is
 holding, which is precisely what the drain exists to end. A liveness probe that
 reported the drain therefore killed the shutdown it was watching.
 
@@ -111,7 +104,7 @@ parameter, therefore stops being a probe and answers an S3 error.
 
 Nothing descriptive is on this listener. `/health`, `/version` and the monitoring
 listener's `/info` are gone as of this release, with no alias: the build, the
-active provider, what the backend last did and the licence are one document,
+active provider and what the backend last did are one document,
 behind the port whose reachability you control.
 
 ## The status document
@@ -127,8 +120,7 @@ failed.
   "service": "s3-encryption-proxy",
   "build": {"version": "5.0.2", "commit": "7bbc3f9", "build_time": "2026-09-15T08:12:03Z"},
   "encryption": {"provider_alias": "current-provider", "provider_type": "aes", "kek_fingerprint": "a1b2c3d4e5f60718"},
-  "backend": {"status": "ok", "last_response": "2026-09-15T09:41:22Z"},
-  "license": {"expires_at": "2027-01-31 23:59:59 UTC", "valid": true, "remaining": "3264h0m0s", "remaining_seconds": 11750400}
+  "backend": {"status": "ok", "last_response": "2026-09-15T09:41:22Z"}
 }
 ```
 
@@ -144,9 +136,6 @@ whether it answered, not whether it agreed.
 | `no request since start` | Nothing has been observed yet. It never says `ok` on a guess | — |
 | `ok` | The last thing observed was an HTTP response | `last_response`, and `last_failure`/`last_failure_class` if there was ever a failure |
 | `failing` | The last thing observed was a transport failure | `last_failure`, `last_failure_class` (`dns`, `connect`, `tls`, `timeout`, `other`), and `last_response` if there was ever one |
-
-`license` is absent entirely when no licence information was ever recorded, and
-`remaining` is computed when you read the document, not frozen at startup.
 
 **A transport failure is also logged and counted, and the counter is what an
 alert reads.** The document and the `*_last_failure_timestamp` gauge say *when*
@@ -167,9 +156,8 @@ raised, which is an upload checksum that did not verify or a segment that could
 not be sealed. The client is still told, with `400 BadDigest` or a `500`.
 
 Every field is a metric on the same listener as well — `s3ep_server_info`,
-`s3ep_encryption_provider_info`, `s3ep_backend_*`, `s3ep_license_*`. The document
-is the ad-hoc reading of them for an operator with no Prometheus, never their
-replacement. It is **absent on a default install**, because `monitoring.enabled`
+`s3ep_encryption_provider_info`, `s3ep_backend_*`. The document is the ad-hoc
+reading of them for an operator with no Prometheus, never their replacement. It is **absent on a default install**, because `monitoring.enabled`
 is `false`; switching it on switches on the unauthenticated metrics port with it,
 which is why the default is not flipped.
 

@@ -1,9 +1,11 @@
 # Operational security: what the deployment can undo
 
 A correct proxy with a configuration that never reached it is not a correct
-deployment. This page carries the three places where the operational layer —
-the chart, the published defaults, the licence — decides something the code
-cannot.
+deployment. This page carries the two places where the operational layer — the
+chart and the published defaults — decides something the code cannot. A licence
+expiry was a third, and stopped the data path in both directions; the proxy
+checks no licence any more, so nothing on a calendar can stop it
+([ADR 0016](../adr/0016-the-proxy-is-apache-licensed-and-checks-no-license.md)).
 
 ## A configuration change has to reach the pods
 
@@ -11,8 +13,7 @@ Everything that decides how the proxy encrypts lives in one string: the active
 provider alias and the key material. The pod template hashes the rendered
 ConfigMap and the rendered Secret
 ([deployment.yaml:17-28](../../deploy/helm/s3-encryption-proxy/templates/deployment.yaml#L17)),
-so a configuration change, a rotated credential and a renewed licence all roll
-the pods.
+so a configuration change and a rotated credential both roll the pods.
 
 What is still invisible to the chart, and therefore still needs a manual
 `kubectl rollout restart deployment/<release>-s3-encryption-proxy`, is an
@@ -47,34 +48,6 @@ this repository.** Both are now `${S3EP_AES_KEY}` environment references.
 If a deployment ever ran with either value: treat every object written under it
 as compromised, configure a new KEK, re-write the data through the proxy, and
 only then remove the old provider.
-
-## License expiry stops the proxy
-
-Not an attack, but a propagation property with security consequences. The
-license validator checks hourly and, once the license expires, hands the expiry
-to the shutdown path `main` already runs for a SIGTERM
-([validator.go:231-242](../../internal/license/validator.go#L231),
-[main.go:228-254](../../cmd/s3-encryption-proxy/main.go#L228)): readiness goes 503, new
-requests get a `Retry-After`, the transfers already running keep their budget,
-open multipart uploads are swept, and the process then exits 1 so the container
-restarts into the startup license check (ADR 0029 D2). The validator's own
-`os.Exit(1)` ([validator.go:244-259](../../internal/license/validator.go#L244)) is the
-fallback for a process that registered no handler; the shipped binary always
-registers one. Either way the proxy stops, and every read stops with it.
-
-**Reading the data back does not need a license.** The gate looks at the active
-provider only, and `type: "exit"` is the one type it admits without one
-([validator.go:152-165](../../internal/license/validator.go#L152),
-[config.go:642-657](../../internal/config/config.go#L642)). Point
-`encryption.encryption_method_alias` at an exit provider, leave the `aes`
-provider listed beside it, and the proxy starts unlicensed and decrypts
-everything written under that key — new writes are stored as the client sends
-them from then on (ADR 0016, and
-[the exit provider](key-management.md#what-the-exit-provider-means-for-this-threat-model)). The security consequence to
-name is the one that follows from *not* doing this: an operator who does not know
-about the exit provider sees a proxy that will not start and data they cannot
-read, which is the situation that makes people copy ciphertext out of the bucket
-and hunt for the key by hand.
 
 ## What this does not cover
 
