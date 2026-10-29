@@ -128,10 +128,13 @@ and it does not go stale when a file is renamed. The product's own vocabulary is
 reference and is named exactly: configuration keys, `s3ep-` metadata keys, S3 error codes, header
 and algorithm names, release versions, and the commands the project ships.
 
-**D9.** When a decision changes, the ADR is amended in place in the same change: the `Decision`
-section states the new rule, the `Status` section records the amendment with its date, and the
-superseded rule is marked as superseded rather than deleted. A reader never finds an old rule
-stated as current. A reversal amends the ADR; it does not become a new row in a work list.
+**D9.** An ADR states the current decision and nothing else. When a decision changes, the record
+that holds it is rewritten in the same change: the `Decision` section states the rule as it now
+is, the `Status` section carries the date of the current decision and what is built of it, and
+every other section describes the decision as it now stands. No ADR supersedes or invalidates
+another, no rule is kept as an amended or superseded entry, and no section collects a dated
+history of earlier states; what a record used to say is in version control. A reversal rewrites
+the ADR that holds the decision; it does not become a new ADR or a new row in a work list.
 
 **D10.** Before a ticket file is archived, the repository is searched for its number and for the
 labels it defined, and every remaining reference is cleared or rewritten to point at the ADR.
@@ -144,7 +147,7 @@ the product follows from the moment the decision is taken.
 
 ## Consequences
 
-* Closing a change costs more at the end than it used to: write or amend the ADR, update the
+* Closing a change costs more at the end than it used to: write or rewrite the ADR, update the
   user-facing documents, search for stale references, then archive the ticket. That is the point.
   The record that survives is the one a later reader needs, and the backlog stays small enough to
   stay focused.

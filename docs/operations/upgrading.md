@@ -7,7 +7,7 @@ release that already checks no licence.
 
 The proxy is licensed under Apache 2.0 from this release on and checks no
 licence at all: no token is read, no provider type is gated, nothing expires
-([ADR 0040](../adr/0040-the-proxy-is-apache-licensed-and-checks-no-license.md)).
+([ADR 0016](../adr/0016-the-proxy-is-apache-licensed-and-checks-no-license.md)).
 Nothing here refuses to start and the stored format does not change, so the
 upgrade is a plain rollout. What is left is cleanup:
 
@@ -118,7 +118,7 @@ The breaks, all deliberate ([ADR 0017](../adr/0017-stored-data-compatibility-is-
   `S3_ENCRYPTION_PROXY_LICENSE`, `S3EP_LICENSE_TOKEN` and every token path simply
   stop mattering. Remove `license_file` while you bring the configuration
   forward, as the section above says
-  ([ADR 0040](../adr/0040-the-proxy-is-apache-licensed-and-checks-no-license.md)).
+  ([ADR 0016](../adr/0016-the-proxy-is-apache-licensed-and-checks-no-license.md)).
 - **New refusals at startup, each naming the key.** A `target_endpoint` with no
   scheme, or `http://` under any provider — the exit provider included; an
   `encryption.metadata_key_prefix` shorter than four characters, not starting

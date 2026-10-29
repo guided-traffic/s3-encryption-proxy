@@ -7,7 +7,7 @@ environment variable, so a key written in the file is changed in the file.
 
 Nothing reaches the proxy from outside the file. The license token that used to
 — `S3EP_LICENSE_TOKEN`, read during validation — went with the license check
-(ADR 0040). `license_file` is still decoded so that a configuration written for a
+(ADR 0016). `license_file` is still decoded so that a configuration written for a
 licensed release starts, but nothing reads the file it names; its one effect is
 the warning `startupWarnings` in `cmd/s3-encryption-proxy/main.go` logs, and it
 has no default. The binary declares

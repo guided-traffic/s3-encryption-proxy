@@ -572,7 +572,7 @@ func TestCfgCreateProviderFromProviderMap(t *testing.T) {
 	}
 }
 
-// ADR 0040 D1: no provider type needs a license. An aes configuration loads
+// ADR 0016 D2: no provider type needs a license. An aes configuration loads
 // with no token in the environment and no license_file anywhere.
 func TestCfgLoadNeedsNoLicense(t *testing.T) {
 	CfgResetViper(t)
@@ -602,7 +602,7 @@ s3_clients:
 	assert.Empty(t, cfg.LicenseFile)
 }
 
-// ADR 0040 D3: license_file is accepted and read by nothing. A configuration
+// ADR 0016 D3: license_file is accepted and read by nothing. A configuration
 // written for a release that had a license gate still starts, even when the
 // file it names does not exist, and the value is kept only so that the startup
 // warning can name the key.
@@ -807,7 +807,7 @@ s3_clients:
 // refusal of ADR 0013 D11, and a shipped file that does not is a release defect
 // rather than a test failure. Only the decode stage is exercised: the aes
 // examples take their key from the environment, and that is not what this is
-// about. license_file is decodable and read by nothing (ADR 0040 D3), so a
+// about. license_file is decodable and read by nothing (ADR 0016 D3), so a
 // shipped example carrying it would teach a key that does nothing.
 func TestCfgShippedExamplesCarryNoUnknownKeys(t *testing.T) {
 

@@ -198,7 +198,7 @@ func TestMainStartupWarnings(t *testing.T) {
 	t.Run("a written license_file is named as ignored", func(t *testing.T) {
 		// The key is accepted so that a configuration written for a release
 		// with a license gate still starts, and the warning is what tells the
-		// operator it does nothing (ADR 0040 D3).
+		// operator it does nothing (ADR 0016 D3).
 		cfg := exitCfg("https://backend:9000")
 		cfg.LicenseFile = "config/license.jwt"
 		warnings := startupWarnings(cfg)

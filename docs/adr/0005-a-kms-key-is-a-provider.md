@@ -305,7 +305,7 @@ at 5.0.0 for a KMS to fill.
 * ADR 0015 — A transfer is bounded by the client and by shutdown, not by a server wall clock
 * ADR 0018 — A major release is declared by a label, never discovered at merge
 * ADR 0019 — Integration and end-to-end tests are the product; they are never skipped
-* ADR 0021 — Key material and licenses are generated, never committed
+* ADR 0021 — Key material is generated, never committed
 * [README.md](../../README.md) — provider reference and configuration
 * [docs/security/key-management.md](../security/key-management.md) — key custody and the
   fingerprint exception; [docs/security/threat-model.md](../security/threat-model.md) for the

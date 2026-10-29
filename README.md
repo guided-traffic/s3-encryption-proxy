@@ -421,7 +421,7 @@ monitoring:
   pprof_enabled: false      # default; /debug/pprof on its OWN listener, not this one
   pprof_bind_address: "127.0.0.1:6060"  # default; with pprof_enabled it must be loopback or startup fails
 
-# Accepted and ignored: no licence is read (ADR 0040). There is no default; a
+# Accepted and ignored: no licence is read (ADR 0016). There is no default; a
 # configuration that writes it starts with a warning naming the key, and the next
 # major release refuses it. Delete it from your configuration.
 # license_file: "config/license.jwt"  # example of what to delete
@@ -534,4 +534,4 @@ Copyright 2025-2026 Hans Fischer. Licensed under the
 [Apache License, Version 2.0](./LICENSE): free to use, modify and redistribute,
 commercially included. The proxy checks no licence — no key, no feature gate,
 nothing that expires
-([ADR 0040](./docs/adr/0040-the-proxy-is-apache-licensed-and-checks-no-license.md)).
+([ADR 0016](./docs/adr/0016-the-proxy-is-apache-licensed-and-checks-no-license.md)).

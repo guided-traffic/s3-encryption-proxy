@@ -132,7 +132,7 @@ default rather than something tighter.
   ([middleware.go:79-86](../../internal/monitoring/middleware.go#L79)) — and none
   identifies the deployment or its operator. The licence series that once carried
   a customer name, and later only an expiry, are gone with the licence check
-  ([ADR 0040](../adr/0040-the-proxy-is-apache-licensed-and-checks-no-license.md)).
+  ([ADR 0016](../adr/0016-the-proxy-is-apache-licensed-and-checks-no-license.md)).
 
   **What this listener does disclose, deliberately, is the active provider.**
   `s3ep_encryption_provider_info` carries `alias`, `type` and `kek_fingerprint`,

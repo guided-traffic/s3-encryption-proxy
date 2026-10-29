@@ -542,7 +542,7 @@ func TestProviderTypesSupported(t *testing.T) {
 // provider an exit: a configuration that lists it beside the aes provider
 // holding the old key starts with either one active, and neither needs anything
 // beyond the configuration itself. No provider type is gated on a license
-// (ADR 0040 D1), so switching the active alias back and forth is a
+// (ADR 0016 D2), so switching the active alias back and forth is a
 // configuration change and nothing else.
 func TestExitProvider_EitherAliasStarts(t *testing.T) {
 	logrus.SetLevel(logrus.ErrorLevel)
@@ -562,7 +562,7 @@ func TestExitProvider_EitherAliasStarts(t *testing.T) {
 
 	t.Run("aes active", func(t *testing.T) {
 		require.NoError(t, loadTestConfig(t, exitTestConfig("aes-previous", bothProviders)),
-			"an encrypting provider must start without a license (ADR 0040 D1)")
+			"an encrypting provider must start without a license (ADR 0016 D2)")
 	})
 }
 

@@ -170,7 +170,7 @@ type Config struct {
 	S3Security S3SecurityConfig      `mapstructure:"s3_security"`
 
 	// LicenseFile is accepted and never read. The proxy has no license gate
-	// (ADR 0040), and the key stays decodable so that a configuration written
+	// (ADR 0016), and the key stays decodable so that a configuration written
 	// for a release that had one still starts; main names it in a startup
 	// warning. The next major release removes it.
 	LicenseFile string `mapstructure:"license_file"`

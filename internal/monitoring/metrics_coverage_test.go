@@ -161,7 +161,7 @@ func TestMonSetServerInfo(t *testing.T) {
 	assert.Equal(t, float64(1), got.Value)
 }
 
-// ADR 0040: the proxy reads no license, so no series describes one. The
+// ADR 0016: the proxy reads no license, so no series describes one. The
 // validity, the expiry and the countdown removed in 5.0.0 are all gone, and a
 // dashboard or an alert still querying them finds nothing rather than a value
 // that no longer means anything.

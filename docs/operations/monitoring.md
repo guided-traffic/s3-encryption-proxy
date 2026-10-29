@@ -68,7 +68,7 @@ Anything else an older dashboard charts — S3 operation counters, encryption or
 HMAC timings, throughput gauges, provider info — no longer exists: those metrics
 were removed together with the code that never observed them. `s3ep_license_info`
 and `s3ep_license_expiry_timestamp` are gone as well, because the proxy checks no
-licence ([ADR 0040](../adr/0040-the-proxy-is-apache-licensed-and-checks-no-license.md)):
+licence ([ADR 0016](../adr/0016-the-proxy-is-apache-licensed-and-checks-no-license.md)):
 a rule comparing against them goes silent, one written with `absent()` fires.
 
 ## Probe endpoints

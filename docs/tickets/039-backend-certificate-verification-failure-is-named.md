@@ -274,7 +274,7 @@ proxy has no second TLS peer to prove it against.
 - **I.** `README.md` and `docs/developer/configuration.md` both state that the
   only environment mechanism is a `${VAR}` reference in a named list of fields,
   with `S3EP_LICENSE_TOKEN` as the single exception (no exception since 2026-10-29,
-  ADR 0040).
+  ADR 0016).
   `SSL_CERT_FILE`/`SSL_CERT_DIR` are read by the **Go runtime**, not the loader,
   so they are not a counterexample — but an operator who has read that sentence
   will stop looking. Work list item 11.

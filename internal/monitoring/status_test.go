@@ -53,7 +53,7 @@ func TestMonStatusBeforeAnythingHappened(t *testing.T) {
 	assert.NotContains(t, backend, "last_failure_class")
 
 	assert.NotContains(t, body, "license",
-		"the proxy reads no license, so the document names none (ADR 0040)")
+		"the proxy reads no license, so the document names none (ADR 0016)")
 }
 
 func TestMonStatusCarriesBuildAndActiveProvider(t *testing.T) {

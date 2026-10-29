@@ -257,11 +257,11 @@ stored data unreadable is the definition of a major.
 
 - **"No production deployment" is not verified and cannot be, from inside this
   repository.** Releases are public and the chart is installable; the evidence is the
-  repository owner's knowledge of the deployments he knows about. Every encrypting
-  deployment holds a license issued by the vendor, which is the one record that could turn
-  the assumption into a check — **it is not verified that the issued-license record was
-  consulted**. That record covers the licensed releases only: since 2026-10-29 the proxy needs
-  no license (ADR 0040), so a deployment of a later release leaves no record anywhere.
+  repository owner's knowledge of the deployments he knows about. An encrypting deployment
+  of a release up to 5.1 held a license issued by the vendor, the one record that could turn
+  the assumption into a check for those releases — **it is not verified that the
+  issued-license record was consulted**. The proxy checks no license now (ADR 0016), so a
+  deployment of a later release leaves no record anywhere.
 - **The fallback exists on paper only, and now starts further back.** No read-only path for
   the previous format has been built or tested, and since the old code is deleted rather than
   dormant, building one starts from a released version of it. If the precondition fails late,

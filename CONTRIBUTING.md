@@ -249,6 +249,6 @@ conventions.
 ## License
 
 The project is licensed under the [Apache License, Version 2.0](LICENSE) (ADR
-[0040](docs/adr/0040-the-proxy-is-apache-licensed-and-checks-no-license.md)). By
+[0016](docs/adr/0016-the-proxy-is-apache-licensed-and-checks-no-license.md)). By
 contributing, you agree that your contributions are licensed under the same
 terms, as section 5 of the license states.

@@ -6,14 +6,8 @@
 
 **Implemented on the 5.0.0 branch the same day.** The provider type is `exit`; `none` is refused
 by name with a message that points at it. All three write paths store plaintext, every read path
-decides per object — whole-object `GET`, ranged `GET` and `HEAD`, verified 2026-09-12 — and the
-licence gate lets the exit provider start without a licence because it only ever looked at the
-active provider.
-
-**Amended 2026-10-29: D2 is moot (ADR 0040).** The proxy checks no license, so no provider type
-needs one and the exit provider's exemption has nothing left to exempt it from. What the exit
-provider is for — leaving encryption without losing what was encrypted — is unchanged, and so
-are D1 and D3 onwards.
+decides per object — whole-object `GET`, ranged `GET` and `HEAD`, verified 2026-09-12 — and
+switching the active alias to `exit` needs nothing beyond the configuration entry.
 
 **Corrected 2026-09-13.** Until that day this mode did not keep its own promise that the backend's
 rules about part sizes are the ones the client meets: a client part was read into memory in full
@@ -31,12 +25,12 @@ pass-through did.
 ## Context
 
 A product that encrypts data at rest owes its operator a way out. Without one, the encryption is
-not a feature but a hostage: the data is readable only for as long as the licence is valid, the
-software runs and the operator keeps paying. That is true of every envelope-encryption proxy and it
+not a feature but a hostage: the data is readable only for as long as the software runs and keeps
+encrypting. That is true of every envelope-encryption proxy and it
 is the objection a careful buyer raises first.
 
-The tree had something that looked like an answer and was not. A provider of type `none` existed,
-needed no licence, and passed writes through. But it also passed **reads** through: under `none`
+The tree had something that looked like an answer and was not. A provider of type `none` existed
+and passed writes through. But it also passed **reads** through: under `none`
 the read path returned whatever the backend held, without looking at the object's metadata. So an
 operator who switched to it in order to stop encrypting immediately lost the ability to read
 everything encrypted before the switch — the proxy handed back raw ciphertext. The one mode that
@@ -60,11 +54,11 @@ did something.
 losing access to what it already encrypted. It is not a testing aid, not a development mode, and
 not a way to run the proxy as a plain pass-through in production.
 
-**D2.** *Moot since 2026-10-29: no provider type requires a license (ADR 0040 D2).* **The exit
-provider requires no licence.** Getting data out is exactly the situation in
-which a licence cannot be assumed to be valid, so making it a condition would defeat the purpose.
-The licence gate examines the active provider only, so a configuration with `exit` active starts
-without one even while an encrypting provider stays registered.
+**D2.** **The exit provider needs nothing but its configuration entry.** It holds no key
+material and depends on no other precondition, so making `exit` the active alias is a
+configuration change and nothing else, even while an encrypting provider stays registered beside
+it. Getting data out is exactly the situation in which nothing else can be assumed to be in
+order.
 
 **D3.** **On write the exit provider stores what the client sent.** No data key is created, no
 wrap happens, no proxy metadata is written, and this holds on every write path: the single request,
@@ -124,7 +118,7 @@ stays configured. It is a warning, not an error: the operator asked for this.
 An operator can leave. The migration is: register the exit provider, make it active, keep the
 `aes` provider that holds the key, and let the data age out — or copy it through any S3 client,
 which now reads plaintext and writes plaintext. Nothing has to be decrypted in a batch, no tool
-has to be written, and no licence has to be renewed to do it.
+has to be written.
 
 A ranged read costs one extra request under the exit provider. The stored window for an encrypted
 object is not the plaintext range, so the proxy must know which kind of object it is before it
@@ -185,8 +179,7 @@ but the claim is reasoned rather than recorded.
 - [ADR 0001](0001-the-backend-is-hostile.md) — why a fingerprint from object metadata may not
   select a no-op unwrap.
 - [ADR 0004](0004-one-local-key-provider.md) — the local key provider whose D10 this supersedes.
-- [ADR 0016](0016-the-license-is-a-startup-gate.md) — the gate the exit provider was exempt from,
-  superseded by [ADR 0040](0040-the-proxy-is-apache-licensed-and-checks-no-license.md), under
-  which no provider type is gated.
+- [ADR 0016](0016-the-proxy-is-apache-licensed-and-checks-no-license.md) — no provider type is
+  gated on a license.
 - [ADR 0017](0017-stored-data-compatibility-is-not-owed.md) — why `none` is refused rather than
   aliased.

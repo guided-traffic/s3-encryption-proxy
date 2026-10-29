@@ -68,7 +68,7 @@ helm delete my-s3-proxy
 ## Upgrading to the release that stops checking a licence
 
 The proxy checks no licence any more
-([ADR 0040](../../../docs/adr/0040-the-proxy-is-apache-licensed-and-checks-no-license.md)),
+([ADR 0016](../../../docs/adr/0016-the-proxy-is-apache-licensed-and-checks-no-license.md)),
 and the chart dropped everything that carried one. Nothing here fails the render
 or the pod; it is cleanup.
 

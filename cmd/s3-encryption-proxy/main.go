@@ -306,7 +306,7 @@ type startupWarning struct {
 // written inline in the startup path, where nothing could read it back. The
 // plain-HTTP backend that used to warn beside it refuses the start under every
 // provider now (ADR 0013 D5). The license_file warning names a key the proxy
-// accepts and no longer reads (ADR 0040 D3).
+// accepts and no longer reads (ADR 0016 D3).
 func startupWarnings(cfg *config.Config) []startupWarning {
 	var warnings []startupWarning
 

@@ -17,7 +17,7 @@ Sections, in this order:
 | Section | Content |
 |---|---|
 | `# ADR NNNN: Title` | The decision as a title, not a topic |
-| `## Status` | `Accepted` / `Superseded by ADR NNNN` / `Amended`, plus `Date:` and what is implemented versus still open |
+| `## Status` | `Accepted`, the `Date:` of the current decision, and what is implemented versus still open |
 | `## Context` | The forces and the concrete failure that made the decision necessary |
 | `## Decision` | `D1 … Dn`, each a rule that holds going forward, in present tense |
 | `## Consequences` | What this costs, including the parts nobody likes |
@@ -42,19 +42,20 @@ Sections, in this order:
 
 ## Keeping them current
 
-**An ADR is part of the product, not a historical note.** When a decision changes, the ADR is
-updated in the same change — the `Decision` section states the new rule, the `Status` section
-records the amendment with its date, and the superseded rule is marked in place rather than
-deleted. A reader must never find the old rule stated as current.
+**An ADR is part of the product, not a historical note.** It states the current decision and
+nothing else (ADR 0022 D9). When a decision changes, the record that holds it is rewritten in the
+same change, every section of it: the `Decision` section states the rule as it now is, the
+`Status` section carries the date of the current decision and what is built of it, and nothing
+records what the rule used to be. No ADR supersedes or invalidates another, and no section grows
+a dated list of amendments — the earlier states are in version control.
 
-A configuration key or a name the product has since removed stays in the record wherever the
-decision names it; the `Status` section is where a reader learns it is gone. A new record is added
-to the index below in the same change that writes it.
+A record names a configuration key or a name the product has removed only where the current
+decision is about it. A new record is added to the index below in the same change that writes
+it, and a rewritten one has its index row rewritten with it.
 
 ## Index
 
-Every record here is **Accepted** except ADR 0016, which ADR 0040 supersedes as a whole. One
-further rule is superseded: D5 of ADR 0035, by ADR 0038. The *State* column is the coarse build
+Every record here is **Accepted**. One rule is superseded: D5 of ADR 0035, by ADR 0038. The *State* column is the coarse build
 state as of 2026-09-13, on the unreleased 5.0.0 branch: **Implemented**, **Partly built** (some
 rules of the decision hold, the rest are decided and outstanding) or **Not built** (decided,
 nothing of it exists yet). A state that reads *Implemented, except …* names what is still
@@ -78,7 +79,7 @@ this column is a reading aid.
 | [0005](0005-a-kms-key-is-a-provider.md) | A key held in a KMS is a provider type of its own; delivering a local key from a secret store is not a KMS | Not built |
 | [0009](0009-the-metadata-prefix-is-the-proxys-namespace.md) | The configured metadata prefix is the proxy's exclusive namespace: a client write into it is refused, and it never appears in a response | Implemented |
 | [0023](0023-filename-encryption-encrypts-directory-segments.md) | Filename encryption encrypts every segment of the key deterministically, with a searchable head on the leaf and no mapping index; a mode set `off / drain / mixed / strict` serves both name forms in one bucket (amended 2026-09-17; the file keeps its original name) | Not built |
-| [0025](0025-leaving-is-a-supported-mode.md) | Leaving is a supported mode: the exit provider writes plaintext and still decrypts what was encrypted before the switch | Implemented; D2 moot since ADR 0040 |
+| [0025](0025-leaving-is-a-supported-mode.md) | Leaving is a supported mode: the exit provider writes plaintext and still decrypts what was encrypted before the switch | Implemented |
 
 ### The S3 surface
 
@@ -96,12 +97,11 @@ this column is a reading aid.
 
 | ADR | Decision | State |
 |---|---|---|
-| [0013](0013-a-configuration-key-exists-only-if-code-reads-it.md) | A configuration key exists only if code reads it; an unworkable configuration refuses to start | Implemented, except four of D7's zero cases; D13 superseded by ADR 0040 |
+| [0013](0013-a-configuration-key-exists-only-if-code-reads-it.md) | A configuration key exists only if code reads it; an unworkable configuration refuses to start | Implemented, except four of D7's zero cases |
 | [0014](0014-authentication-is-sigv4-no-rate-limiting.md) | SigV4 in both forms against static configured clients; no rate limiting and no per-address blocking | Implemented |
 | [0015](0015-a-transfer-is-bounded-by-the-client-and-by-shutdown.md) | No wall clock on a transfer; only the header phase, the idle connection and shutdown are bounded | Implemented, except D4's "no other fixed shutdown deadline" for the monitoring and profiling listeners |
-| [0016](0016-the-license-is-a-startup-gate.md) | The license is a fatal startup gate, an explicit expiry claim is mandatory, and the expiry is discovered by a build | Superseded by ADR 0040 |
-| [0021](0021-key-material-is-generated-never-committed.md) | No working key material in the repository: generated on demand, injected through the environment | Partly built; the license half withdrawn by ADR 0040 |
-| [0040](0040-the-proxy-is-apache-licensed-and-checks-no-license.md) | The proxy is licensed under Apache 2.0 and checks no license; `license_file` is accepted and ignored until the next major release | Implemented |
+| [0016](0016-the-proxy-is-apache-licensed-and-checks-no-license.md) | The proxy is licensed under Apache 2.0 and checks no license; `license_file` is accepted and ignored until the next major release | Implemented |
+| [0021](0021-key-material-is-generated-never-committed.md) | No working key material in the repository: generated on demand, injected through the environment | Partly built |
 | [0033](0033-a-proxy-instance-holds-its-uploads.md) | A client-driven multipart upload is held by the process that created it, so the chart installs one instance and refuses a second; cooperating proxies are a separate product | Implemented |
 | [0030](0030-the-network-boundary-belongs-to-the-administrator.md) | The network boundary is the administrator's: the chart ships no network policy, the unauthenticated monitoring listener is fenced by the cluster or not at all, and the scrape carries no identifying label | Implemented |
 | [0031](0031-a-test-states-the-target-and-stays-red-until-the-product-meets-it.md) | A test states the behaviour the product is supposed to have, is committed red until the product meets it, and never encodes the current answer as the expectation — while a behaviour an ADR decides is itself the target | Implemented, except D7 and D9 outside the two client suites: the twenty-seven tests the sweep rewrote carry their citation in a comment, not in the failure |

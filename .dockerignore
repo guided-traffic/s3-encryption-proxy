@@ -17,7 +17,7 @@ docs/
 # this repository holds a usable key any more (ADR 0021) — the example configs
 # reference ${S3EP_AES_KEY} — and these rules keep it that way for a working tree
 # that has generated its own. The wildcards reach only the root of the context,
-# so the token a licensed release used (ADR 0040) is named by its path: it still
+# so the token a licensed release used (ADR 0016) is named by its path: it still
 # names its licensee, and config/ is copied into the image whole.
 config/license.jwt
 .env

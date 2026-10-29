@@ -4,10 +4,6 @@
 
 **Accepted.** Date: 2026-09-11. Owner decision the same day: it ships in 5.0.0.
 
-**Amended 2026-10-29: the precedent D3 names is gone.** The ConfigMap template no longer
-prepends `license_file`, because the proxy checks no license (ADR 0040). `tls:` is now the only
-key the chart adds to the rendered configuration; D3's rule is unchanged.
-
 **Amended 2026-09-14: D9 and D10 write down the two refusals the chart has been shipping since
 2026-09-11** — an enabled Ingress that does not terminate TLS for every host it serves, and a
 cert-manager `Certificate` nothing consumes. Both are breaking: a configuration that rendered
@@ -63,9 +59,8 @@ not replace these. A name the Service actually answers to and the certificate do
 failure the operator only sees when a client refuses the connection.
 
 **D3. The chart adds the `tls:` block to the rendered configuration; it never edits what the
-operator wrote.** The ConfigMap template already prepends a key this way — `license_file` — so the
-mechanism is not new. *(That precedent was removed on 2026-10-29, ADR 0040; the rule stands.)* The one hazard is a duplicate key, and it is closed by refusing rather than
-by merging: **if `serviceTLS` is enabled and the operator's own `config` already carries a `tls`
+operator wrote.** `tls:` is the only key the chart adds to the rendered configuration. The one
+hazard is a duplicate key, and it is closed by refusing rather than by merging: **if `serviceTLS` is enabled and the operator's own `config` already carries a `tls`
 key, the render fails and says so.** Two sources for one setting is how the trap gets rebuilt; the
 chart takes the setting or the operator does, never both.
 

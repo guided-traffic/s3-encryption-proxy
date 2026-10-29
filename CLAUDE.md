@@ -18,6 +18,13 @@ package names) so it stays true when the tree moves. The product's own vocabular
 — configuration keys, `s3ep-*` metadata keys, S3 error codes, header and
 algorithm names — is not a code reference and must be exact.
 
+**An ADR states the current decision and nothing else** (ADR 0022 D9). When a
+decision changes, rewrite the ADR that holds it — every section, title and
+filename included — instead of writing a new ADR that supersedes it. No ADR
+invalidates another, no rule is kept as an "Amended" or "Superseded" entry, and
+no section collects a dated history of earlier states; version control keeps
+what a record used to say.
+
 **A ticket is a work list and nothing else.** It lives in `docs/tickets/`, it
 exists while work is outstanding, and it is closed by **moving the file to
 `docs/tickets/archive/`** when the work lands. Before moving it, move anything
@@ -225,7 +232,7 @@ go.mod but silently corrupt that merge.
 make build-keygen && ./build/s3ep-keygen
 ```
 
-There is no license to generate: the proxy is Apache-2.0 and checks none (ADR 0040).
+There is no license to generate: the proxy is Apache-2.0 and checks none (ADR 0016).
 
 ### Testing Strategy
 - **Unit tests**: `make test-unit` - Fast tests with `-short` flag
@@ -431,7 +438,7 @@ monitoring:
   pprof_enabled: false                  # default
   pprof_bind_address: "127.0.0.1:6060"  # default; with pprof_enabled: true it must be a loopback IP or "localhost" or startup fails (heap holds DEKs); unchecked while pprof is off
 
-# Accepted and ignored: no license is read (ADR 0040). No default; a configuration
+# Accepted and ignored: no license is read (ADR 0016). No default; a configuration
 # that writes it starts with a warning naming the key, and the next major release
 # refuses it
 # license_file: "config/license.jwt"
@@ -490,7 +497,7 @@ per entry under `s3_backends`, the two per entry under `s3_clients`, and every
 string under `encryption.providers[].config` — and an unset or empty one refuses
 the start. A `${VAR}` anywhere else is kept verbatim. Nothing else reaches the
 proxy from the environment: the license token went with the license check
-(ADR 0040), and `license_file` is decoded and read by nothing. The image
+(ADR 0016), and `license_file` is decoded and read by nothing. The image
 starts from `config/default.yaml`, which takes every value it needs that way
 ([docs/developer/configuration.md](docs/developer/configuration.md)).
 

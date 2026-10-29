@@ -5,7 +5,7 @@ deployment. This page carries the two places where the operational layer — the
 chart and the published defaults — decides something the code cannot. A licence
 expiry was a third, and stopped the data path in both directions; the proxy
 checks no licence any more, so nothing on a calendar can stop it
-([ADR 0040](../adr/0040-the-proxy-is-apache-licensed-and-checks-no-license.md)).
+([ADR 0016](../adr/0016-the-proxy-is-apache-licensed-and-checks-no-license.md)).
 
 ## A configuration change has to reach the pods
 

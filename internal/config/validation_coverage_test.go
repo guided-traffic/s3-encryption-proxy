@@ -629,7 +629,7 @@ func TestCfgValidatePropagatesSubValidatorErrors(t *testing.T) {
 	})
 }
 
-// ADR 0040 D1: no provider type is gated. The aes provider validates with no
+// ADR 0016 D2: no provider type is gated. The aes provider validates with no
 // token anywhere, and a written license_file naming a file that does not exist
 // is not opened at all.
 func TestCfgValidateNeedsNoLicense(t *testing.T) {
