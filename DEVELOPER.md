@@ -48,12 +48,10 @@ functions on purpose, so they go stale when the tree moves.
 
 ```
 cmd/
-  s3-encryption-proxy/   the binary: config, licence gate, server lifecycle, shutdown
+  s3-encryption-proxy/   the binary: config, server lifecycle, shutdown
   keygen/                AES-256 key generator, built as build/s3ep-keygen
-  license-tool/          licence JWT generator (needs key files that are not in the repo)
 internal/
   config/                Viper loading, defaults, and every startup refusal
-  license/               licence validation and the startup gate
   monitoring/            Prometheus registry and listener, pprof on its own loopback listener
   orchestration/         the facade the handlers call: providers, metadata, segmented read/write,
                          the client-driven multipart session table
@@ -148,8 +146,7 @@ read.
 |---|---|
 | `build` | the proxy into `build/s3-encryption-proxy` |
 | `build-keygen` | the AES key generator into `build/s3ep-keygen` |
-| `license-tool` | the licence generator; needs `license_private_key.pem` / `license_public_key.pem` beside the binary, which are not in the repository ([ADR 0021](docs/adr/0021-key-material-is-generated-never-committed.md)). `generate-license` builds it and runs it |
-| `build-all` | all three |
+| `build-all` | both |
 
 **Test**
 
@@ -376,8 +373,7 @@ manifests, and nothing about whether a manifest describes a pod that starts:
 when the two unrenderable override files were repaired for 5.0.0, both still
 described a pod that exits at startup — neither declared `s3_clients`, and the
 credentials both carried were under the 16-character minimum. Extract the
-rendered ConfigMap and start the binary against it; the configuration is
-validated before the license is read, so this needs no token.
+rendered ConfigMap and start the binary against it.
 
 **An end-to-end client suite.** A new package under `test/e2e/<client>/` with the
 `e2e` tag, a `versions.env` carrying the one pinned client release, and an

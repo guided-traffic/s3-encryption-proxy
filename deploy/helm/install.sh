@@ -103,7 +103,6 @@ install_chart() {
     local upgrade=$2
 
     local values_file="$CHART_PATH/values.yaml"
-    local license_file="./config/license.jwt"
     local version=$(get_version)
     local cmd="helm"
 
@@ -119,15 +118,6 @@ install_chart() {
     cmd="$cmd --namespace $NAMESPACE"
     cmd="$cmd --values $values_file"
     cmd="$cmd --set image.tag=$version"
-
-    # Add license from file if it exists
-    if [[ -f "$license_file" ]]; then
-        log_info "Loading license from $license_file..."
-        local license_content=$(cat "$license_file")
-        cmd="$cmd --set-string license.jwt=\"$license_content\""
-    else
-        log_warn "License file not found at $license_file"
-    fi
 
     if [[ "$dry_run" == "true" ]]; then
         cmd="$cmd --dry-run"

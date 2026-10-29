@@ -88,12 +88,6 @@ jobs:
       # mixed toolchains do not merge, see the Makefile.
       - name: Run unit tests with coverage
         run: make test-unit-coverage
-        env:
-          # TestCfgDefaultConfigLoads is the only test that puts the shipped
-          # config/default.yaml through Load(). Without a licence it skipped, and
-          # its assertion that the active provider is not the plaintext one never
-          # ran on a runner.
-          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
 
       - name: Upload unit coverage data
         uses: actions/upload-artifact@v7
@@ -126,8 +120,6 @@ jobs:
       # 2-20x runtime and 5-10x memory, and a race it reports is always real.
       - name: Run unit tests under the race detector
         run: make test-unit-race
-        env:
-          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
 
   gosec:
     name: GoSec Security Scan
@@ -242,8 +234,7 @@ jobs:
       # make helm-test installs the plugin itself, at the version pinned in the
       # Makefile, so a workstation and this runner cannot use different ones.
       # It renders every values file that ships, the Velero e2e values included,
-      # and runs helm unittest. No Go, no Docker, no licence: seconds, not
-      # minutes.
+      # and runs helm unittest. No Go, no Docker: seconds, not minutes.
       - name: Lint, render and unit-test the chart
         run: make helm-test
 
@@ -290,7 +281,6 @@ jobs:
       - name: Build and start test infrastructure (instrumented proxy)
         run: docker compose -f docker-compose.demo.yml up -d --build
         env:
-          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
           GOCOVER: "1"
 
       - name: Dump container logs on startup failure
@@ -365,7 +355,6 @@ jobs:
           INTEGRATION_TESTS: true
           S3_ENDPOINT: https://localhost:9000
           PROXY_ENDPOINT: http://localhost:8080
-          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
 
       # aws-sdk-go-v2 only switches to STREAMING-UNSIGNED-PAYLOAD-TRAILER
       # framing with checksum trailers over HTTPS. The run above therefore
@@ -375,7 +364,6 @@ jobs:
         run: make test-integration-tls
         env:
           INTEGRATION_TESTS: true
-          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
 
 
       # Stops both proxies (clean exit flushes the counters) and copies the data
@@ -396,8 +384,6 @@ jobs:
       # layer changes, the dependency layers stay cached.
       - name: Rebuild and restart the proxy without instrumentation
         run: docker compose -f docker-compose.demo.yml up -d --build --force-recreate s3-encryption-proxy s3-encryption-proxy-tls
-        env:
-          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
 
       - name: Wait for both proxy endpoints to be ready again
         run: |
@@ -425,7 +411,6 @@ jobs:
         run: make test-integration-performance
         env:
           INTEGRATION_TESTS: true
-          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
 
       # The markdown the pull request shows is rendered by the measurement
       # itself and only copied here. It used to be grepped back out of the test
@@ -781,8 +766,6 @@ jobs:
       # a runner and a laptop cannot drift apart.
       - name: Seed and run the conformance suite
         run: scripts/conformance-run.sh ${{ matrix.backend }} --seed
-        env:
-          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
 
       - name: Proxy log
         if: failure()
@@ -845,8 +828,6 @@ jobs:
       # BackupStorageLocation to go Available.
       - name: Bring up the e2e environment
         run: make e2e-up
-        env:
-          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
 
       - name: Run the Velero e2e suite
         run: make test-e2e-velero
@@ -913,8 +894,6 @@ jobs:
       # PKI and key material, and hands the stack to ./start-demo.sh.
       - name: Bring up the rclone environment
         run: make e2e-rclone-up
-        env:
-          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
 
       - name: Run the rclone e2e suite
         run: make test-e2e-rclone
@@ -986,8 +965,6 @@ jobs:
       # PKI and key material, and hands the stack to ./start-demo.sh.
       - name: Bring up the s3cmd environment
         run: make e2e-s3cmd-up
-        env:
-          S3EP_LICENSE_TOKEN: ${{ secrets.S3EP_LICENSE_TOKEN }}
 
       - name: Run the s3cmd e2e suite
         run: make test-e2e-s3cmd

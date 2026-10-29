@@ -84,22 +84,6 @@ ensure_keys() {
     "$(dirname "$0")/scripts/gen-keys.sh" --if-needed
 }
 
-# The license token reaches the containers through the environment and is never
-# baked into an image (ADR 0021 D5). config/license.jwt is the local route.
-ensure_license_token() {
-    if [ -n "${S3EP_LICENSE_TOKEN:-}" ]; then
-        return
-    fi
-    if [ -f "$(dirname "$0")/config/license.jwt" ]; then
-        S3EP_LICENSE_TOKEN="$(tr -d '\n' < "$(dirname "$0")/config/license.jwt")"
-        export S3EP_LICENSE_TOKEN
-        log_info "License token taken from config/license.jwt"
-        return
-    fi
-    log_warning "S3EP_LICENSE_TOKEN is unset and config/license.jwt is missing"
-    log_warning "The proxy will refuse to start under an encrypting provider"
-}
-
 # Check if demo environment is running.
 #
 # Testing the output for emptiness rather than counting it: BSD wc pads its
@@ -290,7 +274,6 @@ main() {
             check_dependencies
             ensure_certificates
             ensure_keys
-            ensure_license_token
             if is_demo_running; then
                 log_info "Demo environment is already running"
                 if is_proxy_running; then
@@ -314,7 +297,6 @@ main() {
             check_dependencies
             ensure_certificates
             ensure_keys
-            ensure_license_token
             if is_demo_running; then
                 rebuild_proxy
                 wait_for_health

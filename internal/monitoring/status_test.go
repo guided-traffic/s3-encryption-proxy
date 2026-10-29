@@ -18,10 +18,6 @@ func MonresetStatusState(t *testing.T) {
 	statusMu.Lock()
 	statusBuild = BuildStatus{}
 	statusEncryption = EncryptionStatus{}
-	statusLicenseSet = false
-	statusLicenseAt = ""
-	statusLicenseValid = false
-	statusLicenseExpiry = time.Time{}
 	statusMu.Unlock()
 }
 
@@ -57,7 +53,7 @@ func TestMonStatusBeforeAnythingHappened(t *testing.T) {
 	assert.NotContains(t, backend, "last_failure_class")
 
 	assert.NotContains(t, body, "license",
-		"a licence nobody reported is absent, not a document of empty strings")
+		"the proxy reads no license, so the document names none (ADR 0040)")
 }
 
 func TestMonStatusCarriesBuildAndActiveProvider(t *testing.T) {
@@ -83,44 +79,6 @@ func TestMonStatusCarriesBuildAndActiveProvider(t *testing.T) {
 	})
 	require.True(t, gauge.Found, "the active provider must reach a scrape")
 	assert.Equal(t, float64(1), gauge.Value)
-}
-
-// The remaining time is computed whenever the document is read. A figure taken
-// when the licence was reported would be frozen at the value it had then and
-// could never fall, which is the mistake the expiry gauge already avoids.
-func TestMonStatusLicenseRemainingIsComputedAtReadTime(t *testing.T) {
-	MonresetStatusState(t)
-	// The expiry reported to the metrics is Unix seconds, so a margin under a
-	// second would only be measuring that truncation.
-	expiry := time.Now().Add(2500 * time.Millisecond)
-	SetLicenseInfo(expiry.Format(time.RFC3339), true, float64(expiry.Unix()))
-
-	first := StatusSnapshot().License
-	require.NotNil(t, first)
-	assert.Equal(t, expiry.Format(time.RFC3339), first.ExpiresAt)
-	assert.True(t, first.Valid)
-	assert.GreaterOrEqual(t, first.RemainingSeconds, int64(1))
-	assert.Equal(t, (time.Duration(first.RemainingSeconds) * time.Second).String(), first.Remaining)
-
-	time.Sleep(1200 * time.Millisecond)
-
-	second := StatusSnapshot().License
-	require.NotNil(t, second)
-	assert.Less(t, second.RemainingSeconds, first.RemainingSeconds,
-		"the remaining time must fall as the licence runs down")
-}
-
-func TestMonStatusExpiredLicenseRemainsAtZero(t *testing.T) {
-	MonresetStatusState(t)
-	expiry := time.Now().Add(-48 * time.Hour)
-	SetLicenseInfo(expiry.Format(time.RFC3339), false, float64(expiry.Unix()))
-
-	license := StatusSnapshot().License
-
-	require.NotNil(t, license)
-	assert.False(t, license.Valid)
-	assert.Equal(t, int64(0), license.RemainingSeconds, "remaining is clamped, never negative")
-	assert.Equal(t, "0s", license.Remaining)
 }
 
 // What the endpoint serves is what StatusSnapshot builds, backend observation

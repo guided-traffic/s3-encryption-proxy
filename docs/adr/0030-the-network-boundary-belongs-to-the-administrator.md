@@ -14,6 +14,11 @@ where a rule does not belong (ADR 0022), while the code was held to it by a unit
 trace to a decision. It is the premise D2 rests on, so it is recorded here beside it. Built: the
 scrape carries no identifying label and no license countdown.
 
+**Amended 2026-10-29: the license half of D4 is moot (ADR 0040 D4).** The proxy checks no
+license, so no license series is exported at all — neither the validity gauge nor the expiry
+timestamp D4 kept. The rule D4 states for every other label stands unchanged: a label that
+identifies the deployment or its operator is a change to this decision.
+
 **Built 2026-09-13.** The template is deleted, the `networkPolicy` values are gone from
 `values.yaml` and from both profiles, and the chart README carries the upgrade note D3 asks for:
 Helm ignores a value key a chart no longer declares, so an operator who had set
@@ -73,8 +78,9 @@ optional on top of that, it is the only signal that reaches the operator at all.
 
 **D4, added 2026-09-14. What the scrape may carry is the other half of D2, and it is a decision
 rather than a detail.** The listener stays unauthenticated because there is nothing on it worth
-authenticating, and that is a property somebody has to keep true. The scrape names no licensee:
-`s3ep_license_info` carries neither `licensed_to` nor `company`, and `s3ep_license_days_remaining`
+authenticating, and that is a property somebody has to keep true. *The license sentences that
+follow are moot since 2026-10-29: no license series exists (ADR 0040 D4).* The scrape names no
+licensee: `s3ep_license_info` carries neither `licensed_to` nor `company`, and `s3ep_license_days_remaining`
 is gone — it was written once at process start and never refreshed, so it was a countdown that
 could not fall. What stays is `s3ep_license_expiry_timestamp` and the validity gauge beside it:
 the honest primitives, from which the remaining days are a query. Adding a label that identifies

@@ -299,17 +299,6 @@ secrets:
     existingSecretKey: "aes-key"
 
 
-# License configuration
-license:
-  # Existing secret containing the license
-  # If specified, this takes precedence over license.jwt
-  existingSecret: ""
-  # Key within the existingSecret that contains the license JWT
-  existingSecretKey: "license.jwt"
-  # Direct license JWT content (will be stored in generated secret)
-  # Only used if existingSecret is not specified
-  jwt: ""
-
 # Monitoring
 monitoring:
   # Enable Prometheus monitoring
@@ -359,8 +348,6 @@ monitoring:
       # bare count cannot be read. 0.1 = one in ten.
       failureRatio: 0.1
       for: 5m
-    license:
-      warnDays: 30
 
   # Grafana Dashboard configuration
   grafana:

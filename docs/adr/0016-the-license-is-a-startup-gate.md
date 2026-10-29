@@ -2,6 +2,12 @@
 
 ## Status
 
+**Superseded by ADR 0040 on 2026-10-29.** The proxy is licensed under Apache 2.0 and checks no
+license: the startup gate, the hourly expiry check, the token routes, the license generator and
+its signing key are gone, and every rule from D1 to D12 is withdrawn. The record is kept as the
+history of why the gate existed and what it cost; nothing below is a current rule, and the
+open items it lists are closed by the removal rather than by being built.
+
 **Accepted.** Date: 2026-09-07.
 
 Implemented and shipping: the startup gate itself and the hourly runtime expiry check that
@@ -85,6 +91,9 @@ but the error that stops the process is the one for a *missing* license — "lic
 for encryption provider type" — on a machine where the token is right there.
 
 ## Decision
+
+*Superseded as a whole by ADR 0040 (2026-10-29). D1 to D12 below are the rules as they stood
+while the gate existed.*
 
 **D1.** The proxy refuses to start without a valid license for every encryption provider
 type except `none`. License validation is part of configuration validation, and a failure

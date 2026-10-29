@@ -6,6 +6,11 @@
 work, out of a defect that needed neither: one endpoint served both Kubernetes probes and
 reported the drain, so a pod that was shutting down failed its own liveness probe by design.
 
+**Amended 2026-10-29: the licence is no longer one of the preconditions (ADR 0040).** The proxy
+checks no license, so D2's licence bullet, the licence time remaining in D6 and the licence in
+D9's startup path describe nothing that exists. Each is marked where it stands; every rule of
+this record holds unchanged for what remains.
+
 **Built 2026-09-15.** The serving listener answers `/livez` and `/readyz`; the monitoring
 listener answers `/livez`, `/metrics` and `/status`. The endpoints `/health`, `/version` and
 `/info` are gone from both listeners. The chart points each probe at the endpoint that answers
@@ -55,7 +60,8 @@ the answer is no:
 * **The configuration cannot be false at run time.** The loader decodes strictly and an unknown
   key refuses the start (ADR 0013), so a process that answers at all has a configuration that
   parsed. That is a startup fact, not a runtime signal.
-* **The licence already ends the process itself on expiry** (ADR 0016). A restart would find the
+* *Moot since 2026-10-29 (ADR 0040): there is no licence.* **The licence already ends the process
+  itself on expiry** (ADR 0016). A restart would find the
   same expired token, so a probe would only convert a clean stop into a crash loop.
 
 What is left is the single case a liveness probe is for: the process is alive but can no longer
@@ -79,7 +85,8 @@ the process is shared: a dependency that fails takes every instance out at the s
 probe that reads it converts a partial outage into a total one.
 
 **D6. Dependency health is a fourth category: reported, never acted on.** Backend reachability,
-the active provider with its type and key fingerprint, and the licence time remaining are what an
+the active provider with its type and key fingerprint, and the licence time remaining (*gone since
+2026-10-29, ADR 0040*) are what an
 operator wants to see and to alert on, and no automatic actor may act on them. They are the
 status document and the metrics.
 
@@ -117,8 +124,8 @@ exactly what must not be readable without authentication from the data path. Bui
 goes with it: the serving listener answers two probe paths with constant answers and no
 operational data at all.
 
-**D9. No startup probe while the startup path does no network I/O.** Configuration, licence and
-providers are all resolved in process before the listener binds, and every failure on that path is
+**D9. No startup probe while the startup path does no network I/O.** Configuration, licence (*until
+2026-10-29, ADR 0040*) and providers are all resolved in process before the listener binds, and every failure on that path is
 fatal — there is no "started but not yet usable" window for a startup probe to cover. What the
 liveness probe gets instead is a small initial delay rather than a blind half-minute. Work that
 makes the start depend on the backend reopens this, and a startup probe is the right instrument

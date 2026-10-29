@@ -388,9 +388,9 @@ encryption:
 }
 
 // loadTestConfig runs a configuration through the real loader. Provider types
-// and the licence gate are checked there and nowhere else - GetActiveProvider
-// only looks up an alias, so a test that calls it proves nothing about which
-// types the product admits.
+// are checked there and nowhere else - GetActiveProvider only looks up an
+// alias, so a test that calls it proves nothing about which types the product
+// admits.
 func loadTestConfig(t *testing.T, yaml string) error {
 	t.Helper()
 
@@ -465,16 +465,8 @@ func TestConfigValidationWithExitProvider(t *testing.T) {
 // an operator who wrote it before the rename has to be told that the successor
 // still decrypts, and that the provider holding the old key has to stay
 // configured next to it.
-//
-// The licence is cleared so the outcomes do not depend on one being present.
-// The type check runs before the licence gate, so for `aes` reaching that gate
-// is what proves the type is admitted.
 func TestProviderTypesSupported(t *testing.T) {
 	logrus.SetLevel(logrus.ErrorLevel)
-
-	for _, name := range []string{"S3EP_LICENSE", "S3EP_LICENSE_TOKEN", "S3_ENCRYPTION_PROXY_LICENSE"} {
-		t.Setenv(name, "")
-	}
 
 	tests := []struct {
 		name        string
@@ -491,13 +483,12 @@ func TestProviderTypesSupported(t *testing.T) {
 `,
 		},
 		{
-			name: "aes reaches the licence gate, so its type is admitted",
+			name: "aes",
 			provider: `    - alias: "test-provider"
       type: "aes"
       config:
         aes_key: "ZEsubBlmU+Pr61y+JOwO09c0LOrHs5LITaO0D4JzSZE="
 `,
-			expectError: "license required for encryption provider type 'aes'",
 		},
 		{
 			name: "none is refused by name and pointed at exit",
@@ -547,21 +538,14 @@ func TestProviderTypesSupported(t *testing.T) {
 	}
 }
 
-// TestExitProvider_NeedsNoLicense is the property that makes the exit provider
-// an exit: the licence gate looks at the active provider only, so a proxy whose
-// active alias is the exit provider starts with no licence at all, while the
-// aes provider registered next to it - the one that unwraps what is already in
-// the bucket - does not make the start conditional on one.
-//
-// The three environment variables the validator reads are cleared for this
-// test; a licence file at one of its absolute fallback paths (/etc/s3ep,
-// /opt/s3ep, /app) would still be found and would make the negative case fail.
-func TestExitProvider_NeedsNoLicense(t *testing.T) {
+// TestExitProvider_EitherAliasStarts is the property that makes the exit
+// provider an exit: a configuration that lists it beside the aes provider
+// holding the old key starts with either one active, and neither needs anything
+// beyond the configuration itself. No provider type is gated on a license
+// (ADR 0040 D1), so switching the active alias back and forth is a
+// configuration change and nothing else.
+func TestExitProvider_EitherAliasStarts(t *testing.T) {
 	logrus.SetLevel(logrus.ErrorLevel)
-
-	for _, name := range []string{"S3EP_LICENSE", "S3EP_LICENSE_TOKEN", "S3_ENCRYPTION_PROXY_LICENSE"} {
-		t.Setenv(name, "")
-	}
 
 	const bothProviders = `    - alias: "exit-test"
       type: "exit"
@@ -573,13 +557,12 @@ func TestExitProvider_NeedsNoLicense(t *testing.T) {
 
 	t.Run("exit active", func(t *testing.T) {
 		require.NoError(t, loadTestConfig(t, exitTestConfig("exit-test", bothProviders)),
-			"the exit provider must start without a licence")
+			"the exit provider must start beside the provider it decrypts for")
 	})
 
 	t.Run("aes active", func(t *testing.T) {
-		err := loadTestConfig(t, exitTestConfig("aes-previous", bothProviders))
-		require.Error(t, err, "an encrypting provider must not start without a licence")
-		assert.Contains(t, err.Error(), "license required")
+		require.NoError(t, loadTestConfig(t, exitTestConfig("aes-previous", bothProviders)),
+			"an encrypting provider must start without a license (ADR 0040 D1)")
 	})
 }
 

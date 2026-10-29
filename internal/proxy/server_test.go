@@ -26,7 +26,7 @@ import (
 )
 
 // createTestConfigExit creates a test configuration on the exit provider, which
-// needs no license.
+// needs no key material.
 func createTestConfigExit() *config.Config {
 	return &config.Config{
 		BindAddress: "localhost:8080",

@@ -7,9 +7,8 @@ where the file's name does not already say it.
 
 | Path | Responsibility |
 |---|---|
-| `cmd/s3-encryption-proxy/` | The binary: config load, license gate, server lifecycle, graceful shutdown |
+| `cmd/s3-encryption-proxy/` | The binary: config load, startup warnings, server lifecycle, graceful shutdown |
 | `cmd/keygen/` | Generates an AES-256 key. Built as `build/s3ep-keygen` |
-| `cmd/license-tool/` | Generates a license JWT. Needs a key pair that is not in the repository |
 
 ## `pkg/encryption/` — crypto primitives, no business logic
 
@@ -66,7 +65,6 @@ What each verb actually does is in [request-paths.md](request-paths.md).
 | Path | Responsibility |
 |---|---|
 | `internal/config/` | Viper loading, `${VAR}` expansion, defaults, and all validation. A key that is not read by code does not exist ([ADR 0013](../adr/0013-a-configuration-key-exists-only-if-code-reads-it.md)), and a key that is not validated here is a key nobody checked |
-| `internal/license/` | The startup gate, and the hourly runtime check that ends the process when the token expires — through main's drain path, not from the monitoring goroutine |
 | `internal/monitoring/` | Prometheus metrics, the monitoring listener's `/livez` and `/status`, the observer that records what every backend round trip showed, and pprof on its own loopback listener |
 
 ## Where the tests are

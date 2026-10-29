@@ -16,6 +16,12 @@ mistyped path could start the proxy on a token nobody chose (D13); and `--monito
 them unable to express its own default as an override (D14). The binary now declares one flag,
 `--config`. D1 through D11 are unaffected and stay as described below.
 
+**Amended 2026-10-29: D13 is superseded by ADR 0040 D3.** The proxy checks no license, so
+`license_file` binds nothing: it has no default, nothing reads the file it names, and a
+configuration that writes it starts with a warning naming the key as ignored. It is the one
+key that exists without code reading it for its purpose, an exception to D1 that ends with
+the next major release, which removes the key and thereby makes it an unknown key under D11.
+
 **Not built as of 2026-09-13: four of D7's zero cases.**
 `optimizations.multipart_part_size` at zero or below falls back to 12 MB for the part size
 only, while the single-request ceiling reads the written value, so every PUT of a non-empty body
@@ -332,7 +338,8 @@ rather than whether anything that works today keeps working. It also compounds w
 written `license_file` binds, a configuration file that was never read means that key never
 arrives either, and the message points in the wrong direction a second time.
 
-**D13, decided 2026-09-12.** A configured `license_file` is binding. Where the key is written,
+**D13, decided 2026-09-12.** *Superseded by ADR 0040 D3 on 2026-10-29: `license_file` is
+accepted and read by nothing.* A configured `license_file` is binding. Where the key is written,
 the file it names is the only file: if that file cannot be read the proxy refuses to start, and
 the error names the path. Discovery of the well-known locations applies only where the key is
 **not** written — the key's own default is not a statement by the operator, so a deployment that
@@ -455,7 +462,8 @@ of that feature that breaks anything, and a major release is where a break is pa
   configuration file that parses; what changes is that a file which was quietly ignored stops the
   process and says which file it was, instead of surfacing a few checks later as missing client
   credentials.
-- **A mistyped `license_file` becomes a refusal to start** (D13). **Decided 2026-09-12, not
+- **A mistyped `license_file` becomes a refusal to start** (D13). *Withdrawn with D13 on
+  2026-10-29 (ADR 0040).* **Decided 2026-09-12, not
   built:** a deployment that named a path which does not resolve — and was, knowingly or not,
   running on whatever discovery found instead — stops starting until the path is corrected. That
   is the intent: the alternative is a license gate honoured against a token nobody chose.
@@ -535,7 +543,8 @@ of that feature that breaks anything, and a major release is where a break is pa
   connection gauge, and build and license information. **Narrowed 2026-09-12:** the licensee's
   name and company are no longer labels; what the license metrics still disclose is the expiry
   date, as a label and as a timestamp gauge, so whoever reaches the port learns when the
-  deployment's license runs out but not whose it is.
+  deployment's license runs out but not whose it is. **Narrowed again 2026-10-29:** no license
+  series is exported at all (ADR 0040 D4).
 - **Closed 2026-09-12: there is no pass-through exception left to measure.** D5's split — refuse
   under an encrypting provider, warn under the `exit` one — was measured before it was removed:
   under `exit` against a plain-HTTP backend the proxy started and answered `500` to every

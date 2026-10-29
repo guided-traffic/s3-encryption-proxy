@@ -1,4 +1,4 @@
-.PHONY: helm-unittest-plugin build build-keygen build-all license-tool generate-license test test-unit test-unit-race test-integration test-integration-race test-integration-tls test-integration-all test-integration-performance test-integration-shutdown test-conformance test-conformance-minio test-conformance-localstack test-conformance-parallel test-conformance-wasabi test-conformance-wasabi-seed perf-baseline perf-baseline-quick perf-baseline-offline perf-compare e2e-up e2e-down test-e2e-velero e2e-velero e2e-rclone-up e2e-rclone-down test-e2e-rclone e2e-rclone e2e-s3cmd-up e2e-s3cmd-down test-e2e-s3cmd e2e-s3cmd coverage test-unit-coverage coverage-integration-collect coverage-report clean run dev deps tools lint fmt security gosec vuln static quality all-checks helm-lint helm-test helm-install helm-dev helm-prod helm-monitoring run-monitoring test-monitoring
+.PHONY: helm-unittest-plugin build build-keygen build-all test test-unit test-unit-race test-integration test-integration-race test-integration-tls test-integration-all test-integration-performance test-integration-shutdown test-conformance test-conformance-minio test-conformance-localstack test-conformance-parallel test-conformance-wasabi test-conformance-wasabi-seed perf-baseline perf-baseline-quick perf-baseline-offline perf-compare e2e-up e2e-down test-e2e-velero e2e-velero e2e-rclone-up e2e-rclone-down test-e2e-rclone e2e-rclone e2e-s3cmd-up e2e-s3cmd-down test-e2e-s3cmd e2e-s3cmd coverage test-unit-coverage coverage-integration-collect coverage-report clean run dev deps tools lint fmt security gosec vuln static quality all-checks helm-lint helm-test helm-install helm-dev helm-prod helm-monitoring run-monitoring test-monitoring
 
 # Go toolchain. The Containerfile FROM line is the single source of truth for
 # the Go version in this repo (see CLAUDE.md, "Go toolchain version"); nothing
@@ -63,19 +63,8 @@ build-keygen:
 	@mkdir -p $(BUILD_DIR)
 	$(GOBUILD) -ldflags="$(LDFLAGS)" -o $(BUILD_DIR)/$(KEYGEN_BINARY) ./cmd/keygen
 
-# Build the license tool
-license-tool:
-	@echo "Building license-tool..."
-	@mkdir -p $(BUILD_DIR)
-	$(GOBUILD) -o $(BUILD_DIR)/license-tool ./cmd/license-tool
-
 # Build all binaries
-build-all: build build-keygen license-tool
-
-# Generate a new license using the license tool
-generate-license: license-tool
-	@echo "Generating new license..."
-	./$(BUILD_DIR)/license-tool
+build-all: build build-keygen
 
 # Run the application
 run: build
@@ -523,18 +512,12 @@ run-monitoring: build
 	@echo "Starting S3 Encryption Proxy with monitoring enabled..."
 	@./scripts/gen-keys.sh --if-needed >/dev/null
 	@set -a; . ./.env; set +a; \
-	if [ -f config/license.jwt ]; then \
-		export S3EP_LICENSE_TOKEN=$$(cat config/license.jwt); \
-	fi; \
 	./$(BUILD_DIR)/$(BINARY_NAME) --config config/aes-example.yaml
 
 test-monitoring: build
 	@echo "Testing monitoring endpoints..."
 	@./scripts/gen-keys.sh --if-needed >/dev/null
 	@set -a; . ./.env; set +a; \
-	if [ -f config/license.jwt ]; then \
-		export S3EP_LICENSE_TOKEN=$$(cat config/license.jwt); \
-	fi; \
 	./$(BUILD_DIR)/$(BINARY_NAME) --config config/aes-example.yaml & \
 	SERVER_PID=$$!; \
 	sleep 3; \

@@ -27,8 +27,6 @@ to render a second** (ADR 0033) — see
   without `serviceTLS.existingSecret`
 - Prometheus Operator, only if `monitoring.serviceMonitor.enabled` or
   `monitoring.prometheusRule.enabled` is set
-- **A license token.** Without one the proxy refuses to start with any provider
-  type other than `exit` — see [The proxy needs three things](#the-proxy-needs-three-things-to-start).
 - **A 256-bit AES key** for the `aes` provider. The chart ships no key and no
   default; supply one through `secrets.encryption.*`.
 
@@ -54,11 +52,11 @@ helm install my-s3-proxy .
 > not be published yet, so pin `image.tag` when you install from source.
 
 `deploy/helm/install.sh`, run from the repository root, installs the chart as
-release `s3-proxy` into the namespace `s3-encryption-proxy` with `values.yaml`,
-and picks up `config/license.jwt` if it exists. It pins `image.tag` itself — the
-most recent tag reachable from HEAD with the `v` stripped, else `Chart.yaml`
-`appVersion`, else the short commit — so it installs the last released image
-rather than the `appVersion` the note above is about. It accepts only
+release `s3-proxy` into the namespace `s3-encryption-proxy` with `values.yaml`.
+It pins `image.tag` itself — the most recent tag reachable from HEAD with the
+`v` stripped, else `Chart.yaml` `appVersion`, else the short commit — so it
+installs the last released image rather than the `appVersion` the note above is
+about. It accepts only
 `--dry-run`, `--upgrade` and `--help` (`-h`); any positional argument is refused.
 
 ## Uninstalling the Chart
@@ -66,6 +64,29 @@ rather than the `appVersion` the note above is about. It accepts only
 ```bash
 helm delete my-s3-proxy
 ```
+
+## Upgrading to the release that stops checking a licence
+
+The proxy checks no licence any more
+([ADR 0040](../../../docs/adr/0040-the-proxy-is-apache-licensed-and-checks-no-license.md)),
+and the chart dropped everything that carried one. Nothing here fails the render
+or the pod; it is cleanup.
+
+- **`license.jwt`, `license.existingSecret` and `license.existingSecretKey`** are
+  no longer declared. The chart has no values schema, so a values file that still
+  sets them renders without error and without effect: no token is mounted and no
+  `license_file` is written into the rendered configuration. Delete them, and the
+  Secret that held the token.
+- **A `license_file` you wrote into `config` yourself** still starts, with a
+  warning naming the key as ignored. The next major release refuses it, so take
+  it out now.
+- **`monitoring.prometheusRule.license.warnDays`** is gone with the
+  `S3EPLicenseExpiringSoon` and `S3EPLicenseExpired` alerts, and the dashboard
+  lost its two licence panels. A rule of your own on `s3ep_license_*` goes silent,
+  or fires for good if it was written with `absent()`.
+
+The rest of what an operator does is in
+[docs/operations/upgrading.md](../../../docs/operations/upgrading.md).
 
 ## Upgrading to 5.0.0
 
@@ -102,7 +123,7 @@ four before you upgrade.
   `monitoring:` block inside `config` as a workaround, remove it — the chart
   refuses to render with both.
 
-## The proxy needs three things to start
+## The proxy needs two things to start
 
 A `helm install` with nothing but the chart defaults produces a pod that never
 becomes ready. The defaults are a template, not a working deployment.
@@ -122,27 +143,7 @@ backend block is a list this release reads exactly one entry from; a second
 entry refuses the start. The full configuration reference is in the
 [project README](../../../README.md#configuration).
 
-**2. A license.** The startup gate ([ADR 0016](../../../docs/adr/0016-the-license-is-a-startup-gate.md))
-admits provider type `exit` unlicensed; every other type, `aes` included, fails
-startup without a valid token. The gate looks only at the provider named by
-`encryption_method_alias`, which is what makes the exit provider a way out
-without a license: it stores what the client sends and still decrypts objects
-this proxy encrypted earlier, as long as the `aes` provider that holds their key
-stays listed alongside it. `config/exit-example.yaml` in the source tree is that
-configuration. Two routes for the licensed case, both supported:
-
-| Route | How |
-|---|---|
-| Chart-managed | `license.jwt` (token inline) or `license.existingSecret` + `license.existingSecretKey`. The chart mounts it at `/app/license/license.jwt` and prepends `license_file:` to the rendered config |
-| Environment | an `env` entry named `S3EP_LICENSE_TOKEN` with a `secretKeyRef`. It is the one variable the proxy reads |
-
-A written `license_file` is binding ([ADR 0013](../../../docs/adr/0013-a-configuration-key-exists-only-if-code-reads-it.md) D13),
-so on the chart-managed route a Secret that is missing or carries the wrong key
-makes the pod fail to start with an error naming the file, instead of running on
-a token from somewhere else. The environment route is read first and leaves the
-key unwritten, so the pod starts on the variable alone.
-
-**3. The credentials the config references.** The shipped `config` refers to
+**2. The credentials the config references.** The shipped `config` refers to
 `${S3_ACCESS_KEY_ID}`, `${S3_SECRET_KEY}` and `${S3EP_AES_KEY}`. A `${VAR}`
 reference whose variable is unset or empty is a **startup failure**, not an
 empty string. The first two come from `secrets.s3.*`, the third from
@@ -460,9 +461,6 @@ reuse.
 | `secrets.encryption.aesKey` | The key encryption key, base64 of 32 bytes, stored in the chart's Secret | `""` |
 | `secrets.encryption.existingSecret` | A Secret holding the key; takes precedence over `aesKey` | `""` |
 | `secrets.encryption.existingSecretKey` | Key inside `secrets.encryption.existingSecret` | `aes-key` |
-| `license.jwt` | License token, stored in the chart's Secret | `""` |
-| `license.existingSecret` | Secret holding the license; takes precedence over `license.jwt` | `""` |
-| `license.existingSecretKey` | Key inside `license.existingSecret` | `license.jwt` |
 
 Both S3 environment variables are injected as soon as **either** `secrets.s3`
 value is set, and both read from the chart's Secret. Set both or neither;
@@ -498,7 +496,6 @@ nothing to resolve to and the proxy refuses to start.
 | `monitoring.prometheusRule.backend.window` | Rate window for the backend failure share | `5m` |
 | `monitoring.prometheusRule.backend.failureRatio` | Share of backend round trips with no HTTP response that fires the alert | `0.1` |
 | `monitoring.prometheusRule.backend.for` | How long that share must hold | `5m` |
-| `monitoring.prometheusRule.license.warnDays` | Days before expiry that the licence alert fires | `30` |
 | `monitoring.grafana.dashboard.enabled` | Render the dashboard ConfigMap | `false` |
 | `monitoring.grafana.dashboard.namespace` | Dashboard namespace | `""` (release namespace) |
 | `monitoring.grafana.dashboard.labels` | Dashboard discovery labels | `{grafana_dashboard: "1"}` |
@@ -510,27 +507,23 @@ renders on its own flag. The ServiceMonitor selects the monitoring Service by it
 `app.kubernetes.io/component: monitoring` label, so `monitoring.service.enabled`
 must be set as well or it matches nothing.
 
-The proxy exports thirteen of its own metrics — request rate and latency, active
-connections, build information, licence validity and expiry, object integrity
-failures, the backend observation (last response, last failure by class, whether
+The proxy exports eleven of its own metrics — request rate and latency, active
+connections, build information, object integrity failures, the backend observation (last response, last failure by class, whether
 anything was observed, and the two counters an alert reads) and the active
 encryption provider — plus the Go runtime and process collectors (`go_*`,
 `process_*`). The full table with labels is in the
 [docs/operations/monitoring.md](../../../docs/operations/monitoring.md#metrics).
 
-**The bundled dashboard draws all five of its panels** — request rate, request
-latency, active connections, licence status and days to expiry — and a unit test
-holds it to that: it fails if a panel names a series no scrape exports, and if
-the `$job` or `$instance` variable resolves off a counter, which has no children
-until the pod has served its first request and would leave a fresh pod looking
-broken. Days to expiry is computed in the query,
-`(s3ep_license_expiry_timestamp - time()) / 86400`, because a gauge for it would
-be written once at startup and could never fall.
+**The bundled dashboard draws all three of its panels** — request rate, request
+latency and active connections — and a unit test holds it to that: it fails if a
+panel names a series no scrape exports, and if the `$job` or `$instance` variable
+resolves off a counter, which has no children until the pod has served its first
+request and would leave a fresh pod looking broken.
 `monitoring.grafana.dashboard.enabled` is `false` by default.
 
 ### Alerting rules
 
-`monitoring.prometheusRule.enabled` renders a `PrometheusRule` with four alerts.
+`monitoring.prometheusRule.enabled` renders a `PrometheusRule` with two alerts.
 **Every one of them tells a human, and nothing in the platform acts on any of
 them** — that boundary is the decision
 ([ADR 0034](../../../docs/adr/0034-a-probe-reports-the-process-never-its-dependencies.md)
@@ -541,8 +534,6 @@ at the same moment that dependency failed.
 |---|---|---|
 | `S3EPObjectIntegrityFailure` | `s3ep_object_integrity_failures_total` moves at all. It is supposed to stay at zero: a read was refused or cut because the stored object did not authenticate | critical |
 | `S3EPBackendTransportFailing` | More than `backend.failureRatio` of backend round trips get no HTTP response for `backend.for` | warning |
-| `S3EPLicenseExpiringSoon` | Less than `license.warnDays` left on the token | warning |
-| `S3EPLicenseExpired` | `s3ep_license_info` is 0 | critical |
 
 **The backend alert reads a share, never a count.** The AWS SDK retries, so an
 ordinary network produces some transport failures and a bare counter cannot be
@@ -561,9 +552,9 @@ the morning. Set your Prometheus' rule selector labels through
 `monitoring.prometheusRule.labels`.
 
 **The metrics listener has no authentication** — that is what makes an ordinary
-Prometheus scrape work — and it names no licensee. What it exposes is request
-rate and latency by route template, build version and commit, active connections,
-the licence validity and expiry, the backend observation, **and the active
+Prometheus scrape work. What it exposes is request rate and latency by route
+template, build version and commit, active connections, object integrity
+failures, the backend observation, **and the active
 encryption provider**: `s3ep_encryption_provider_info` carries its alias, type and
 key fingerprint, and `/status` on the same port repeats them. The `type` is the
 field that matters — `exit` means this proxy is not encrypting and the backend
@@ -662,7 +653,6 @@ no cert-manager, so that arm is exercised by rendering only.
 helm install my-s3-proxy . \
   --set secrets.s3.accessKeyId="your-access-key" \
   --set secrets.s3.secretKey="your-secret-key" \
-  --set license.existingSecret="s3-proxy-license" \
   --set-file config=./my-config.yaml
 ```
 
@@ -673,7 +663,6 @@ helm install my-s3-proxy . \
   --values values-production.yaml \
   --set secrets.s3.accessKeyId="your-access-key" \
   --set secrets.s3.secretKey="your-secret-key" \
-  --set license.existingSecret="s3-proxy-license" \
   --set 'certificate.dnsNames[0]=s3-proxy.yourdomain.com' \
   --set 'ingress.hosts[0].host=s3-proxy.yourdomain.com' \
   --set 'ingress.tls[0].hosts[0]=s3-proxy.yourdomain.com'
@@ -701,12 +690,11 @@ renders all three override files plus the Velero e2e values on every run.
    The chart ships no key either way
    ([ADR 0021](../../../docs/adr/0021-key-material-is-generated-never-committed.md)).
 
-2. **Secrets in values files are not secrets.** `secrets.s3.*`,
-   `secrets.encryption.aesKey` and `license.jwt` are base64-encoded into a
-   chart-managed Secret; base64 is encoding, not encryption, and the value ends
-   up in Helm's release history. Prefer `--set` at install time,
-   `secrets.encryption.existingSecret`, `license.existingSecret`, or an external
-   secret manager.
+2. **Secrets in values files are not secrets.** `secrets.s3.*` and
+   `secrets.encryption.aesKey` are base64-encoded into a chart-managed Secret;
+   base64 is encoding, not encryption, and the value ends up in Helm's release
+   history. Prefer `--set` at install time, `secrets.encryption.existingSecret`,
+   or an external secret manager.
 
 3. **The default `config` reuses one key pair for two roles.** It hands the same
    `${S3_ACCESS_KEY_ID}` / `${S3_SECRET_KEY}` to the `s3_backends` entry (the
@@ -754,7 +742,7 @@ deployment side of it is
 
 - **An externally managed ConfigMap or Secret does not restart pods.** The pod
   template hashes what the chart renders, so `helm upgrade` with a changed
-  `config`, a rotated credential or a renewed license rolls the pods. With
+  `config` or a rotated credential rolls the pods. With
   `configMap.useExistingConfigMap: true`, or with a Secret you manage yourself,
   the chart cannot see the content and nothing rolls; restart them yourself:
   `kubectl rollout restart deployment/<release>-s3-encryption-proxy` (the
@@ -768,29 +756,26 @@ deployment side of it is
 
 ### Common Issues
 
-1. **Pod not starting, `license required for encryption provider type 'aes'`**:
-   no license reached the container. Check `license.existingSecret`,
-   `license.jwt` or the `S3EP_LICENSE_TOKEN` env var.
-2. **Pod not starting, `environment variable ${...} is not set or empty`**: the
+1. **Pod not starting, `environment variable ${...} is not set or empty`**: the
    config references a variable that no `env` entry or `secrets.s3` value
    provides.
-3. **Pod not starting, `s3_backends[0].target_endpoint is required`** or
+2. **Pod not starting, `s3_backends[0].target_endpoint is required`** or
    **`s3_backends is required: name exactly one backend`**: the mounted config
    did not parse as expected, or the backend block is missing. A config still
    carrying the singular `s3_backend` is refused by a message of its own that
    says to move the block under a single `- ` entry; the legacy top-level
    backend keys are gone as well.
-4. **Never becomes ready, probes fail**: the chart derives the probe scheme from
+3. **Never becomes ready, probes fail**: the chart derives the probe scheme from
    `tls.enabled` in `config`. It cannot do that under
    `configMap.useExistingConfigMap: true` — set `probes.scheme: HTTPS` there.
-5. **`helm template` fails with `values.config is not parseable YAML`**: `config`
+4. **`helm template` fails with `values.config is not parseable YAML`**: `config`
    is one literal string (`config: |`), not a map, and it has to parse.
-6. **`helm upgrade` fails with `replicaCount is 2 and this chart installs one
+5. **`helm upgrade` fails with `replicaCount is 2 and this chart installs one
    instance`**, or with the same message for `autoscaling.enabled`: a values
    file from before this release. Set `replicaCount: 1` and
    `autoscaling.enabled: false` — see
    [One instance, and the chart refuses a second](#one-instance-and-the-chart-refuses-a-second).
-7. **Certificate issues**: ensure cert-manager is installed and the issuer is
+6. **Certificate issues**: ensure cert-manager is installed and the issuer is
    configured correctly.
 
 ### Debugging Commands

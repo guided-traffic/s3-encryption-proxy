@@ -1,5 +1,10 @@
 # 038 — s3-encryption-operator: proxy instances provisioned by Custom Resources
 
+> **2026-10-29: the license check is gone (ADR 0040).** The proxy is Apache-2.0 and checks
+> no license: no gate, no token, no expiry, no license tool, no license metrics. Every passage
+> below that plans around the gate, the token, its expiry or its distribution is moot. Read it
+> as the history of the question and drop it when this ticket is next refined.
+
 ## Decided 2026-09-14, before any of this is built
 
 **The operator is a separate program**, with an entry point of its own rather

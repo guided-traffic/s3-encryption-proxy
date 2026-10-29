@@ -172,7 +172,7 @@ long as objects written under it must stay readable.
   wrap. Roughly 1,800 lines of provider, tests, integration suite and example go with the
   asymmetric provider, and PEM handling leaves the encryption path entirely — the only PEM
   the product still parses belongs to the license gate and to the tool that issues its keys
-  (ADR 0016).
+  (ADR 0016). Since 2026-10-29 there is none: the gate and the tool are gone (ADR 0040).
 - Sub-microsecond unwrap stays the reference point for the read path, which keeps the
   latency budget of a future KMS-backed provider meaningful: the difference between local
   and remote custody is then a clean measurement rather than a comparison of two unrelated

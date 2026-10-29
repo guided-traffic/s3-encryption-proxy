@@ -23,7 +23,6 @@ import (
 //	    config/aes-example.yaml > /tmp/aes-onepart.yaml
 //	docker run -d --name proxy-onepart \
 //	    --network s3-encryption-proxy_s3-demo -p 8090:8080 \
-//	    -e S3EP_LICENSE_TOKEN="$(cat config/license.jwt)" \
 //	    -v /tmp/aes-onepart.yaml:/etc/s3ep/config.yaml:ro \
 //	    s3-encryption-proxy-s3-encryption-proxy \
 //	    ./s3-encryption-proxy --config /etc/s3ep/config.yaml

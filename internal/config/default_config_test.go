@@ -29,33 +29,6 @@ var cfgDefaultEnv = map[string]string{
 	"S3EP_AES_KEY":               "1UR+yQO2Ap3NJabyhkwSm0qk/vllEa2Jae+NSxyVas8=",
 }
 
-// cfgDefaultLicence supplies the token the encrypting provider needs, from the
-// environment first and the gitignored file second — the same two sources the
-// proxy itself reads, so a workstation and a runner take the same path.
-//
-// It fails rather than skips when neither exists and the run declares itself as
-// continuous integration. This test is the only one that puts the shipped
-// config/default.yaml through Load(), and the assertion it carries — that the
-// active provider is not the one storing plaintext — is worth nothing if the
-// whole test silently skips on the runner.
-func cfgDefaultLicence(t *testing.T) string {
-	t.Helper()
-
-	if token := os.Getenv("S3EP_LICENSE_TOKEN"); token != "" {
-		return token
-	}
-	if token, err := os.ReadFile("../../config/license.jwt"); err == nil {
-		return string(token)
-	}
-	if os.Getenv("CI") != "" {
-		t.Fatal("no licence: set S3EP_LICENSE_TOKEN or provide config/license.jwt. " +
-			"The shipped configuration cannot be validated without one, and skipping " +
-			"here leaves config/default.yaml unchecked")
-	}
-	t.Skip("no local licence; the encrypting provider cannot be loaded without one")
-	return ""
-}
-
 func TestCfgDefaultConfigAsksForExactlyTheDocumentedVariables(t *testing.T) {
 	body, err := os.ReadFile(cfgDefaultPath)
 	require.NoError(t, err)
@@ -87,11 +60,9 @@ func TestCfgDefaultConfigAsksForExactlyTheDocumentedVariables(t *testing.T) {
 }
 
 func TestCfgDefaultConfigLoads(t *testing.T) {
-	token := cfgDefaultLicence(t)
 	path, err := filepath.Abs(cfgDefaultPath)
 	require.NoError(t, err)
 
-	t.Setenv("S3EP_LICENSE_TOKEN", token)
 	for name, value := range cfgDefaultEnv {
 		t.Setenv(name, value)
 	}
@@ -120,7 +91,6 @@ func TestCfgDefaultConfigFailsClosedOnEveryVariable(t *testing.T) {
 
 	for missing := range cfgDefaultEnv {
 		t.Run(missing, func(t *testing.T) {
-			CfgNoLicense(t)
 			CfgResetViper(t)
 			for name, value := range cfgDefaultEnv {
 				if name == missing {
@@ -194,11 +164,6 @@ func TestCfgShippedExamplesLoad(t *testing.T) {
 
 	for name, tc := range examples {
 		t.Run(name, func(t *testing.T) {
-			// An encrypting provider needs a licence; the exit provider does not,
-			// and the same lookup serves both.
-			if tc.activeIs != "exit" {
-				t.Setenv("S3EP_LICENSE_TOKEN", cfgDefaultLicence(t))
-			}
 			for key, value := range tc.env {
 				t.Setenv(key, value)
 			}

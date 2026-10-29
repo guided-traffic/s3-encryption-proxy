@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/license"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/monitoring"
 	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy"
 	"github.com/sirupsen/logrus"
@@ -71,38 +70,13 @@ func runProxy(_ *cobra.Command, _ []string) {
 		"buildTime": buildTime,
 	}).Info("S3 Encryption Proxy build information")
 
-	// Load configuration and start license monitoring
-	cfg, licenseValidator, err := config.LoadAndStartLicense()
+	cfg, err := config.Load()
 	if err != nil {
 		logrus.WithError(err).Fatal("Failed to load configuration")
 	}
 
 	// Set up Prometheus metrics with build information
 	monitoring.SetServerInfo(version, commit, buildTime)
-
-	// Set license information in metrics if available
-	if licenseValidator != nil {
-		// Get license validation result to access claims
-		token := os.Getenv(license.LicenseEnvVar)
-		if token == "" {
-			// Try to load from file
-			if cfg.LicenseFile != "" {
-				if data, err := os.ReadFile(cfg.LicenseFile); err == nil {
-					token = strings.TrimSpace(string(data))
-				}
-			}
-		}
-
-		if token != "" {
-			if result := licenseValidator.ValidateLicense(token); result.Valid && result.Info != nil {
-				monitoring.SetLicenseInfo(
-					result.Info.ExpiresAt.Format("2006-01-02 15:04:05 UTC"),
-					true,
-					float64(result.Info.ExpiresAt.Unix()),
-				)
-			}
-		}
-	}
 
 	// Set log level
 	level, err := logrus.ParseLevel(cfg.LogLevel)
@@ -210,22 +184,6 @@ func runProxy(_ *cobra.Command, _ []string) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// A licence that lapses while the proxy runs ends the process the same way a
-	// SIGTERM does. Exiting from the monitoring goroutine instead skipped the
-	// whole tail: no readiness 503, no drain, and every multipart upload this
-	// process held left at the backend unfinishable (ADR 0029 D2). The exit code
-	// stays 1 further down, so the container restarts into the startup licence
-	// check (ADR 0016).
-	licenseExpired := make(chan struct{}, 1)
-	if licenseValidator != nil {
-		licenseValidator.SetExpiryHandler(func() {
-			select {
-			case licenseExpired <- struct{}{}:
-			default:
-			}
-		})
-	}
-
 	// Start server in goroutine
 	go func() {
 		logrus.WithField("address", cfg.BindAddress).Info("Starting S3 encryption proxy server")
@@ -234,15 +192,9 @@ func runProxy(_ *cobra.Command, _ []string) {
 		}
 	}()
 
-	// Wait for a shutdown signal, or for the licence to lapse under us.
-	exitCode := 0
-	select {
-	case sig := <-sigChan:
-		logrus.WithField("signal", sig.String()).Info("Received shutdown signal, initiating graceful shutdown...")
-	case <-licenseExpired:
-		logrus.Error("License expired during runtime, initiating graceful shutdown...")
-		exitCode = 1
-	}
+	// Wait for a shutdown signal
+	sig := <-sigChan
+	logrus.WithField("signal", sig.String()).Info("Received shutdown signal, initiating graceful shutdown...")
 
 	// Enter shutdown mode - the readiness probe will now answer 503
 	atomic.StoreInt32(&shutdownMode, 1)
@@ -327,20 +279,11 @@ func runProxy(_ *cobra.Command, _ []string) {
 		},
 	})
 
-	// Stop license validator
-	if licenseValidator != nil {
-		licenseValidator.Stop()
-	}
-
 	duration := time.Since(started)
 	logrus.WithFields(logrus.Fields{
 		"duration":       duration,
 		"activeRequests": atomic.LoadInt64(&activeRequests),
 	}).Info("Graceful shutdown completed")
-
-	if exitCode != 0 {
-		os.Exit(exitCode)
-	}
 }
 
 func main() {
@@ -358,23 +301,34 @@ type startupWarning struct {
 
 // startupWarnings says what the active configuration costs.
 //
-// The warning is the exit provider's: an encrypting provider cannot reach it.
-// It is the only thing that tells an operator the proxy is storing plaintext
-// (ADR 0025 D10), so it is built here rather than written inline in the startup
-// path, where nothing could read it back. The plain-HTTP backend that used to
-// warn beside it refuses the start under every provider now (ADR 0013 D5).
+// The exit provider's warning is the only thing that tells an operator the
+// proxy is storing plaintext (ADR 0025 D10), so it is built here rather than
+// written inline in the startup path, where nothing could read it back. The
+// plain-HTTP backend that used to warn beside it refuses the start under every
+// provider now (ADR 0013 D5). The license_file warning names a key the proxy
+// accepts and no longer reads (ADR 0040 D3).
 func startupWarnings(cfg *config.Config) []startupWarning {
-	provider, err := cfg.GetActiveProvider()
-	if err != nil || provider == nil || provider.Type != "exit" {
-		return nil
+	var warnings []startupWarning
+
+	if cfg.LicenseFile != "" {
+		warnings = append(warnings, startupWarning{
+			fields: logrus.Fields{"key": "license_file"},
+			message: "license_file is ignored: the proxy reads no license. " +
+				"Delete the key; the next major release refuses it.",
+		})
 	}
 
-	return []startupWarning{{
-		fields: logrus.Fields{"provider": provider.Alias},
-		message: "⚠️  Exit provider active: new objects are stored unencrypted. " +
-			"Objects this proxy encrypted earlier are still decrypted on read, " +
-			"as long as the provider holding their key stays configured.",
-	}}
+	provider, err := cfg.GetActiveProvider()
+	if err == nil && provider != nil && provider.Type == "exit" {
+		warnings = append(warnings, startupWarning{
+			fields: logrus.Fields{"provider": provider.Alias},
+			message: "⚠️  Exit provider active: new objects are stored unencrypted. " +
+				"Objects this proxy encrypted earlier are still decrypted on read, " +
+				"as long as the provider holding their key stays configured.",
+		})
+	}
+
+	return warnings
 }
 
 // monitoringPlan says which listeners a configuration asks for.

@@ -10,6 +10,11 @@ decides per object — whole-object `GET`, ranged `GET` and `HEAD`, verified 202
 licence gate lets the exit provider start without a licence because it only ever looked at the
 active provider.
 
+**Amended 2026-10-29: D2 is moot (ADR 0040).** The proxy checks no license, so no provider type
+needs one and the exit provider's exemption has nothing left to exempt it from. What the exit
+provider is for — leaving encryption without losing what was encrypted — is unchanged, and so
+are D1 and D3 onwards.
+
 **Corrected 2026-09-13.** Until that day this mode did not keep its own promise that the backend's
 rules about part sizes are the ones the client meets: a client part was read into memory in full
 before it was forwarded, with no bound but the S3 maximum, so a part larger than the container's
@@ -55,7 +60,8 @@ did something.
 losing access to what it already encrypted. It is not a testing aid, not a development mode, and
 not a way to run the proxy as a plain pass-through in production.
 
-**D2.** **The exit provider requires no licence.** Getting data out is exactly the situation in
+**D2.** *Moot since 2026-10-29: no provider type requires a license (ADR 0040 D2).* **The exit
+provider requires no licence.** Getting data out is exactly the situation in
 which a licence cannot be assumed to be valid, so making it a condition would defeat the purpose.
 The licence gate examines the active provider only, so a configuration with `exit` active starts
 without one even while an encrypting provider stays registered.
@@ -179,6 +185,8 @@ but the claim is reasoned rather than recorded.
 - [ADR 0001](0001-the-backend-is-hostile.md) — why a fingerprint from object metadata may not
   select a no-op unwrap.
 - [ADR 0004](0004-one-local-key-provider.md) — the local key provider whose D10 this supersedes.
-- [ADR 0016](0016-the-license-is-a-startup-gate.md) — the gate the exit provider is exempt from.
+- [ADR 0016](0016-the-license-is-a-startup-gate.md) — the gate the exit provider was exempt from,
+  superseded by [ADR 0040](0040-the-proxy-is-apache-licensed-and-checks-no-license.md), under
+  which no provider type is gated.
 - [ADR 0017](0017-stored-data-compatibility-is-not-owed.md) — why `none` is refused rather than
   aliased.

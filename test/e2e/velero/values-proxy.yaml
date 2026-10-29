@@ -86,11 +86,6 @@ volumeMounts:
     readOnly: true
 
 env:
-  - name: S3EP_LICENSE_TOKEN
-    valueFrom:
-      secretKeyRef:
-        name: s3ep-license
-        key: license.jwt
   # Go reads SSL_CERT_FILE for the system root pool. Pointing it at the test CA
   # means the proxy validates the MinIO certificate for real instead of falling
   # back to insecure_skip_verify.

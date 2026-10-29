@@ -18,15 +18,15 @@ spec:
     metadata:
       annotations:
         {{- /* Hash the rendered ConfigMap, not .Values.config: the template also
-               injects license_file, so the raw value misses a license being
-               switched on. Nothing renders under useExistingConfigMap, and a
-               hash of an empty render is a constant that never changes. */}}
+               injects tls:, so the raw value misses the service TLS listener
+               being switched on. Nothing renders under useExistingConfigMap, and
+               a hash of an empty render is a constant that never changes. */}}
         {{- if not .Values.configMap.useExistingConfigMap }}
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         {{- end }}
-        {{- /* The chart-rendered Secret carries the S3 credentials, the KEK and
-               the license. An externally managed one stays invisible here, like
-               an external ConfigMap. */}}
+        {{- /* The chart-rendered Secret carries the S3 credentials and the KEK.
+               An externally managed one stays invisible here, like an external
+               ConfigMap. */}}
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
@@ -134,11 +134,6 @@ spec:
               mountPath: {{ .Values.serviceTLS.mountPath }}
               readOnly: true
             {{- end }}
-            {{- if or .Values.license.existingSecret .Values.license.jwt }}
-            - name: license
-              mountPath: /app/license
-              readOnly: true
-            {{- end }}
       volumes:
         - name: config
           configMap:
@@ -153,18 +148,6 @@ spec:
           secret:
             secretName: {{ include "s3-encryption-proxy.serviceTLSSecretName" . }}
             defaultMode: 0440
-        {{- end }}
-        {{- if or .Values.license.existingSecret .Values.license.jwt }}
-        - name: license
-          secret:
-            {{- if .Values.license.existingSecret }}
-            secretName: {{ .Values.license.existingSecret }}
-            {{- else }}
-            secretName: {{ include "s3-encryption-proxy.secretName" . }}
-            {{- end }}
-            items:
-              - key: {{ .Values.license.existingSecretKey | default "license.jwt" }}
-                path: license.jwt
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

@@ -264,13 +264,11 @@ func rotateProxyProvider(t *testing.T, ctx context.Context, current string) {
 // proxyConfig returns the config the release was installed with -- the values the
 // operator supplied, not the rendered ConfigMap.
 //
-// The two are not the same and must not be confused: the chart ADDS keys to the
-// render that are not in the values, `tls:` under serviceTLS (ADR 0026) and
-// `license_file:` under a chart-managed licence. Feeding the render back as
-// `config` on the next upgrade would supply those keys twice, which the chart
-// refuses for `tls:` and would silently duplicate for `license_file:`. What an
-// operator edits and re-applies is the values file, so that is what this rotation
-// round-trips.
+// The two are not the same and must not be confused: the chart ADDS a key to the
+// render that is not in the values, `tls:` under serviceTLS (ADR 0026). Feeding
+// the render back as `config` on the next upgrade would supply that key twice,
+// which the chart refuses. What an operator edits and re-applies is the values
+// file, so that is what this rotation round-trips.
 func proxyConfig(t *testing.T, ctx context.Context) string {
 	t.Helper()
 	ns := loadVersionsEnv(t).get(t, "PROXY_NAMESPACE")

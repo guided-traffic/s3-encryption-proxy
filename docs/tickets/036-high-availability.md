@@ -1,5 +1,10 @@
 # 036 — High availability: several instances sharing the work, multipart included
 
+> **2026-10-29: the license check is gone (ADR 0040).** The proxy is Apache-2.0 and checks
+> no license: no gate, no token, no expiry, no license tool, no license metrics. Every passage
+> below that plans around the gate, the token, its expiry or its distribution is moot. Read it
+> as the history of the question and drop it when this ticket is next refined.
+
 ## Decided 2026-09-14, before any of this is built
 
 **One instance per deployment of the `s3-encryption-proxy` chart, and the chart

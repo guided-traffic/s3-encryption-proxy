@@ -32,7 +32,6 @@ docker build -f Containerfile -t s3-encryption-proxy .
 
 docker run -d \
   -p 8080:8080 \
-  -e S3EP_LICENSE_TOKEN="$S3EP_LICENSE_TOKEN" \
   -e S3EP_BACKEND_ENDPOINT="https://minio:9000" \
   -e S3EP_BACKEND_REGION="us-east-1" \
   -e S3EP_BACKEND_ACCESS_KEY_ID="minioadmin" \
@@ -55,7 +54,6 @@ variable is what makes them work — see
 ```bash
 docker run -d \
   -p 8080:8080 \
-  -e S3EP_LICENSE_TOKEN="$S3EP_LICENSE_TOKEN" \
   -e S3EP_AES_KEY="$S3EP_AES_KEY" \
   -v $(pwd)/config:/config:ro \
   s3-encryption-proxy --config /config/aes-example.yaml
@@ -73,7 +71,6 @@ services:
       - "9090:9090"  # Metrics, only with monitoring.enabled
     # No volume and no command: the image starts from its own configuration.
     environment:
-      - S3EP_LICENSE_TOKEN=${S3EP_LICENSE_TOKEN}
       - S3EP_BACKEND_ENDPOINT=https://minio:9000
       - S3EP_BACKEND_REGION=us-east-1
       - S3EP_BACKEND_ACCESS_KEY_ID=${S3EP_BACKEND_ACCESS_KEY_ID}
@@ -106,10 +103,8 @@ helm install s3-encryption-proxy . \
 > or an `env` entry with a `secretKeyRef` — the shipped `values-production.yaml`
 > is written the second way and only the secret name has to change.
 > (`secrets.encryption.aesKey` works too, but it puts the key into the chart's
-> own Secret and therefore into whatever holds your values file.) The license is
-> different: `license.existingSecret` (or `license.jwt`) mounts it and points
-> `license_file` at the mount. See the chart's own
-> [README](../../deploy/helm/s3-encryption-proxy/README.md).
+> own Secret and therefore into whatever holds your values file.) See the
+> chart's own [README](../../deploy/helm/s3-encryption-proxy/README.md).
 
 > **One instance per release, and the chart refuses a second.** `replicaCount`
 > above 1 and `autoscaling.enabled: true` both fail the render. A client-driven

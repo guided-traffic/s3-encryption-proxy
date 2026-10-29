@@ -4,6 +4,13 @@
 
 **Accepted.** Date: 2026-09-07.
 
+**Amended 2026-10-29: the license half of this record is withdrawn (ADR 0040).** The proxy checks
+no license, so there is no token to route and no signing key to keep. D5 and D6 are superseded,
+D1's mention of a license token describes nothing that exists any more, and the open item about
+the signing key's custody is closed by the removal. The key-material half — D1 to D4, D7 and D8
+for key-encryption keys, private keys and the test certificate authority — is unchanged. The
+title keeps its wording so that references to this record stay findable.
+
 Implemented and released in **3.8.56**: the Helm chart no longer ships a working
 key-encryption key as its default — the default values and the monitoring variant both
 reference `${S3EP_AES_KEY}`, so an install that configures nothing refuses to start instead
@@ -66,7 +73,8 @@ one re-writes its data under a new key before the old provider is removed. Delet
 tree does not un-publish them.
 
 Still **not implemented**: moving the license signing key into custody outside any directory a
-routine build clean removes.
+routine build clean removes. *Closed 2026-10-29 by removal: no signing key exists in any build
+path (ADR 0040).*
 
 **Corrected 2026-09-10: there are no RSA private keys in the tree.** This block used to name
 two. The `rsa` key provider was deleted with ADR 0004, and every key file it needed went with
@@ -86,8 +94,8 @@ the example comments is gone with the literals. The generator writes one further
 `S3EP_AES_KEY_RETIRED`, for the second provider of the rotation example, and the conformance
 runner carries its own, `S3EP_CONFORMANCE_AES_KEY`.
 
-One item of this family is **open** and is listed under Residual risks: where the license signing
-key is kept. The second one used to sit here — what the monitoring targets that load an example
+One item of this family was **open** and is listed under Residual risks: where the license signing
+key is kept. *Closed 2026-10-29 by removal (ADR 0040).* The second one used to sit here — what the monitoring targets that load an example
 configuration do on a fresh checkout — and is **closed 2026-09-12**: they invoke the generator,
 which makes them the fourth and fifth call sites the Consequences below warn about.
 
@@ -157,13 +165,15 @@ default key, which is the correct answer to "you did not configure encryption" (
 its key — **no half of it is tracked**. Tracking the public half is not a safe middle: it
 stops matching the private half the next clone generates.
 
-**D5.** The license token reaches every environment through the `S3EP_LICENSE_TOKEN`
+**D5.** *Superseded by ADR 0040 D2 on 2026-10-29: no environment needs a token.* The license
+token reaches every environment through the `S3EP_LICENSE_TOKEN`
 environment variable, and the local token file is excluded from the container build context
 so that no image, locally built or published, can carry one. The demo bring-up exports the
 token from the local file the way the end-to-end bring-up already does. The `license_file`
 setting remains the on-disk route for a deployment that mounts the token itself (ADR 0016).
 
-**D6.** The license signing key lives outside this repository and outside any directory that
+**D6.** *Superseded by ADR 0040 D2 on 2026-10-29: there is no signing key.* The license signing
+key lives outside this repository and outside any directory that
 a routine build clean removes, is never committed, and is never placed in a repository
 secret — a secret that can mint licenses the shipped binary accepts is a distribution
 channel, not a backup (ADR 0016).
@@ -236,7 +246,8 @@ shipped binary accepts, which makes it a stronger credential than any token it w
 
 ## Residual risks
 
-- **Open: where the license signing key is kept, and how the generator finds it.** The choice
+- **Closed 2026-10-29 by removal (ADR 0040): where the license signing key is kept, and how the
+  generator finds it.** The choice
   between pointing the generator at that location and documenting a copy step is not made.
   Until it is, the only copy sits in a build output directory that a routine clean deletes,
   and D6 is a rule rather than an observed state. Its presence was confirmed on 2026-09-07;

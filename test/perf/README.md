@@ -18,23 +18,15 @@ Every other number is a number in a report.
 The stack-dependent instruments need the demo stack:
 
 ```bash
-export S3EP_LICENSE_TOKEN="$(cat /path/to/license.jwt)"  # only when the token is not in config/license.jwt
 ./start-demo.sh
 
 S3EP_PERF_LABEL="pre-v2" make perf-baseline
 ```
 
-**The proxies need the token, and `./start-demo.sh` finds it for you.** It takes
-`S3EP_LICENSE_TOKEN` from the environment, falls back to `config/license.jwt`, and warns twice
-when it has neither — so the export above is only needed when the token lives somewhere else.
-It matters because the compose file passes `S3EP_LICENSE_TOKEN` into both proxy containers
-and does **not** mount `config/license.jwt` into them, so the `license_file` key in the
-config points at a path that does not exist inside the container. Without the variable the
-proxies exit 1 at startup with
-`license required for encryption provider type 'aes'`. MinIO and Vault stay healthy, and
-`docker ps` still lists the `proxy-healthcheck` sidecar and the `encrypted-manager` explorer,
-both restart-looping against a proxy that is not there — so the output looks half-plausible. If a run reports every instrument as
-`blocked`, check `docker logs proxy` first.
+**If a run reports every instrument as `blocked`, check `docker logs proxy` first.** A proxy
+that exits at startup leaves MinIO and Vault healthy, and `docker ps` still lists the
+`proxy-healthcheck` sidecar and the `encrypted-manager` explorer, both restart-looping against
+a proxy that is not there — so the output looks half-plausible.
 
 Restart the proxies before a run you intend to keep. The cold resident-memory figure is only
 cold once:
@@ -237,7 +229,6 @@ sed 's/multipart_part_size: 12582912/multipart_part_size: 5368709120/' \
     config/aes-example.yaml > /tmp/aes-onepart.yaml
 docker run -d --name proxy-onepart \
     --network s3-encryption-proxy_s3-demo -p 8090:8080 \
-    -e S3EP_LICENSE_TOKEN="$(cat config/license.jwt)" \
     --env-file .env \
     -v /tmp/aes-onepart.yaml:/etc/s3ep/config.yaml:ro \
     s3-encryption-proxy-s3-encryption-proxy \

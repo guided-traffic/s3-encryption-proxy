@@ -25,7 +25,7 @@ request for a bucket of that name and falls through to the S3 routes.
 Those two are the whole unsigned surface of this listener, and both answer a
 constant document: `/livez` is always 200 and reports nothing, `/readyz` reports
 the drain and nothing else. Everything descriptive — the build, the active
-provider, what the backend last did, the licence — is `/status` on the monitoring
+provider, what the backend last did — is `/status` on the monitoring
 listener ([ADR 0034](../adr/0034-a-probe-reports-the-process-never-its-dependencies.md)).
 
 **A bucket answers in both forms, `/{bucket}` and `/{bucket}/`.** Every bucket

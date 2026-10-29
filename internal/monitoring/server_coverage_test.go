@@ -391,5 +391,4 @@ func TestMonMetricsEndpointExportsTheRequestMetrics(t *testing.T) {
 	// registry rather than the default one.
 	assert.Contains(t, body, "s3ep_server_info")
 	assert.Contains(t, body, "s3ep_active_connections")
-	assert.Contains(t, body, "s3ep_license_expiry_timestamp")
 }

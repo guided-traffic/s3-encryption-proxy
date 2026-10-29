@@ -17,7 +17,7 @@ tests:
       - hasDocuments:
           count: 0
 
-  - it: renders the four alerts when both flags are set
+  - it: renders the two alerts when both flags are set
     set:
       monitoring.enabled: true
       monitoring.prometheusRule.enabled: true
@@ -36,12 +36,9 @@ tests:
       - equal:
           path: spec.groups[0].rules[1].alert
           value: S3EPBackendTransportFailing
-      - equal:
-          path: spec.groups[0].rules[2].alert
-          value: S3EPLicenseExpiringSoon
-      - equal:
-          path: spec.groups[0].rules[3].alert
-          value: S3EPLicenseExpired
+      - lengthEqual:
+          path: spec.groups[0].rules
+          count: 2
 
   # The share, never the count. The AWS SDK retries, so an ordinary network
   # produces some transport failures and a bare counter cannot be read; without
@@ -68,7 +65,6 @@ tests:
       monitoring.prometheusRule.backend.window: 15m
       monitoring.prometheusRule.backend.failureRatio: 0.25
       monitoring.prometheusRule.backend.for: 30m
-      monitoring.prometheusRule.license.warnDays: 7
     asserts:
       - matchRegex:
           path: spec.groups[0].rules[1].expr
@@ -79,9 +75,6 @@ tests:
       - equal:
           path: spec.groups[0].rules[1].for
           value: 30m
-      - matchRegex:
-          path: spec.groups[0].rules[2].expr
-          pattern: "< 7"
 
   # The rule selector of a Prometheus install is a label match, so a chart that
   # cannot add labels renders rules nothing ever loads.

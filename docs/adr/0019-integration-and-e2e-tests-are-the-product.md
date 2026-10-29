@@ -12,7 +12,7 @@ assertions read straight from the backend; the end-to-end environment is created
 by the same scripts on a workstation and on a CI runner (`make e2e-up`, `make e2e-down`), while
 the integration stack is started from the same compose file in both places but not by the same
 script; the end-to-end job blocks the release job; the end-to-end bring-up refuses to run without
-a license token supplied out of band; test doubles have been moved out of the production build
+a license token supplied out of band (*withdrawn 2026-10-29, ADR 0040*); test doubles have been moved out of the production build
 and the resulting coverage jump was reported as a denominator correction rather than as new
 testing; tests that pin behaviour the next storage format replaces carry an in-source marker
 saying so.
@@ -61,6 +61,11 @@ licence file, and on a runner a run without one fails instead of skipping; on a 
 neither it still skips. That residual skip turns on an environment value rather than on an
 unreachable dependency, so it is not the skip D4 allows; it stands because the licence is never
 committed (ADR 0021) and costs nothing on the runner, where the run fails instead.
+
+**Closed 2026-10-29: the residual skip is gone, and so is the token every suite needed
+(ADR 0040).** The proxy checks no license, so the test that loads the configuration the image
+ships with runs everywhere without a condition, and no unit, integration, conformance or
+end-to-end run reads a token. The bring-up refusal named below no longer exists.
 
 **Closed 2026-09-12:** three of the six items that stood here went with the code they were in —
 the integration subtest whose body was a bare skip with no condition, the unit-test file that was
@@ -244,8 +249,9 @@ supposed to give.)*
   or a pulled image blocks the release train, and by D9 there is no way around it but a fix.
 - Two transports roughly double one CI job, and the end-to-end job needs a forty-five minute
   budget on a runner that is shared with everything else.
-- A contributor without Docker, a kind cluster and a license token cannot reach the "done" bar
-  in D3 on their own machine. That is accepted: the alternative is a bar that means nothing.
+- A contributor without Docker and a kind cluster cannot reach the "done" bar in D3 on their
+  own machine. That is accepted: the alternative is a bar that means nothing. A license token
+  was a third requirement until 2026-10-29 (ADR 0040).
 - **Superseded 2026-09-10.** This bullet said that because handler-level unit coverage is
   deferred until the storage format change lands, a regression in header handling or request
   routing surfaces in a ten-minute suite whose failure mode is "a backup did not complete", not

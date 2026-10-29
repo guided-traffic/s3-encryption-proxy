@@ -45,9 +45,6 @@ func CfgValidClients() []S3ClientCredentials {
 	}
 }
 
-// CfgExitProviderConfig returns a fully valid configuration that needs no
-// license: the licence gate checks only the active provider, and the exit
-// provider is the one an operator selects to leave the product.
 // CfgExitProviderConfig is a Config that passes validate(). A Config built in
 // code never goes through setDefaults, so every key whose zero value is refused
 // has to be spelled out here — that is the point of the refusals, and a builder
@@ -632,58 +629,18 @@ func TestCfgValidatePropagatesSubValidatorErrors(t *testing.T) {
 	})
 }
 
-func TestCfgValidateLicenseAndEncryption(t *testing.T) {
-	// Make sure no ambient license token leaks into the assertions.
-	t.Setenv("S3EP_LICENSE", "")
-	t.Setenv("S3EP_LICENSE_TOKEN", "")
-	t.Setenv("S3_ENCRYPTION_PROXY_LICENSE", "")
+// ADR 0040 D1: no provider type is gated. The aes provider validates with no
+// token anywhere, and a written license_file naming a file that does not exist
+// is not opened at all.
+func TestCfgValidateNeedsNoLicense(t *testing.T) {
+	cfg := CfgExitProviderConfig()
+	cfg.LicenseFile = filepath.Join(t.TempDir(), "absent.jwt")
+	cfg.Encryption.EncryptionMethodAlias = "aes-current"
+	cfg.Encryption.Providers = []EncryptionProvider{
+		{Alias: "aes-current", Type: "aes", Config: map[string]interface{}{"aes_key": CfgTestAESKey}},
+	}
 
-	t.Run("the exit provider works without a license", func(t *testing.T) {
-		cfg := CfgExitProviderConfig()
-		cfg.LicenseFile = filepath.Join(t.TempDir(), "absent.jwt")
-
-		require.NoError(t, validateLicenseAndEncryption(cfg))
-	})
-
-	t.Run("aes provider is refused without a license", func(t *testing.T) {
-		cfg := CfgExitProviderConfig()
-		cfg.LicenseFile = filepath.Join(t.TempDir(), "absent.jwt")
-		cfg.Encryption.EncryptionMethodAlias = "aes-current"
-		cfg.Encryption.Providers = []EncryptionProvider{
-			{Alias: "aes-current", Type: "aes", Config: map[string]interface{}{"aes_key": CfgTestAESKey}},
-		}
-
-		err := validateLicenseAndEncryption(cfg)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "license required for encryption provider type 'aes'")
-	})
-
-	t.Run("encryption validation runs before the license check", func(t *testing.T) {
-		// The aes provider would also fail the license check; the encryption
-		// error has to be the one that surfaces.
-		cfg := CfgExitProviderConfig()
-		cfg.LicenseFile = filepath.Join(t.TempDir(), "absent.jwt")
-		cfg.Encryption.EncryptionMethodAlias = "aes-current"
-		cfg.Encryption.Providers = []EncryptionProvider{
-			{Alias: "aes-current", Type: "aes"}, // missing aes_key
-		}
-
-		err := validateLicenseAndEncryption(cfg)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "encryption.providers[0]: aes_key is required")
-	})
-
-	t.Run("unknown active alias skips the license check", func(t *testing.T) {
-		// validateEncryption already rejects this, so the loop over providers
-		// never finds a match; guard against a future regression.
-		cfg := CfgExitProviderConfig()
-		cfg.LicenseFile = filepath.Join(t.TempDir(), "absent.jwt")
-		cfg.Encryption.EncryptionMethodAlias = "ghost"
-
-		err := validateLicenseAndEncryption(cfg)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "encryption_method_alias 'ghost' does not match any provider alias")
-	})
+	require.NoError(t, validate(cfg))
 }
 
 // D-22: a pprof profile of this process contains DEKs, KEK-decrypted key

@@ -79,20 +79,6 @@ log "ensuring test PKI"
 log "ensuring local key material"
 "$REPO/scripts/gen-keys.sh" --if-needed
 
-# The proxy refuses to start under an encrypting provider without a licence, and
-# the whole suite is about an encrypting provider. start-demo.sh only warns, so
-# the abort belongs here.
-if [ -z "${S3EP_LICENSE_TOKEN:-}" ]; then
-  if [ -f "$REPO/config/license.jwt" ]; then
-    S3EP_LICENSE_TOKEN="$(tr -d '\n' < "$REPO/config/license.jwt")"
-  else
-    echo "S3EP_LICENSE_TOKEN is unset and config/license.jwt is missing" >&2
-    echo "export S3EP_LICENSE_TOKEN, or place a token at config/license.jwt" >&2
-    exit 1
-  fi
-fi
-export S3EP_LICENSE_TOKEN
-
 log "starting the demo stack"
 (cd "$REPO" && ./start-demo.sh)
 

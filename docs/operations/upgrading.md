@@ -1,11 +1,44 @@
-# Upgrading from 3.x or 4.x to 5.x
+# Upgrading
+
+Two notes, newest first. Coming from 3.x or 4.x, read both: you land on a 5.x
+release that already checks no licence.
+
+## Within 5.x: the release that stops checking a licence
+
+The proxy is licensed under Apache 2.0 from this release on and checks no
+licence at all: no token is read, no provider type is gated, nothing expires
+([ADR 0040](../adr/0040-the-proxy-is-apache-licensed-and-checks-no-license.md)).
+Nothing here refuses to start and the stored format does not change, so the
+upgrade is a plain rollout. What is left is cleanup:
+
+- **Delete `license_file` from your configuration.** It is still accepted, has
+  no default, and nothing reads the file it names; a configuration that writes
+  it starts and logs a warning, `license_file is ignored: the proxy reads no
+  license`. The next major release refuses the key like any other unknown one,
+  so a configuration that still carries it then does not start.
+- **Drop `S3EP_LICENSE_TOKEN` and the Secret behind it.** The variable is not
+  read. With the Helm chart, the values `license.jwt`, `license.existingSecret`
+  and `license.existingSecretKey` are no longer declared; the chart has no values
+  schema, so a values file that still sets them renders without error and without
+  effect. The chart no longer mounts a token or writes `license_file` into the
+  rendered configuration.
+- **Remove what watches the licence.** `s3ep_license_info` and
+  `s3ep_license_expiry_timestamp` are not exported any more, and `/status` has no
+  `license` member. A rule that compares against either series — the shape of
+  the chart's former `S3EPLicenseExpiringSoon` and `S3EPLicenseExpired` alerts —
+  goes silent; a rule written with `absent()` fires and keeps firing until you
+  delete it. The chart's own two licence alerts, its
+  `monitoring.prometheusRule.license.warnDays` value and the two licence panels
+  of its dashboard are gone.
+
+## From 3.x or 4.x to 5.x
 
 Read this before you upgrade. **Objects written by an earlier release cannot be
 read by 5.x** — copy the data out with the old version first — and a
 configuration file written for 4.x will stop the proxy at startup until it is
 brought forward. Every refusal below names the key it is about.
 
-## What changed
+### What changed
 
 The breaks, all deliberate ([ADR 0017](../adr/0017-stored-data-compatibility-is-not-owed.md)):
 
@@ -80,17 +113,12 @@ The breaks, all deliberate ([ADR 0017](../adr/0017-stored-data-compatibility-is-
   case that actually happened — did nothing and said nothing. Every type now
   declares what it reads: `aes` reads `aes_key`, `exit` reads nothing at all, and
   any other key refuses the start naming it and its provider.
-- **The license reaches the proxy through `S3EP_LICENSE_TOKEN` and `license_file`,
-  and nothing else.** `S3EP_LICENSE` and `S3_ENCRYPTION_PROXY_LICENSE` are no
-  longer read, and neither is the list of well-known paths that used to be
-  searched when `license_file` was not written — `license.jwt`,
-  `build/license.jwt`, `/etc/s3ep/license.jwt`, `/opt/s3ep/license.jwt`,
-  `/app/license.jwt` and `./config/license.jwt`. A deployment on either other
-  variable, or on a path other than the one `license_file` names, starts
-  unlicensed and is refused unless its active provider is `exit`. A token found
-  somewhere the operator did not name is a token they cannot rotate
-  ([ADR 0016](../adr/0016-the-license-is-a-startup-gate.md) D6). The shipped
-  image and the Helm chart are unaffected: both write `license_file`.
+- **No licence is read.** 5.0.0 narrowed where the token came from; the 5.x
+  release you upgrade to today reads none at all, so `S3EP_LICENSE`,
+  `S3_ENCRYPTION_PROXY_LICENSE`, `S3EP_LICENSE_TOKEN` and every token path simply
+  stop mattering. Remove `license_file` while you bring the configuration
+  forward, as the section above says
+  ([ADR 0040](../adr/0040-the-proxy-is-apache-licensed-and-checks-no-license.md)).
 - **New refusals at startup, each naming the key.** A `target_endpoint` with no
   scheme, or `http://` under any provider — the exit provider included; an
   `encryption.metadata_key_prefix` shorter than four characters, not starting

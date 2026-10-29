@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -159,8 +158,6 @@ func monExportedSeries(t *testing.T) []string {
 	t.Helper()
 
 	SetServerInfo("test-version", "test-commit", "test-time")
-	expiry := time.Now().Add(48 * time.Hour)
-	SetLicenseInfo(expiry.Format(time.RFC3339), true, float64(expiry.Unix()))
 	RequestsTotal.WithLabelValues("GET", "/{bucket}/{key}", "200").Inc()
 	RequestDuration.WithLabelValues("GET", "/{bucket}/{key}").Observe(0.01)
 	ActiveConnections.Set(0)
