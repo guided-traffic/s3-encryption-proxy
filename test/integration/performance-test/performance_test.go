@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/stretchr/testify/require"
 
 	// Import helper functions from the main integration package
@@ -55,29 +57,19 @@ func TestStreamingPerformance(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	t.Cleanup(cancel)
 	tc := NewTestContextWithTimeout(t, ctx)
-	defer func() {
-		// Keep test data for manual inspection - only clean up on explicit request
-		if os.Getenv("CLEANUP_AFTER_PERFORMANCE_TEST") == "true" {
-			tc.CleanupTestBucket()
-			t.Log("Test data cleaned up (CLEANUP_AFTER_PERFORMANCE_TEST=true)")
-		} else {
-			t.Logf("Test data preserved in bucket '%s' for manual inspection. Set CLEANUP_AFTER_PERFORMANCE_TEST=true to clean up.", tc.TestBucket)
-		}
-	}()
 
 	// Use consistent bucket name for performance tests
 	testBucket := PerfTestBucketName
 
-	// Clear any existing data in the performance test bucket
-	clearPerformanceTestBucket(t, tc.ProxyClient, testBucket)
+	// Removed before the run in case an aborted one left it behind, and after
+	// the run whatever the outcome (ADR 0020 D13).
+	require.NoError(t, purgePerformanceBucket(t, tc.MinIOClient, testBucket))
+	t.Cleanup(func() { purgePerformanceBuckets(t, tc.MinIOClient, testBucket, tc.TestBucket) })
 
-	// Ensure the test bucket exists
 	_, err := tc.ProxyClient.CreateBucket(tc.Ctx, &s3.CreateBucketInput{
 		Bucket: aws.String(testBucket),
 	})
-	if err != nil && !strings.Contains(err.Error(), "BucketAlreadyOwnedByYou") {
-		require.NoError(t, err, "Failed to create performance test bucket")
-	}
+	require.NoError(t, err, "Failed to create performance test bucket")
 
 	// Test cases with different file sizes
 	allTestSizes := []struct {
@@ -213,15 +205,11 @@ func runPerformanceTest(t *testing.T, ctx context.Context, client *s3.Client, bu
 	downloadedHash := sha256.Sum256(downloadedData)
 	require.Equal(t, originalHash, downloadedHash, "Downloaded data content mismatch - SHA256 hash verification failed")
 
-	// Keep test object for manual inspection - don't delete immediately
-	// Only clean up if explicitly requested via environment variable
-	if os.Getenv("CLEANUP_OBJECTS_AFTER_PERFORMANCE_TEST") == "true" {
-		_, err = client.DeleteObject(ctx, &s3.DeleteObjectInput{
-			Bucket: aws.String(bucket),
-			Key:    aws.String(testKey),
-		})
-		require.NoError(t, err, "Failed to delete test object")
-	}
+	_, err = client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(testKey),
+	})
+	require.NoError(t, err, "Failed to delete test object")
 
 	totalTime := uploadTime + downloadTime
 
@@ -235,42 +223,41 @@ func runPerformanceTest(t *testing.T, ctx context.Context, client *s3.Client, bu
 	}
 }
 
-// clearPerformanceTestBucket removes all objects from the performance test bucket
-func clearPerformanceTestBucket(t *testing.T, client *s3.Client, bucketName string) {
+// purgePerformanceBucket removes a bucket the measurement writes to, with every
+// object, version and open upload in it, paged to the end, and fails when the
+// bucket is still there afterwards. Cleanup is not optional and not behind a
+// switch: a run measured against a backend the previous run left fuller is not
+// comparable with one that was not (ADR 0020 D13). It goes to the backend
+// directly, so removing stored objects costs the proxy nothing. The error is
+// returned rather than asserted because the benchmarks call it with the
+// stand-in testing.T they open their context with, which reports nothing.
+func purgePerformanceBucket(t *testing.T, client *s3.Client, bucket string) error {
 	t.Helper()
+
+	PurgeBucket(t, client, bucket)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-
-	// List all objects in the bucket
-	listResp, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-		Bucket: aws.String(bucketName),
-	})
-	if err != nil {
-		// If bucket doesn't exist, that's fine - it will be created
-		if strings.Contains(err.Error(), "NoSuchBucket") {
-			t.Logf("Performance test bucket '%s' doesn't exist yet - will be created", bucketName)
-			return
-		}
-		t.Logf("Warning: Failed to list objects in performance test bucket '%s': %v", bucketName, err)
-		return
+	_, err := client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(bucket)})
+	var notFound *types.NotFound
+	switch {
+	case errors.As(err, &notFound):
+		return nil
+	case err == nil:
+		return fmt.Errorf("bucket %s is still there after the cleanup", bucket)
+	default:
+		return fmt.Errorf("bucket %s after the cleanup: %w", bucket, err)
 	}
+}
 
-	// Delete all objects
-	if len(listResp.Contents) > 0 {
-		t.Logf("Clearing %d existing objects from performance test bucket '%s'", len(listResp.Contents), bucketName)
-		for _, obj := range listResp.Contents {
-			_, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{
-				Bucket: aws.String(bucketName),
-				Key:    obj.Key,
-			})
-			if err != nil {
-				t.Logf("Warning: Failed to delete object '%s' from bucket '%s': %v", aws.ToString(obj.Key), bucketName, err)
-			}
+// purgePerformanceBuckets is the teardown: every bucket is attempted even when
+// an earlier one stays behind, and each one that does fails the test.
+func purgePerformanceBuckets(t *testing.T, client *s3.Client, buckets ...string) {
+	t.Helper()
+	for _, bucket := range buckets {
+		if err := purgePerformanceBucket(t, client, bucket); err != nil {
+			t.Error(err)
 		}
-		t.Logf("Successfully cleared all objects from performance test bucket '%s'", bucketName)
-	} else {
-		t.Logf("Performance test bucket '%s' is already empty", bucketName)
 	}
 }
 
@@ -289,24 +276,11 @@ func BenchmarkStreamingUpload(b *testing.B) {
 	}
 
 	testBucket := PerfTestBucketName
-
-	// Clear any existing data in the performance test bucket
-	clearPerformanceTestBucket(t, tc.ProxyClient, testBucket)
-
-	// Ensure the test bucket exists
-	_, err := tc.ProxyClient.CreateBucket(tc.Ctx, &s3.CreateBucketInput{
-		Bucket: aws.String(testBucket),
-	})
-	if err != nil && !strings.Contains(err.Error(), "BucketAlreadyOwnedByYou") {
-		b.Fatalf("Failed to create performance test bucket: %v", err)
-	}
-
-	// No cleanup - keep data for manual inspection
-	b.Logf("Using performance test bucket '%s' - data will be preserved for manual inspection", testBucket)
+	prepareBenchmarkBucket(b, t, tc, testBucket)
 
 	// Generate 10MB test data once
 	testData := make([]byte, PerfSize10MB)
-	_, err = io.ReadFull(rand.Reader, testData)
+	_, err := io.ReadFull(rand.Reader, testData)
 	if err != nil {
 		b.Fatalf("Failed to generate test data: %v", err)
 	}
@@ -331,16 +305,42 @@ func BenchmarkStreamingUpload(b *testing.B) {
 			b.Fatalf("Upload failed: %v", err)
 		}
 
-		// Keep objects for manual inspection - only clean up if explicitly requested
-		if os.Getenv("CLEANUP_OBJECTS_AFTER_BENCHMARK") == "true" {
-			_, err = tc.ProxyClient.DeleteObject(tc.Ctx, &s3.DeleteObjectInput{
-				Bucket: aws.String(testBucket),
-				Key:    aws.String(testKey),
-			})
-			if err != nil {
-				b.Fatalf("Cleanup failed: %v", err)
+		// Untimed: the delete keeps the bucket at one object, it is not what
+		// the benchmark measures.
+		b.StopTimer()
+		_, err = tc.ProxyClient.DeleteObject(tc.Ctx, &s3.DeleteObjectInput{
+			Bucket: aws.String(testBucket),
+			Key:    aws.String(testKey),
+		})
+		if err != nil {
+			b.Fatalf("Cleanup failed: %v", err)
+		}
+		b.StartTimer()
+	}
+}
+
+// prepareBenchmarkBucket gives a benchmark an empty bucket of its own name and
+// removes it, with the scratch bucket of the context, when the benchmark ends
+// (ADR 0020 D13). The benchmark function runs once per b.N it is tried with,
+// and each pass registers its own teardown.
+func prepareBenchmarkBucket(b *testing.B, t *testing.T, tc *TestContext, bucket string) {
+	b.Helper()
+
+	if err := purgePerformanceBucket(t, tc.MinIOClient, bucket); err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(func() {
+		for _, name := range []string{bucket, tc.TestBucket} {
+			if err := purgePerformanceBucket(t, tc.MinIOClient, name); err != nil {
+				b.Error(err)
 			}
 		}
+	})
+
+	if _, err := tc.ProxyClient.CreateBucket(tc.Ctx, &s3.CreateBucketInput{
+		Bucket: aws.String(bucket),
+	}); err != nil {
+		b.Fatalf("Failed to create performance test bucket: %v", err)
 	}
 }
 
@@ -359,24 +359,11 @@ func BenchmarkStreamingDownload(b *testing.B) {
 	}
 
 	testBucket := PerfTestBucketName
-
-	// Clear any existing data in the performance test bucket
-	clearPerformanceTestBucket(t, tc.ProxyClient, testBucket)
-
-	// Ensure the test bucket exists
-	_, err := tc.ProxyClient.CreateBucket(tc.Ctx, &s3.CreateBucketInput{
-		Bucket: aws.String(testBucket),
-	})
-	if err != nil && !strings.Contains(err.Error(), "BucketAlreadyOwnedByYou") {
-		b.Fatalf("Failed to create performance test bucket: %v", err)
-	}
-
-	// No cleanup - keep data for manual inspection
-	b.Logf("Using performance test bucket '%s' - data will be preserved for manual inspection", testBucket)
+	prepareBenchmarkBucket(b, t, tc, testBucket)
 
 	// Pre-upload test file
 	testData := make([]byte, PerfSize10MB)
-	_, err = io.ReadFull(rand.Reader, testData)
+	_, err := io.ReadFull(rand.Reader, testData)
 	if err != nil {
 		b.Fatalf("Failed to generate test data: %v", err)
 	}
@@ -434,41 +421,30 @@ func TestPerformanceComparison(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	t.Cleanup(cancel)
 	tc := NewTestContextWithTimeout(t, ctx)
-	defer func() {
-		// Keep test data for manual inspection - only clean up on explicit request
-		if os.Getenv("CLEANUP_AFTER_PERFORMANCE_TEST") == "true" {
-			tc.CleanupTestBucket()
-			t.Log("Test data cleaned up (CLEANUP_AFTER_PERFORMANCE_TEST=true)")
-		} else {
-			t.Logf("Test data preserved in bucket '%s' for manual inspection. Set CLEANUP_AFTER_PERFORMANCE_TEST=true to clean up.", tc.TestBucket)
-		}
-	}()
 
 	testBucket := PerfTestBucketName
+	encryptedBucket := testBucket + "-encrypted"
+	plainBucket := testBucket + "-unencrypted"
 
-	// Both buckets this test writes to, not the one it does not: the encrypted
-	// side used to be left untouched while the plain side was emptied every run,
-	// so the proxy leg was measured against a bucket that grew by the whole
-	// matrix on every run and the backend leg against an empty one.
-	clearPerformanceTestBucket(t, tc.ProxyClient, testBucket+"-encrypted")
-	clearPerformanceTestBucket(t, tc.MinIOClient, testBucket+"-unencrypted")
-
-	// Create buckets for both encrypted and unencrypted tests
-	_, err := tc.ProxyClient.CreateBucket(tc.Ctx, &s3.CreateBucketInput{
-		Bucket: aws.String(testBucket + "-encrypted"),
-	})
-	if err != nil && !strings.Contains(err.Error(), "BucketAlreadyOwnedByYou") {
-		require.NoError(t, err, "Failed to create encrypted test bucket")
+	// Both legs start from a backend without the previous run's objects, and
+	// the run leaves none behind (ADR 0020 D13). The encrypted side once kept
+	// its objects while the plain side was emptied, so the proxy leg was
+	// measured against a bucket that grew by the whole matrix on every run and
+	// the backend leg against an empty one.
+	for _, bucket := range []string{encryptedBucket, plainBucket} {
+		require.NoError(t, purgePerformanceBucket(t, tc.MinIOClient, bucket))
 	}
+	t.Cleanup(func() { purgePerformanceBuckets(t, tc.MinIOClient, encryptedBucket, plainBucket, tc.TestBucket) })
+
+	_, err := tc.ProxyClient.CreateBucket(tc.Ctx, &s3.CreateBucketInput{
+		Bucket: aws.String(encryptedBucket),
+	})
+	require.NoError(t, err, "Failed to create encrypted test bucket")
 
 	_, err = tc.MinIOClient.CreateBucket(tc.Ctx, &s3.CreateBucketInput{
-		Bucket: aws.String(testBucket + "-unencrypted"),
+		Bucket: aws.String(plainBucket),
 	})
-	if err != nil && !strings.Contains(err.Error(), "BucketAlreadyOwnedByYou") {
-		require.NoError(t, err, "Failed to create unencrypted test bucket")
-	}
-
-	// No cleanup - keep data for manual inspection
+	require.NoError(t, err, "Failed to create unencrypted test bucket")
 
 	// Test different file sizes - comprehensive range from 100KB to 1GB
 	allFileSizes := []struct {
@@ -519,10 +495,10 @@ func TestPerformanceComparison(t *testing.T) {
 			require.NoError(t, err, "Failed to generate test data")
 
 			objectKey := fmt.Sprintf("test-object-%s-%d", fileSize.name, time.Now().UnixNano()) // Test encrypted (proxy) performance
-			encryptedResult := measureComparisonPerformance(t, tc.Ctx, tc.ProxyClient, testBucket+"-encrypted", objectKey, testData)
+			encryptedResult := measureComparisonPerformance(t, tc.Ctx, tc.ProxyClient, encryptedBucket, objectKey, testData)
 
 			// Test unencrypted (direct MinIO) performance
-			unencryptedResult := measureComparisonPerformance(t, tc.Ctx, tc.MinIOClient, testBucket+"-unencrypted", objectKey, testData)
+			unencryptedResult := measureComparisonPerformance(t, tc.Ctx, tc.MinIOClient, plainBucket, objectKey, testData)
 
 			// Calculate efficiency percentages (how much of unencrypted performance we retain)
 			uploadEfficiency := (encryptedResult.UploadThroughput / unencryptedResult.UploadThroughput) * 100
@@ -558,23 +534,14 @@ func TestPerformanceComparison(t *testing.T) {
 			t.Logf("Efficiency against the direct leg - upload %.1f%%, download %.1f%%",
 				uploadEfficiency, downloadEfficiency)
 
-			// Kept for inspection unless asked otherwise, like the streaming
-			// test's objects. CI asks: every size up to 1GB on both legs, run
-			// twice, outgrows the docker storage of a runner.
-			if os.Getenv("CLEANUP_OBJECTS_AFTER_PERFORMANCE_TEST") == "true" {
-				for _, leg := range []struct {
-					client *s3.Client
-					bucket string
-				}{
-					{tc.ProxyClient, testBucket + "-encrypted"},
-					{tc.MinIOClient, testBucket + "-unencrypted"},
-				} {
-					_, err := leg.client.DeleteObject(tc.Ctx, &s3.DeleteObjectInput{
-						Bucket: aws.String(leg.bucket),
-						Key:    aws.String(objectKey),
-					})
-					require.NoError(t, err, "Failed to delete test object from %s", leg.bucket)
-				}
+			// Each size leaves the buckets as it found them, so the next size is
+			// measured against the same backend state as the first.
+			for _, bucket := range []string{encryptedBucket, plainBucket} {
+				_, err := tc.MinIOClient.DeleteObject(tc.Ctx, &s3.DeleteObjectInput{
+					Bucket: aws.String(bucket),
+					Key:    aws.String(objectKey),
+				})
+				require.NoError(t, err, "Failed to delete test object from %s", bucket)
 			}
 		})
 	}

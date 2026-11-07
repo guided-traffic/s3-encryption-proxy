@@ -420,15 +420,14 @@ jobs:
       # Separate step and its own package: the performance comparison contends
       # with the rest of the suite for the same MinIO when they run together,
       # which is what made the 100MB case fail inside the full run and pass on
-      # its own. It asserts nothing on throughput (ADR 0020 D11); the numbers
-      # come from the report step below.
+      # its own. This is the one performance measurement the pipeline takes
+      # (ADR 0020 D7, D22): a failing test fails the job, a throughput number
+      # never does (ADR 0020 D11). The run removes every bucket it wrote to
+      # (ADR 0020 D13) and writes the summary the next step publishes.
       - name: Run performance integration tests in isolation
         run: make test-integration-performance
         env:
           INTEGRATION_TESTS: true
-          # Each size is deleted once measured. Kept, two runs of every size up
-          # to 1GB on both legs are several GB on a runner nobody inspects.
-          CLEANUP_OBJECTS_AFTER_PERFORMANCE_TEST: "true"
 
       # The markdown the pull request shows is rendered by the measurement
       # itself and only copied here. It used to be grepped back out of the test
@@ -436,21 +435,14 @@ jobs:
       # equal-weighted mean of the per-size ratios and dropped the byte-weighted
       # numbers underneath it - a percentage that did not match the two
       # throughputs printed beside it on the same line (ADR 0020 D16).
-      - name: Run full performance tests and generate summary
+      - name: Publish the performance summary
         id: performance
         run: |
-          echo "Running full performance tests..."
-          ./performance.sh > performance_output.log 2>&1 || true
-
           SUMMARY=test-results/performance-summary.md
           TOTALS=test-results/performance-totals.env
 
           if [ -f "$SUMMARY" ]; then
-            {
-              cat "$SUMMARY"
-              echo
-              echo "📊 Full report in the [test artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})."
-            } >> $GITHUB_STEP_SUMMARY
+            cat "$SUMMARY" >> $GITHUB_STEP_SUMMARY
 
             echo "has_performance_data=true" >> $GITHUB_OUTPUT
 
@@ -470,21 +462,6 @@ jobs:
             echo "upload_ratio=0" >> $GITHUB_OUTPUT
             echo "download_ratio=0" >> $GITHUB_OUTPUT
           fi
-        env:
-          INTEGRATION_TESTS: true
-          S3_ENDPOINT: https://localhost:9000
-          PROXY_ENDPOINT: http://localhost:8080
-          CLEANUP_OBJECTS_AFTER_PERFORMANCE_TEST: "true"
-
-      - name: Upload performance report
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: performance-report
-          path: |
-            test-results/performance-report-*.md
-            test-results/performance-summary.md
-          retention-days: 30
 
       # readFileSync rather than an interpolated step output: the summary is
       # markdown and carries backticks, which would terminate the template

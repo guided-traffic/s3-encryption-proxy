@@ -37,25 +37,20 @@ itself was blocked until 2026-09-11: /metrics had stopped exporting
 `process_resident_memory_bytes` when it moved off the default registry, so D14's figure could not
 be read at all.
 
-**Corrected 2026-09-12, three items this block used to carry.** The measurement environment *is*
-cleaned, though not to the letter of D13: both comparison buckets are emptied at the start of
-every run, so the proxy leg is no longer measured against a backend that grew by the whole matrix
-on the previous run — but the emptying reads one listing page and logs a failure instead of
-failing, so it is not the "paged to the end" D13 asks for. It covers what one run writes and
-would not cover a bucket that had accumulated past a page. Nothing cleans the two comparison
-buckets *after* a run at all: the one cleanup switch that exists purges the run's own scratch
-bucket, not those two, and with it unset that scratch bucket is left behind on every run. The
-pre-run emptying is the whole of what keeps a run off the previous one's data.
+**D13 and D22 hold in continuous integration since 2026-11-07.** The integration performance
+suite removes every bucket it writes to — both comparison buckets, the streaming bucket and the
+scratch bucket each test opens — before it measures and again when it ends, whatever the outcome,
+with every object, version and open upload in them, paged to the end. A bucket still present
+afterwards fails the run. Each object is also deleted as soon as its size is measured, so every
+size meets the backend in the same state. No switch governs any of it. The pipeline runs that suite
+once, and the one run both gates the job and produces the published numbers.
 
-The second item is the runtime memory limit, and it is no longer outstanding: **it does not ship,
-decided 2026-09-12, with D15 followed as written and unamended.** D15 makes the value conditional
-on the benchmark showing a gain; the measurement shows the load never approaches the container
-limit, so there is no mechanism for a gain, and no gain means it is dropped before the release —
-which is what D15 says. Nothing in the tree sets `GOMEMLIMIT`, nothing is owed, and this block
-used to say the limit rides 5.0.0 with the storage format change. The memory bound of D14 did not
-ride it either: it was built the same day, as a test that fails on the bound rather than a number
-in a report, which the implementation block above records; this block used to say it was still
-outstanding.
+**The runtime memory limit does not ship, decided 2026-09-12, with D15 followed as written.** D15
+makes the value conditional on the benchmark showing a gain; the measurement shows the load never
+approaches the container limit, so there is no mechanism for a gain, and no gain means it is
+dropped before the release — which is what D15 says. Nothing in the tree sets `GOMEMLIMIT`, and
+nothing is owed. The memory bound of D14 is built, as a test that fails on the bound rather than a
+number in a report, which the implementation block above records.
 
 **The obligation this decision exists to enforce is met, 2026-09-11.** The after column is the
 last of the three complete runs taken that day, the second of two labelled `post-v2-wave5`, every
