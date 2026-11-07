@@ -407,6 +407,16 @@ jobs:
             done
           done
 
+      # The runner caps docker storage at 15Gi, and this job came close enough
+      # to be evicted mid-run on main (2026-11-07). Nothing builds after this
+      # point, so the build cache of the two proxy builds and the instrumented
+      # image the rebuild replaced are dead weight.
+      - name: Free the build cache
+        run: |
+          docker builder prune -af
+          docker image prune -f
+          docker system df
+
       # Separate step and its own package: the performance comparison contends
       # with the rest of the suite for the same MinIO when they run together,
       # which is what made the 100MB case fail inside the full run and pass on
@@ -416,6 +426,9 @@ jobs:
         run: make test-integration-performance
         env:
           INTEGRATION_TESTS: true
+          # Each size is deleted once measured. Kept, two runs of every size up
+          # to 1GB on both legs are several GB on a runner nobody inspects.
+          CLEANUP_OBJECTS_AFTER_PERFORMANCE_TEST: "true"
 
       # The markdown the pull request shows is rendered by the measurement
       # itself and only copied here. It used to be grepped back out of the test
@@ -425,6 +438,8 @@ jobs:
       # throughputs printed beside it on the same line (ADR 0020 D16).
       - name: Run full performance tests and generate summary
         id: performance
+        env:
+          CLEANUP_OBJECTS_AFTER_PERFORMANCE_TEST: "true"
         run: |
           echo "Running full performance tests..."
           ./performance.sh > performance_output.log 2>&1 || true
@@ -536,6 +551,11 @@ jobs:
           EOF
 
           echo "Performance badge created with upload ${UPLOAD}% and download ${DOWNLOAD}%"
+
+      # What the job left in docker storage, against the 15Gi the runner allows.
+      - name: Report docker storage
+        if: always()
+        run: docker system df
 
       - name: Cleanup test infrastructure
         if: always()

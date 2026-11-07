@@ -557,6 +557,25 @@ func TestPerformanceComparison(t *testing.T) {
 			// left for a switch to hide.
 			t.Logf("Efficiency against the direct leg - upload %.1f%%, download %.1f%%",
 				uploadEfficiency, downloadEfficiency)
+
+			// Kept for inspection unless asked otherwise, like the streaming
+			// test's objects. CI asks: every size up to 1GB on both legs, run
+			// twice, outgrows the docker storage of a runner.
+			if os.Getenv("CLEANUP_OBJECTS_AFTER_PERFORMANCE_TEST") == "true" {
+				for _, leg := range []struct {
+					client *s3.Client
+					bucket string
+				}{
+					{tc.ProxyClient, testBucket + "-encrypted"},
+					{tc.MinIOClient, testBucket + "-unencrypted"},
+				} {
+					_, err := leg.client.DeleteObject(tc.Ctx, &s3.DeleteObjectInput{
+						Bucket: aws.String(leg.bucket),
+						Key:    aws.String(objectKey),
+					})
+					require.NoError(t, err, "Failed to delete test object from %s", leg.bucket)
+				}
+			}
 		})
 	}
 

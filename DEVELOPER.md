@@ -273,8 +273,17 @@ update to that file joins the "Go toolchain" pull request
 | Semantic Release | only on a push to `main`, and only when all of the above pass |
 
 **Every job runs on the self-hosted runners, which are the stock
-`ghcr.io/actions/actions-runner` image** under Actions Runner Controller. The image carries
-the docker CLI with buildx and little else. Anything else a job needs, it installs itself:
+`ghcr.io/actions/actions-runner` image** under Actions Runner Controller, on the
+`self-hosted` pool. **Each runner there caps docker storage at 15Gi, and exceeding it gets
+the pod evicted mid-job.** Integration Tests came close enough to be evicted on `main`
+(2026-11-07), so it frees the build cache once its last image is built and deletes each
+performance object once measured (`CLEANUP_OBJECTS_AFTER_PERFORMANCE_TEST`). It reports
+`docker system df` at the end. The org's `large` pool has 30Gi, but its six runners are
+shared with the end-to-end matrix of another repository, and a release gate queued behind
+that matrix is slower than one that fits.
+
+The image carries the docker CLI with buildx and little else. Anything else a job needs, it
+installs itself:
 
 - `build-essential` and the packages specific to the job, through apt;
 - the compose plugin, at one pinned version, through
