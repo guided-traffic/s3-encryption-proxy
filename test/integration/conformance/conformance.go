@@ -37,7 +37,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/dataencryption"
 )
 
 // Environment. Everything is overridable so one binary serves both backends.

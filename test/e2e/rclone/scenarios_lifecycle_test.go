@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/guided-traffic/s3-encryption-proxy/test/e2e/harness"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/test/e2e/harness"
 )
 
 // TestR6_Lifecycle covers the bucket and object lifecycle a user

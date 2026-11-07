@@ -10,9 +10,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/monitoring"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/config"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/monitoring"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )

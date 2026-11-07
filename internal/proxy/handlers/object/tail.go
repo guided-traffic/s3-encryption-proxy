@@ -10,10 +10,10 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/orchestration"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/request"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/response"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/dataencryption"
 )
 
 // An object's end is read before its beginning (ADR 0003 D14).

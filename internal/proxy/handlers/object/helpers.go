@@ -11,12 +11,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gorilla/mux"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/monitoring"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/etag"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/monitoring"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/orchestration"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/etag"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/request"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/response"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/dataencryption"
 	"github.com/sirupsen/logrus"
 )
 

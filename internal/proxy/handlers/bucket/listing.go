@@ -6,10 +6,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/etag"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/middleware"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/etag"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/middleware"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/request"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/dataencryption"
 )
 
 // handleListObjects answers GET /{bucket} for both listing versions.

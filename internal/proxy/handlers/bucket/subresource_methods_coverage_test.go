@@ -20,8 +20,8 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/config"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/interfaces"
 )
 
 const bktBucket = "test-bucket"

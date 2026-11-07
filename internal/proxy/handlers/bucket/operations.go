@@ -8,7 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/request"
 )
 
 // handleCreateBucket handles creating a bucket (PUT /bucket)

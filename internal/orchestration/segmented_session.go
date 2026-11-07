@@ -12,7 +12,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/dataencryption"
 )
 
 // SegmentedSession is one client-driven multipart upload. The proxy owns the

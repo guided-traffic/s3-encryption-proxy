@@ -18,8 +18,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/stretchr/testify/require"
 
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
-	"github.com/guided-traffic/s3-encryption-proxy/test/integration"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/dataencryption"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/test/integration"
 )
 
 // PerformanceMetrics holds timing and throughput data

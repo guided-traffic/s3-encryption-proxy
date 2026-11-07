@@ -12,7 +12,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption"
 )
 
 const (

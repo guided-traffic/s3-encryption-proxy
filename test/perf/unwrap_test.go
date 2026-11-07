@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/keyencryption"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/keyencryption"
 )
 
 // unwrapIterations is the inner loop per repetition; a single AES unwrap is

@@ -7,7 +7,7 @@ import (
 
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/smithy-go"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/request"
 )
 
 // genericInternalMessage is the only text an internal (non-backend) failure is

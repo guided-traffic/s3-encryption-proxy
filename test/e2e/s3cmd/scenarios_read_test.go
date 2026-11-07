@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/guided-traffic/s3-encryption-proxy/test/e2e/harness"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/test/e2e/harness"
 )
 
 // corpus is what the read cases need. s3cmd cannot place either object through

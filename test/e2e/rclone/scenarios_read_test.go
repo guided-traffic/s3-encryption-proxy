@@ -11,7 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/guided-traffic/s3-encryption-proxy/test/e2e/harness"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/test/e2e/harness"
 )
 
 // corpus is the pair of objects the read cases need: one written by a single
