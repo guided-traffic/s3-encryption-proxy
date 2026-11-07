@@ -272,6 +272,21 @@ update to that file joins the "Go toolchain" pull request
 | E2E s3cmd (minio) | S1-S7, the same. Its own job, never bundled with rclone's: a red gate has to name the client, and one client's flake must not withhold the other's verdict |
 | Semantic Release | only on a push to `main`, and only when all of the above pass |
 
+**Every job runs on the self-hosted runners, which are the stock
+`ghcr.io/actions/actions-runner` image** under Actions Runner Controller. The image carries
+the docker CLI with buildx and little else. Anything else a job needs, it installs itself:
+
+- `build-essential` and the packages specific to the job, through apt;
+- the compose plugin, at one pinned version, through
+  [.github/actions/docker-compose](.github/actions/docker-compose/action.yml), in Integration
+  Tests, E2E rclone and E2E s3cmd;
+- `libatomic1`, which Node 26 links against, in
+  [.github/actions/semantic-release-toolchain](.github/actions/semantic-release-toolchain/action.yml).
+
+**A job that relies on the image for a tool breaks when the runner pool changes.** This
+happened on 2026-11-05: the jobs moved to a pool whose image has no compose plugin, and every
+job that drives the demo stack failed with `unknown shorthand flag: 'f' in -f`.
+
 ### What `main` actually enforces
 
 Fifteen checks are required on `main`, and the list is **repository
