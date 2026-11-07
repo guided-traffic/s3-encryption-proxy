@@ -11,9 +11,9 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/factory"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/config"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/factory"
 )
 
 // dekCacheCapacity bounds the LRU of decrypted DEKs. Entries are tiny (~32 B

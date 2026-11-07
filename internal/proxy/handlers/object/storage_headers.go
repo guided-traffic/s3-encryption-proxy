@@ -8,7 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/etag"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/etag"
 )
 
 // StorageAttributes carries the storage headers ADR 0007 D3 forwards unchanged.

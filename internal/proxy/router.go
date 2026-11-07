@@ -6,14 +6,14 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/monitoring"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/bucket"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/health"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/multipart"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/object"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/root"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/middleware"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/monitoring"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/handlers/bucket"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/handlers/health"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/handlers/multipart"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/handlers/object"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/handlers/root"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/middleware"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/response"
 )
 
 // setupRoutes configures the HTTP routes for the S3 API

@@ -17,8 +17,8 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/keyencryption"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/dataencryption"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/keyencryption"
 )
 
 // ErrForeignObject marks an object this proxy did not write: no encryption

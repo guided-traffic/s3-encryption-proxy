@@ -14,9 +14,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/keyencryption"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/config"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/keyencryption"
 )
 
 // ===== Fixtures and helpers (all prefixed with the OrcMeta token) =====

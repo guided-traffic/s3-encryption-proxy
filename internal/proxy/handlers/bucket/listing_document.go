@@ -4,7 +4,7 @@ import (
 	"encoding/xml"
 	"time"
 
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/response"
 )
 
 // The S3 listing documents, built explicitly rather than marshalled from the SDK

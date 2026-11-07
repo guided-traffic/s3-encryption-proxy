@@ -1,4 +1,4 @@
-module github.com/guided-traffic/s3-encryption-proxy
+module github.com/guided-traffic/s3-encryption-proxy/v5
 
 go 1.27.3
 

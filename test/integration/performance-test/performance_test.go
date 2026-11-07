@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	// Import helper functions from the main integration package
-	. "github.com/guided-traffic/s3-encryption-proxy/test/integration"
+	. "github.com/guided-traffic/s3-encryption-proxy/v5/test/integration"
 )
 
 // Performance test sizes

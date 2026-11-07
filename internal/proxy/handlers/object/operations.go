@@ -17,11 +17,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/monitoring"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/utils"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/dataencryption"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/monitoring"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/orchestration"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/request"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/utils"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/dataencryption"
 )
 
 // maxDeleteObjectsKeys is the number of keys S3 accepts in one Delete document.

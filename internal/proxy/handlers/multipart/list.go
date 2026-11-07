@@ -9,11 +9,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gorilla/mux"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/middleware"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/orchestration"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/interfaces"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/middleware"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/request"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/response"
 	"github.com/sirupsen/logrus"
 )
 

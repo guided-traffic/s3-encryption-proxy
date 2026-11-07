@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/keyencryption"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/keyencryption"
 )
 
 // The generator had no test at all, and it produces the key an operator pastes

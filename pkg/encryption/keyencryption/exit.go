@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption"
 )
 
 // ErrExitProviderKeyUse is returned when something asks the exit provider to

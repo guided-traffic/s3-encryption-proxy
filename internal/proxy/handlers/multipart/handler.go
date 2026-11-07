@@ -1,12 +1,12 @@
 package multipart
 
 import (
-	"github.com/guided-traffic/s3-encryption-proxy/internal/config"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/orchestration"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/etag"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/interfaces"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/request"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/config"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/orchestration"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/etag"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/interfaces"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/request"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/response"
 	"github.com/sirupsen/logrus"
 )
 

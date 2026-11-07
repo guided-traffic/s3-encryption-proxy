@@ -17,7 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/stretchr/testify/require"
 
-	"github.com/guided-traffic/s3-encryption-proxy/test/integration"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/test/integration"
 )
 
 // TestDEKCacheReuploadRegression covers the data-key cache of ADR 0002: it used

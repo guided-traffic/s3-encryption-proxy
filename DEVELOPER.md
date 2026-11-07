@@ -318,6 +318,27 @@ workflow does not disturb them:
 request, and branch protection counts a skipped check as passing — so requiring it
 would add a check that is always green and proves nothing.
 
+### A major release moves the module path
+
+The module path ends in the major of the release line, `/v5` for 5.x, so another
+Go module can require a release by its tag
+([ADR 0040](docs/adr/0040-the-go-module-path-carries-the-major-version.md)). The
+pull request that carries `release:major` moves it, in that pull request — a
+major tagged with the old suffix is a release no importer can require. **No check
+catches a forgotten move**; the dry run prints the version, not the path. From
+`/v5` to `/v6`:
+
+```bash
+go mod edit -module github.com/guided-traffic/s3-encryption-proxy/v6
+git grep -l '"github.com/guided-traffic/s3-encryption-proxy/v5/' -- '*.go' \
+  | xargs perl -pi -e 's#"github\.com/guided-traffic/s3-encryption-proxy/v5/#"github.com/guided-traffic/s3-encryption-proxy/v6/#g'
+go vet -tags integration,conformance,e2e,perf ./...   # every build tag, or a tagged file keeps the old path
+```
+
+Nothing else carries the path: the version stamp is `-X main.version`, and no
+script, workflow or coverage filter names the module. `tools/go.mod` is a module
+of its own and keeps its path.
+
 Read the list with:
 
 ```bash

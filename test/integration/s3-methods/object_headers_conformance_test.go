@@ -20,7 +20,7 @@ import (
 	"github.com/aws/smithy-go"
 	"github.com/aws/smithy-go/middleware"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
-	"github.com/guided-traffic/s3-encryption-proxy/test/integration"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/test/integration"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -3,8 +3,8 @@ package factory
 import (
 	"fmt"
 
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption"
-	"github.com/guided-traffic/s3-encryption-proxy/pkg/encryption/keyencryption"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/keyencryption"
 )
 
 // KeyEncryptionType represents the type of key encryption to use

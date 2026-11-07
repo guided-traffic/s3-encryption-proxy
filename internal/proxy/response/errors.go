@@ -4,7 +4,7 @@ import (
 	"encoding/xml"
 	"net/http"
 
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/middleware"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/middleware"
 	"github.com/sirupsen/logrus"
 )
 

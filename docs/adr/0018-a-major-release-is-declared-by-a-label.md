@@ -306,6 +306,7 @@ release nobody has tested end to end.
   refuses to start (removing a key is a breaking change and therefore a major)
 - ADR 0017 — Stored data compatibility is not owed; a major release may break the format
 - ADR 0019 — Integration and end-to-end tests are the product; they are never skipped
+- ADR 0040 — The Go module path carries the major version; a major's pull request moves it
 - ADR 0022 — Tickets are work lists that get archived; decisions live in ADRs
 - [CHANGELOG.md](../../CHANGELOG.md) — the generated release history, including the 4.0.0 entry
   this decision came out of

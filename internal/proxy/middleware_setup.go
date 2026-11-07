@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/handlers/object"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/middleware"
-	"github.com/guided-traffic/s3-encryption-proxy/internal/proxy/response"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/handlers/object"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/middleware"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/response"
 )
 
 // setupMiddleware sets up the middleware for the server
