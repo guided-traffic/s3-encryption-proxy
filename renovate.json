@@ -230,6 +230,18 @@
       ],
       "depNameTemplate": "helm-unittest/helm-unittest",
       "datasourceTemplate": "github-releases"
+    },
+    {
+      "description": "docker compose: the CLI plugin the jobs that drive the demo stack install, because the stock actions-runner image ships none. Moves with the GitHub Actions group by the rule below.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^\\.github/actions/docker-compose/action\\.yml$/"
+      ],
+      "matchStrings": [
+        "COMPOSE_VERSION: (?<currentValue>v\\d+\\.\\d+\\.\\d+)\\s"
+      ],
+      "depNameTemplate": "docker/compose",
+      "datasourceTemplate": "github-releases"
     }
   ],
   "packageRules": [
@@ -349,6 +361,15 @@
         "major",
         "minor",
         "patch"
+      ],
+      "groupName": "GitHub Actions",
+      "commitMessagePrefix": "chore(deps): ",
+      "automerge": true
+    },
+    {
+      "description": "The docker compose plugin is CI tooling like the actions themselves: same group, same chore prefix, so a bump releases nothing.",
+      "matchDepNames": [
+        "docker/compose"
       ],
       "groupName": "GitHub Actions",
       "commitMessagePrefix": "chore(deps): ",

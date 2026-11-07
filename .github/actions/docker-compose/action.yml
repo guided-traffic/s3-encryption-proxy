@@ -1,0 +1,40 @@
+# The docker compose CLI plugin, at one pinned version, for every job that drives
+# the demo stack: Integration Tests directly, E2E rclone and E2E s3cmd through
+# start-demo.sh.
+#
+# The self-hosted runners are the stock actions-runner image, which ships the
+# docker CLI and buildx and no compose plugin. A job that relied on the runner
+# image for it ran on whatever plugin a runner pool happened to carry, and failed
+# with "unknown shorthand flag: 'f' in -f" when the pool moved to one that carries
+# none. The plugin is therefore installed here, always, at the version below, so
+# every runner and every job runs the same one.
+#
+# The checksum is the one the release publishes next to the binary. It catches a
+# truncated or corrupted download, not a compromised release.
+name: Docker Compose plugin
+description: Install the pinned docker compose CLI plugin.
+
+runs:
+  using: composite
+  steps:
+    - name: Install docker compose
+      shell: bash
+      env:
+        # Tracked by Renovate (renovate.json, custom manager "docker compose").
+        COMPOSE_VERSION: v5.7.0
+      run: |
+        set -euo pipefail
+        case "$(uname -m)" in
+          x86_64) arch=x86_64 ;;
+          aarch64 | arm64) arch=aarch64 ;;
+          *) echo "::error::no docker compose build for $(uname -m)"; exit 1 ;;
+        esac
+        asset="docker-compose-linux-${arch}"
+        base="https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}"
+        tmp="$(mktemp -d)"
+        curl -fsSL --retry 3 -o "${tmp}/${asset}" "${base}/${asset}"
+        curl -fsSL --retry 3 -o "${tmp}/${asset}.sha256" "${base}/${asset}.sha256"
+        (cd "${tmp}" && sha256sum --check --strict "${asset}.sha256")
+        sudo install -D -m 0755 "${tmp}/${asset}" /usr/local/lib/docker/cli-plugins/docker-compose
+        rm -rf "${tmp}"
+        docker compose version
