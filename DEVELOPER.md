@@ -276,9 +276,12 @@ update to that file joins the "Go toolchain" pull request
 `ghcr.io/actions/actions-runner` image** under Actions Runner Controller, on the
 `self-hosted` pool. **Each runner there caps docker storage at 15Gi, and exceeding it gets
 the pod evicted mid-job.** Integration Tests came close enough to be evicted on `main`
-(2026-11-07), so it frees the build cache once its last image is built and deletes each
-performance object once measured (`CLEANUP_OBJECTS_AFTER_PERFORMANCE_TEST`). It reports
-`docker system df` at the end. The org's `large` pool has 30Gi, but its six runners are
+(2026-11-07), so it frees the build cache once its last image is built and measures
+performance once: one run of the performance package gates the job and produces the
+published numbers ([ADR 0020](docs/adr/0020-performance-is-measured-before-and-after.md)
+D22). Deleting test objects did not lower that peak in CI: MinIO moves a deleted object into
+its trash and frees the space only later, so what a run writes counts against the cap even
+after the test removed it. It reports `docker system df` at the end. The org's `large` pool has 30Gi, but its six runners are
 shared with the end-to-end matrix of another repository, and a release gate queued behind
 that matrix is slower than one that fits.
 
