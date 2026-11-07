@@ -438,8 +438,6 @@ jobs:
       # throughputs printed beside it on the same line (ADR 0020 D16).
       - name: Run full performance tests and generate summary
         id: performance
-        env:
-          CLEANUP_OBJECTS_AFTER_PERFORMANCE_TEST: "true"
         run: |
           echo "Running full performance tests..."
           ./performance.sh > performance_output.log 2>&1 || true
@@ -476,6 +474,7 @@ jobs:
           INTEGRATION_TESTS: true
           S3_ENDPOINT: https://localhost:9000
           PROXY_ENDPOINT: http://localhost:8080
+          CLEANUP_OBJECTS_AFTER_PERFORMANCE_TEST: "true"
 
       - name: Upload performance report
         if: always()
