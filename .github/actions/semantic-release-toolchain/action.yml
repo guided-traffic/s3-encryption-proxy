@@ -30,6 +30,19 @@ inputs:
 runs:
   using: composite
   steps:
+    # Node 26 links libatomic.so.1 dynamically, and the stock actions-runner image
+    # the self-hosted runners use does not ship it: setup-node's own check of the
+    # binary it extracted fails with exit code 127, "Node may not be installed".
+    # It surfaced when lts/* moved from 24 to 26. Skipped where the library exists.
+    - name: Install the Node runtime library the runner image lacks
+      shell: bash
+      run: |
+        set -euo pipefail
+        if ! ldconfig -p | grep 'libatomic\.so\.1 ' >/dev/null; then
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libatomic1
+        fi
+
     - name: Setup Node.js
       uses: actions/setup-node@v7
       with:
