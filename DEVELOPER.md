@@ -279,9 +279,9 @@ the pod evicted mid-job.** Integration Tests came close enough to be evicted on 
 (2026-11-07), so it frees the build cache once its last image is built and measures
 performance once: one run of the performance package gates the job and produces the
 published numbers ([ADR 0020](docs/adr/0020-performance-is-measured-before-and-after.md)
-D22). Deleting test objects did not lower that peak in CI: MinIO moves a deleted object into
-its trash and frees the space only later, so what a run writes counts against the cap even
-after the test removed it. It reports `docker system df` at the end. The org's `large` pool has 30Gi, but its six runners are
+D22). A delete does not free storage at once: MinIO moves a deleted object into its trash
+and frees the space later, so what a run writes counts against the cap for a while after the
+test removed it. It reports `docker system df` before the performance run and at the end. The org's `large` pool has 30Gi, but its six runners are
 shared with the end-to-end matrix of another repository, and a release gate queued behind
 that matrix is slower than one that fits.
 
