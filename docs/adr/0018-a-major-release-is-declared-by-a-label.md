@@ -2,64 +2,46 @@
 
 ## Status
 
-**Accepted.** Date: 2026-09-07.
+**Accepted.** Date: 2026-09-16.
 
-Implemented today: releases are cut automatically from the `main` branch, the version is
-derived from the Conventional Commits headers and footers of the commits that reach it, the
-changelog and the GitHub release are generated per commit, and the release step runs only after
-the full check set — malware scan, static security scan, vulnerability check, lint, unit tests,
-the unit suite under the race detector, the chart's lint, render and unit-test job, integration
-tests over both the plain-HTTP and the TLS endpoint, the combined coverage report, the
-conformance suite against MinIO and LocalStack and the Velero end-to-end suite — is green.
+Implemented: releases are cut automatically from the `main` branch, the version is derived from
+the Conventional Commits headers and footers of the commits that reach it, the changelog and the
+GitHub release are generated per commit, and the release step runs only after the full check set
+— malware scan, static security scan, vulnerability check, lint, unit tests, the unit suite under
+the race detector, the chart's lint, render and unit-test job, integration tests over both the
+plain-HTTP and the TLS endpoint, the combined coverage report, the conformance suite against MinIO
+and LocalStack, and the Velero, rclone and s3cmd end-to-end suites — is green. Every release
+attaches the built binaries and the coverage artefacts and commits the changelog and the coverage
+badge to `main`.
 
-**Corrected 2026-09-12: the release step has published nothing since 2026-09-09.** The job that
-releases builds the attached binaries through the Makefile, and it was the one job driving the
-Makefile without installing `make` on the runner. The gates passed, the job started, and it died
-at the binary build with the release step never reached: the newest tag is 4.0.3 while a
-releasable `fix` commit has been on `main` since. The missing step is added on the 5.0.0 branch
-and cannot be proven before it reaches `main`, because the release job runs only on a push there.
-D1's "every push that passes the gates is a candidate release" held for the gates and not for the
-publish, and no pull request could have shown it.
+Implemented: the guard of D3 and D4 and the dry run of D6, as one pull-request job,
+`Semantic-Release (dry run)`, in which the marker inspection is a step rather than a check of its
+own. It is a required check on `main`.
 
-Also implemented: the guard of D3 and D4. A check runs on every pull request into
-`main` and fails when a breaking marker is present without the `release:major` label. It reads
-three sources, because a merge commit and a squash merge hand the release analyser different text:
-the commits the pull request adds, the pull-request title, and the pull-request body. Its marker
-patterns are deliberately wider than the analyser's own — case insensitive, and not requiring the
-space the parser wants after the colon — because over-reporting costs a label that was not needed
-and under-reporting costs a major release, and only one of those can be taken back. It was verified
-by replaying the 2026-09-07 accident: over the forty-three commits of the pull request that
-produced 4.0.0, the check reports the two breaking commits and nothing else.
+**The marker inspection** fails when a breaking marker is present without the `release:major`
+label. It reads three sources, because a merge commit and a squash merge hand the release analyser
+different text: the commits the pull request adds, the pull-request title, and the pull-request
+body. Its marker patterns are deliberately wider than the analyser's own — case insensitive, and
+not requiring the space the parser wants after the colon — because over-reporting costs a label
+that was not needed and under-reporting costs a major release, and only one of those can be taken
+back. It was verified by replaying the 2026-09-07 accident: over the forty-three commits of the
+pull request that produced 4.0.0, the check reports the two breaking commits and nothing else.
 
-**Amended 2026-09-09:** D6 becomes a machine check — a dry run of the release tool on every pull
-request into `main` prints the computed next version and is compared with the label — and D11
-settles the previous line: nothing before the major receives another release. The dry run is
-implemented with this amendment: a pull-request workflow runs the release tool in dry-run mode
-on the pull request branch and, as it stood then, failed on either direction of a disagreement;
-the merge of 2026-09-11 narrowed that to the half described below.
+**Neither step subsumes the other.** The dry run reads the commits and would not notice a marker
+that exists only in the pull-request title or body — which is the text a squash merge puts on
+`main`. The marker inspection reads all three sources and computes no version, so it would not
+notice a release configuration that no longer loads. Both verdicts run on every pull request, and
+the marker step runs even when the dry run has already failed, because it is the step that says
+which marker caused it.
 
-**Amended 2026-09-11: D3's guard and D6's dry run are one job, not two workflows.** They had grown
-into two pull-request checks that read as duplicates of each other, and a contributor cannot be
-expected to know which is which. They are now `Semantic-Release (dry run)`, one workflow with one
-job, in which the marker inspection is a step rather than a check of its own.
-
-**Neither check was dropped in the merge, because neither subsumes the other.** The dry run reads
-the commits and would not notice a marker that exists only in the pull-request title or body —
-which is the text a squash merge puts on `main`. The marker inspection reads all three sources
-and computes no version, so it would not notice a release configuration that no longer loads.
-Both verdicts still run on every pull request, and the marker step runs even when the dry run has
-already failed, because it is the step that says which marker caused it.
-
-One behaviour is deliberately preserved rather than simplified away: the dry run is
-same-repository only — a fork's token is read-only, so the release tool fails at its own push
-check before analysing anything — while **the marker inspection runs for forks too**. Putting the
-fork condition on the job rather than on the steps would have left a fork pull request with no
-guard at all. It takes **two checkout steps**, and the first attempt at this merge got it wrong:
-the head branch can be checked out by name only for a same-repository pull request, because that
-name is resolved in this repository and a fork's branch does not exist here. The fork path takes
-the merge ref instead, which is what the deleted breaking-change workflow used for every pull
-request. Pointing the checkout at the fork's repository would have fetched fork-controlled code
-onto a self-hosted runner, which is a worse trade than skipping the dry run.
+The dry run is same-repository only — a fork's token is read-only, so the release tool fails at
+its own push check before analysing anything — while **the marker inspection runs for forks
+too**. The fork condition sits on the steps, not on the job, so a fork pull request is never left
+with no guard. The job takes **two checkout steps**: the head branch can be checked out by name
+only for a same-repository pull request, because that name is resolved in this repository and a
+fork's branch does not exist here, so the fork path takes the merge ref instead. Pointing the
+checkout at the fork's repository would fetch fork-controlled code onto a self-hosted runner,
+which is a worse trade than skipping the dry run.
 
 **The two steps judge different halves of the disagreement, and only one half fails.** A computed
 major *without* the label is the 2026-09-07 accident and the commits alone are enough to refuse
@@ -67,19 +49,17 @@ it, so the dry run fails. The label *without* a computed major is not an acciden
 happen — the worst it produces is a needless label — and the dry run cannot judge it, because it
 reads only the commits while the marker may live in the title or body a squash merge puts on
 `main`. It warns there and leaves the verdict to the marker inspection, which reads all three
-sources. Before the merge this cost nothing, because the dry run was not a required check; with
-one gate it would have turned a correctly declared squash-merge major red.
+sources. Failing there would turn a correctly declared squash-merge major red.
 
-**What the merge costs, stated rather than discovered later.** The gate now depends on the npm
-registry and on semantic-release running at all: an outage reds a check that used to be
-network-free, and there is no way around that while both questions share one job. And `edited`
-now re-runs the whole npm path on every title or body change, cancelling the in-flight run,
-because one workflow means one concurrency group.
+**What one job costs.** The gate depends on the npm registry and on semantic-release running at
+all: an outage reds the check, and there is no way around that while both questions share one
+job. And `edited` re-runs the whole npm path on every title or body change, cancelling the
+in-flight run, because one workflow means one concurrency group.
 
-**Amended 2026-09-16: what "a client-visible answer" in D5 means is decided by ADR 0036.** It is
-the acceptance of a request and the shape of a success. The status code, the error code, the
-class and the wording of a refusal, and a header the proxy adds, are corrections: they never
-carry the marker and never wait for a major. D5's wording and the guard are unchanged.
+Implemented: the release-notes rules of D10 — a breaking note counts only when it is a real footer
+on a commit type that releases something, and the notes of any `x.0.0` open with the compatibility
+banner — and D11: the 5.0.0 notes state that 4.0.x and every earlier line receive no further
+releases, and none has been cut since.
 
 ## Context
 
@@ -103,7 +83,7 @@ release a major from reached `main` with its individual commits intact.
 The cost was real. The 4.x line was the number reserved for a planned bundle of breaking changes —
 a new storage format, a configuration cleanup, a set of client-visible corrections — none of which
 had been written yet. A published tag cannot be withdrawn, so the number is spent: the bundle
-moves to 5.0.0, and 4.0.x keeps taking patches until it ships.
+became 5.0.0.
 
 The obvious fix — allow only squash merges, so one pull request becomes one commit and one
 changelog entry — was weighed and rejected on evidence from the same week. The release cut from a
@@ -137,19 +117,19 @@ are never softened to route around the guard; the label is what controls the rel
 is what describes the change. *A client-visible answer* is the acceptance of a request and the shape of a
 success (ADR 0036 D4); a corrected refusal or an added header is not one.
 
-**D6** (amended 2026-09-09; merged with D3's guard into one job 2026-09-11). On every pull request into `main`, a dry run of the release tool
-computes the next version from the pull request's commits and prints it on the check. This gate
-runs on pull requests only, and it writes no tag, no changelog and no release. The release job
-on `main` runs a dry run of its own before it builds the binaries, to learn the version it is
-about to cut so they carry it rather than the previous tag; that one is not a gate and never
-fails the release. A computed major without the label fails the check. The reverse — the label
-with no computed major — only warns, because the dry run reads the commits alone while the marker
-may live in the pull-request title or body that a squash merge puts on `main`; the marker
-inspection of the same job is what judges that half. The final merge of a major is made against
-the number the pull-request check printed, not against a reading of the commits. What the release
-step finally reads is the merge or squash message on `main`; the guard of D3 keeps it in agreement
-with the commits the dry run analysed.
-A tag that comes out wrong cannot be taken back.
+**D6.** On every pull request into `main`, a dry run of the release tool computes the next
+version from the pull request's commits and prints it on the check. The dry run and the marker
+inspection of D3 are one job. This gate runs on pull requests only, and it writes no tag, no
+changelog and no release. The release job on `main` runs a dry run of its own before it builds
+the binaries, to learn the version it is about to cut so they carry it rather than the previous
+tag; that one is not a gate and never fails the release. A computed major without the label fails
+the check. The reverse — the label with no computed major — only warns, because the dry run reads
+the commits alone while the marker may live in the pull-request title or body that a squash merge
+puts on `main`; the marker inspection of the same job is what judges that half. The final merge of
+a major is made against the number the pull-request check printed, not against a reading of the
+commits. What the release step finally reads is the merge or squash message on `main`; the guard
+of D3 keeps it in agreement with the commits the dry run analysed. A tag that comes out wrong
+cannot be taken back.
 
 **D7.** Breaking changes are collected on one long-lived branch and released as a single major.
 Each unit of work is its own pull request into that branch, squash-merged with a Conventional
@@ -170,30 +150,27 @@ in the release itself rather than in an external document. They are assembled fr
 footers of the commits the release contains, which is why those footers are written for an
 operator to read.
 
-**Amended 2026-09-14, after rendering the 5.0.0 notes before cutting them.** D10 holds only
-while a footer means what it says, and twice it did not. A note keyword matches
-case-insensitively and its colon is optional, so a commit whose body opened *"Breaking Change
-Guard and Version Dry Run had become..."* was read as a breaking note and injected into the
-release headless, mid-sentence. And a breaking marker on a commit that releases nothing —
-`test`, `ci`, `docs`, `chore`, `style`, `build` — was rendered as a product break: two of them
-announced that the test suites were failing and that `main` could not be merged into, which was
-true on the day they were written and false at the cut. Both are now filtered when the notes are
-generated: a note counts when its keyword is a real footer, written with its colon, and when it
-sits on a commit type that releases something. D5's definition is what makes the second rule
-safe — a break is stored data, an existing configuration or a client-visible answer, and none of
-those is what a test or a pipeline change moves. The marker stays on the commit either way, so
-D3's guard on the pull request sees it as before; what changes is only what reaches an operator.
+That holds only while a footer means what it says, so a note counts only when its keyword is a
+real footer, written with its colon, and when it sits on a commit type that releases something.
+A note keyword matches case-insensitively and its colon is optional to the parser, so a body that
+merely opens with the words *Breaking Change* would otherwise be injected into the release
+headless, mid-sentence. And a breaking marker on a commit that releases nothing — `test`, `ci`,
+`docs`, `chore`, `style`, `build` — would otherwise be rendered as a product break, announcing the
+state of a test suite or a pipeline on the day the commit was written. D5's definition is what
+makes the second rule safe — a break is stored data, an existing configuration or a
+client-visible answer, and none of those is what a test or a pipeline change moves. The marker
+stays on the commit either way, so D3's guard on the pull request sees it; the filter changes only
+what reaches an operator.
 
-**Amended 2026-09-14: a major's notes open with the compatibility statement.** This project's
-majors break the stored format by policy (ADR 0017), so the sentence an operator has to read
-first is that objects written by an earlier release cannot be read. Assembled from footers it
-landed where the sort put it — in the 5.0.0 render, 350 lines into the breaking-change list. It
-is now a banner at the top of the notes for any `x.0.0`, above the metrics and above every
-section.
+The notes of any `x.0.0` open with the compatibility statement, as a banner above the metrics and
+above every section. This project's majors break the stored format by policy (ADR 0017), so the
+sentence an operator has to read first is that objects written by an earlier release cannot be
+read; assembled from footers, it would land wherever the sort put it, hundreds of lines into the
+breaking-change list.
 
-**D11** (added 2026-09-09). The release line before a major receives no further releases of any
-kind once the major is out — no security patches, no fixes, no backports. 4.0.x and everything
-before it are end-of-life at the 5.0.0 release; there is one supported line, the newest. No
+**D11.** The release line before a major receives no further releases of any kind once the major
+is out — no security patches, no fixes, no backports. 4.0.x and everything before it are
+end-of-life since the 5.0.0 release; there is one supported line, the newest. No
 deployment is known on the old lines, and the old format is one the product no longer describes
 as fit for an untrusted backend (ADR 0003), so keeping it alive would be work spent on a state
 the product has left.
@@ -223,8 +200,8 @@ accepted when the gate was introduced and is accepted again here.
 
 Version 4.0.0 exists and contains none of the changes the 4.x number was reserved for. Anyone
 reading the version history will find a major release whose breaking-changes section lists two
-configuration corrections and nothing of the bundle the number was held for. The bundle is 5.0.0, and objects written by 4.0.x are as unreadable under the
-next storage format as objects written by 3.x.
+configuration corrections and nothing of the bundle the number was held for. The bundle is 5.0.0,
+and objects written by 4.0.x are as unreadable under its storage format as objects written by 3.x.
 
 ## Alternatives Considered
 
@@ -256,13 +233,13 @@ release nobody has tested end to end.
 - **A pull request can edit the guard that judges it.** A pull-request check runs the workflow as
   it exists in the merge of the pull request into the base branch, so a branch that modifies the
   guard is judged by its own version of it. The guard therefore raises the cost of an accidental
-  major; it does not survive a deliberate one. Review of changes to the check, and a branch
-  protection rule that requires it, are what close that — neither is configured in the repository
-  settings by this decision.
+  major; it does not survive a deliberate one. Review of changes to the check is what closes
+  that. The check is required on `main`, but a required check is still the branch's own version
+  of it, and no rule requires a review of a change to it.
 - **A repository administrator can merge past a failing check.** The guard raises the cost of an
   accidental major; it does not make one impossible.
-- **Still unverified, but no longer load-bearing: whether a breaking footer inside a branch commit
-  can reach the analyser through a squash body.** It was never tested against the parser this
+- **Unverified, and not load-bearing: whether a breaking footer inside a branch commit can reach
+  the analyser through a squash body.** It was never tested against the parser this
   repository actually runs. The guard makes the answer stop mattering by inspecting the commits,
   the title and the body together, so every text a squash or a merge can turn into the analysed
   message is judged the same way.
@@ -272,33 +249,26 @@ release nobody has tested end to end.
   deterministic so far — thirteen of thirteen scenarios, twice, once from a freshly created
   cluster — and the agreement is to revisit after ten CI runs if that changes. The revisit would
   make the suite deterministic again, not weaken the gate.
-- **Settled 2026-09-09: the dry run of D6 is the automated check.** What remains: it analyses the
-  pull request's commits, while the release step reads the squash or merge message on `main`;
-  the guard of D3 is what keeps the two from disagreeing, and a pull request merged past a red
-  check by an administrator can still produce a version the dry run did not print.
+- **The dry run of D6 and the release step read different text.** The dry run analyses the pull
+  request's commits, while the release step reads the squash or merge message on `main`; the
+  guard of D3 is what keeps the two from disagreeing, and a pull request merged past a red check
+  by an administrator can still produce a version the dry run did not print.
 - **The dry-run job holds a token that can push.** The release tool verifies push access with a
   dry-run push before it analyses a single commit, even in dry-run mode, so the check runs with
   write access to the repository contents on same-repository pull requests; a fork's read-only
   token skips it. Nothing in the run pushes. The exposure is a dependency executed before review
   with that token. Accepted: the release step runs the same packages with a broader token one
   step later, install scripts are disabled, and registry signatures are checked.
-- **Settled 2026-09-09: the release configuration is one file, and it recognises the `!`
-  shorthand.** The dry run's own test found that the release tool loaded the `release` block of
-  the package manifest, which shadowed the dedicated configuration file; under the loaded
-  configuration only a `BREAKING CHANGE` footer produced a major, the release attached no
-  binaries, and the coverage badge on `main` was written by the release job and never
-  committed. The manifest block is gone, the dedicated file is a script that reads the
-  release-notes template from disk, the preset it names is installed and pinned to the
-  generation the release tool is built on, and the release job builds the binaries it attaches.
-  Verified against a mirror: `feat!:` and a `BREAKING CHANGE` footer both compute a major, a
-  `fix:` computes a patch, and the notes render. What stays open, and is now an observed failure
-  rather than an untested path (2026-09-12): the first real release under the new configuration
-  has still not run. Of the four pushes to `main` since it landed, three reached the release job
-  and failed at the binary build — the release step skipped, so the asset upload and the badge
-  commit have not been exercised once — and the fourth was cancelled by the push that followed
-  it.
-- **Settled 2026-09-09: 4.0.x and earlier are end-of-life at 5.0.0 (D11).** No patches of any
-  kind. The release notes of 5.0.0 say so.
+- **The release configuration is one file, and a second one would shadow it.** The release tool
+  loads a `release` block of the package manifest before the dedicated configuration file, and
+  under such a block only a `BREAKING CHANGE` footer produces a major and the release attaches no
+  binaries. There is no such block: the configuration is one script that reads the release-notes
+  template from disk, the preset it names is installed and pinned to the generation the release
+  tool is built on, and it recognises the `!` shorthand — `feat!:` and a `BREAKING CHANGE` footer
+  both compute a major, a `fix:` computes a patch. A manifest block added later would silently
+  take precedence again.
+- **4.0.x and earlier are end-of-life (D11).** No patches of any kind; the release notes of 5.0.0
+  say so.
 
 ## References
 
