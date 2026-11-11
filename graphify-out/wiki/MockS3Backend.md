@@ -2,7 +2,7 @@
 
 > God node · 64 connections · `internal/proxy/handlers/bucket/test_helpers_test.go`
 
-**Community:** [MockS3Backend Object Operations](MockS3Backend_Object_Operations.md)
+**Community:** [S3 Backend Mock](S3_Backend_Mock.md)
 
 ## Connections by Relation
 
@@ -25,14 +25,14 @@
 - .PutBucketLifecycleConfiguration() `EXTRACTED`
 - .DeleteBucketLifecycle() `EXTRACTED`
 - .GetBucketReplication() `EXTRACTED`
-- .PutBucketReplication() `EXTRACTED`
 - .DeleteBucketReplication() `EXTRACTED`
 - .GetBucketWebsite() `EXTRACTED`
-- .PutBucketWebsite() `EXTRACTED`
 - .DeleteBucketWebsite() `EXTRACTED`
 - .GetBucketAcl() `EXTRACTED`
 - .GetBucketAccelerateConfiguration() `EXTRACTED`
-- .PutBucketAccelerateConfiguration() `EXTRACTED`
+- .GetBucketRequestPayment() `EXTRACTED`
+- .ListBuckets() `EXTRACTED`
+- .HeadBucket() `EXTRACTED`
 - *…and 42 more `method` connection(s) not listed (lowest-degree first to go)*
 
 ---

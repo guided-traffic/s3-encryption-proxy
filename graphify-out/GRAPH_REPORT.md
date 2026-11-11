@@ -1,1105 +1,1287 @@
-# Graph Report - s3-encryption-proxy  (2026-10-07)
+# Graph Report - s3-encryption-proxy  (2026-11-11)
 
 ## Corpus Check
-- 460 files (77 re-extracted in this update) · ~819,504 words
-- Verdict: corpus is large enough that graph structure adds value.
+- Large corpus: 464 files · ~817,456 words. Semantic extraction will be expensive (many Claude tokens). Consider running on a subfolder.
 
 ## Summary
-- 5280 nodes · 15593 edges · 300 communities (186 shown, 114 thin omitted)
-- Extraction: 87% EXTRACTED · 13% INFERRED · 0% AMBIGUOUS · INFERRED: 1983 edges (avg confidence: 0.85)
-- Token cost: 1,210,782 input · 0 output
+- 6319 nodes · 22391 edges · 312 communities (231 shown, 81 thin omitted)
+- Extraction: 89% EXTRACTED · 11% INFERRED · 0% AMBIGUOUS · INFERRED: 2520 edges (avg confidence: 0.83)
+- Token cost: 1,022,683 input · 0 output
 
 ## Community Hubs (Navigation)
-- Object GET Coverage Tests
-- Changelog and Project Front Page
-- Velero E2E Backup Suite
-- Multipart Handler Coverage Tests
-- Bucket Handler Error Fixtures
-- Bucket ACL and Accelerate Handlers
-- ADR Web: Auth, Checksums, Config
-- DEK Cache and Provider Manager
-- Checksum and ETag Echo Tests
-- SigV4 Header and Presign Tests
-- Streaming Integration Test Harness
-- Storage Format Integrity Guarantees
-- Config Accessors and Dashboard Contract
-- Hostile Backend and Key Material ADRs
-- MockS3Backend Tagging and Policy
-- Multipart Part Layout Decisions
-- Object Response Header Helpers
-- Orchestration Manager Coverage
-- MockS3Backend Object Operations
-- Release and Test Discipline ADRs
-- Integration Corpus Seed and Budget
-- AWS-Chunked Reader Tests
-- Segment Encrypt Reader Tests
-- Forward-or-Refuse Response Rules
-- Keygen and KEK Factory
-- Proxy Server Lifecycle Tests
+- Handler Core and Entry Points
+- Shutdown and Test Contexts
 - Bucket Sub-Resource Handlers
-- Encryption Mode Proxy Instances
-- Filename Encryption Design
-- Request Parser and Framing Tests
-- Filename Encryption Pass Engine
+- Multipart Checksum Answers
+- Object Checksum and Tagging Tests
+- ADR Corpus and Release History
+- Velero E2E Suite
+- Bucket Handler Tests
+- Sub-Resource Handler Tests
+- Key Hierarchy and Threat Rules
+- Object Checksum Agreement Tests
+- Perf Harness and Report
+- Monitoring and Licence Removal
+- Multipart Handlers and Manager
+- Streaming Integration Helpers
+- Request Middleware Plumbing
+- Segment Codec and Range Planner
+- Release Process and Doc Homes
+- Integrity and Tail-First Read
+- Client Library and Storage Format
+- Configuration Loading
+- S3 API Behaviour
+- DeleteObjects Handling
+- Tampering Harness
+- Request Documents and Owner Guard
+- Chunked Encoding Tests
+- Key Material and Deployment Secrets
+- Exit Provider and Session Lifecycle
+- S3 Backend Mock
+- In-Process Provider Instances
+- Paid Conformance Workflow
+- Checksum Verifier
+- Renovate Configuration
+- Planned Work: SSE-C and HA
+- Server and Listings
+- Keygen and Encrypt Readers
+- Conformance Suite
+- Router and Middleware Setup
+- AES TLS Example Config
+- Error Mapping
+- Delete and Checksum Integration
+- Config Types and Monitoring Plan
+- SigV4 Authentication Rules
+- Whole-Object Read Window
 - Segmented Session Tests
-- Encryption-at-Rest Assertions
-- Multipart Handler Wiring
-- Transfer Bounds and Shutdown
-- Multipart Conformance Suite
-- Performance Harness Shell Script
-- Segmented Manager Streaming IO
-- Segmented Session Lifecycle
-- Ranged Read and Passthrough Tests
-- MockS3Backend Multipart Operations
-- rclone E2E Suite
-- ListObjects Conformance Fixtures
-- DeleteObjects Coverage Tests
-- Bucket XML Document Types
-- Configuration Struct and Accessors
-- Config Loading Coverage Tests
-- Monitoring Test Imports
-- Integration Failing Writer Fixtures
-- Bucket Location and Logging Tests
-- XML Document Marshalling
-- Renovate Dependency Configuration
-- CI Pipeline and Renovate Jobs
-- Bucket Sub-Resource Handler Registry
-- Segmented GCM Reader and Writer
-- Health Probes and Request Tracker
-- Checksum Verifier Tests
-- DeleteObjects Batch Documents
-- Bucket CORS Handler
-- Service TLS and Operator Certificates
-- Semantic Release Toolchain
-- Config Env Var Expansion
-- Performance Baselines and Findings
-- MockS3Backend Listing and Upload Stubs
-- Error Mapping Coverage Tests
-- License Tool
-- Helm ConfigMap and Deployment
-- Multipart Handler Constructors
-- Object Dispatch Coverage Tests
-- ListBuckets Coverage Tests
-- S3 Error Mapping
-- MockS3Backend Abort and ACL Stubs
-- Segment Seal and Open Internals
-- Object Metadata Coverage Tests
-- E2E At-Rest Assertions
-- s3cmd E2E Suite
-- Performance Test Client
-- Config Defaults and Provider Loading
-- Monitoring Middleware Tests
-- Object Listing Handler
-- Documentation Homes and Ticket Lifecycle
-- Validation
-- Multipart ListParts Handler
-- Integration Test Imports
-- aws-chunked Streaming Decoder
-- Health Probe Handler
-- Harness
-- Configuration
-- Copy and Delete Object Handlers
-- Vault Transit KEK Provider (parked)
-- Subresource Documents
-- Exec
-- Performance
-- Backend Call Observation
-- ETag Marker Codec
-- S3 Error Document Writer
-- Main
-- Client E2E Verdicts
-- Backend
-- Metrics
-- Checksum
-- Logger
-- HTTP Middleware Coverage Tests
-- Testing
-- Monitoring
-- Segment Tamper
-- Integration Test Layers
-- Object Sub-Resource Documents
-- Streaming Upload and Sealed Checksum
-- Object Sub-Resource Dispatch
-- Range Conformance
-- Demo Stack and Integration Jobs
-- Backend Client
-- Cryptofloor
-- Types
-- Monitoring Status Endpoint
-- Authentication Integration Tests
-- Crc64nvme
-- Validator
-- Conformance Run
-- Entity Tag Marker
-- License Loading
-- Server
-- Values Proxy
-- Subresource Chunked Body
-- Bucket Notification Documents
-- Error Conventions
-- Upload Length Guards and Exit Provider
-- ListBuckets Root Handler
-- CORS Middleware and SSE-C Stripping
-- Encryption Validation Helper
-- License Expiry Handling
-- Readme
-- Conditional Requests
-- Compare
-- Segmented GCM Range Reader
-- Streaming Aws Decoder
-- Integrity Operator Notes
-- Monitoring Hijack Middleware
-- Requestid
-- Install
-- Pprof
-- Report
-- E2E Harness Backend Client
-- Abandoned Upload Sweeper
-- Shutdown Order and Probes
-- Short-Part Budget and Memory
-- Client-Driven Multipart Paths
-- Storage Format Invariants
-- Segmented GCM
-- Router
-- Object Handler Dependencies
-- Segmented GCM Part
-- Renovate Automerge Settings
-- GET Copy Benchmarks
-- E2E Harness Environment
-- Smallobject
-- S3 Method Error Mapping Tests
-- Shutdown
-- Listing Document
-- Bucket Versioning Handler
-- Prometheusrule
-- Performance Measurement Rules
-- Default Config
-- Bucket Replication Handler
-- Multipart Checksum Echo Tests
-- Logging Middleware
-- Pipeline
-- Default
-- Golangci Lint Configuration
-- Bucket CORS Documents
-- Integrity Failure Reporting
-- Multipart Complete Handler
-- Rclone
-- Monitoring Dashboard Contract
-- Metadata
-- E2e Up
-- Throughput
-- Bucket Replication Documents
-- Keygen Command
-- Check Breaking Changes
-- ACL
-- License Validator Runtime
-- Etag Marker
-- Payload Hash Verification Tests
-- Rangeread
-- Renovate Presets
-- rclone E2E Bring-Up
-- s3cmd E2E Bring-Up
-- Values Velero
-- Bucket Policy
-- Constants
-- Strict Configuration Loading
-- Authentication Error Messages
-- Monitoring HTTP Server
-- Bucket Lifecycle Handler
-- Multipart Counting Readers
-- AES KEK Vector Tests
-- Perf Stack Detection
-- Push
-- S3 API
-- Middleware Non-Flusher Stub
-- AES Example Configs
-- Monitoring Backend Stub
-- Monitoring Failing Body Stub
-- Multipart
-- Object Broken Reader Stub
-- Object Error Reader Stub
-- Exit Provider Example Config
-- Multi-Provider Rotation Config
-- Chart
-- Request Memory Bounds
-- Conformance Corpus Keys
-- Known-Failure Manifest Rejected
-- Target-Behaviour Test Rule
-- Pre-Signed URL Limits
-- Security Page Form
-- Version Dry Run
-- Segmented Part Sealing
-- Multipart Error Reader Stub
-- E2e Down
-- s3cmd E2E Tear-Down
-- Velero E2E Tear-Down
-- Kind Config
+- Segment Seal and Trailer
+- AES Example Config
+- Backend Interface Calls
 - Renovate Workflow
-- Certificate
-- Grafana Dashboard
-- Upload Forwards While Receiving
-- Overlapped Receive and Send
-- Retriable Part Copy
-- Exit Provider Needs No Licence
-- Exit Provider Decision
-- Exit Provider Read Path
-- Exit Provider Write Path
-- Provider None Refused
-- Exit Provider Start Warning
-- Chart existingSecret Arm
-- Chart Certificate DNS Names
-- Manual clusterDomain
-- Ingress Kept
-- Probe Scheme Derivation
-- Render-Time Refusals
-- serviceTLS Values Block
-- Expected Bucket Owner Unenforced
-- CRC32C, Not the Entity Tag
-- Cooperating Proxies Are Code
-- Location Names the Proxy
-- Compromised Proxy Impact
+- Backend TLS Trust
+- CORS and Middleware
+- Semantic-Release Dry Run
+- ListObjects Conformance
+- Exit Example Config
+- Encryption At Rest Tests
+- GET Response Writing
+- Performance and Test Docs
+- Multipart Conformance
+- Release Tooling
+- DeleteObjects Conformance
+- PrometheusRule Chart Tests
+- Development Chart Values
+- Manager Tests
+- Multi-Provider Example Config
+- Filename Encryption Ticket
+- Image Push Workflow
+- Test Pipeline Workflow
+- s3cmd E2E Suite
+- Bucket Sub-Resource Documents
+- Bucket XML Documents
+- S3 Methods: Sealed Checksum Test
+- Request: Parser Test
+- Storedobject: Storedobject
+- Misc
+- Middleware: S3Auth Robust
+- Orchestration: Providers Coverage Test
+- Orchestration: Segmented Session
+- Object: Metadata Coverage Test
+- Request: Streaming Decoder Coverage Test
+- S3 Encryption Proxy: Values
+- Object: Storage Headers
+- Tests: Deployment Test
+- Health: Handler Coverage Test
+- Keyencryption: Aes Test
+- Harness: Atrest
+- Orchestration: Providers
+- Adr: 0039 The Analysis Tools Move With The Go Toolchain
+- Factory: Factory
+- Workflows: Renovate Assign On Failure
+- Rclone: Rclone Test
+- Monitoring: Server Coverage Test
+- Config: Default
+- Semantic Release Toolchain: Action
+- S3 Methods: Range Conformance Test
+- Start Demo
+- Orchestration: Providers Coverage Test (2)
+- Workflows: Test Pipeline
+- Monitoring: Backend Test
+- Middleware: S3Auth Presigned Test
+- Etag: Etag
+- Config: Config
+- Tests: Deployment Test (2)
+- Perf: Compare
+- Manifests: Minio
+- S3Enc: Helpers Test
+- S3 Encryption Proxy: Chart
+- Workflows: Test Pipeline (2)
+- S3Enc: Client
+- Harness: Exec
+- S3 Encryption Proxy: Values (2)
+- Docker Compose Demo
+- Docker Compose Demo (2)
+- Monitoring: Backend
+- Golangci
+- Manifests: Minio (2)
+- Bucket: Subresource Documents
+- S3 Encryption Proxy: Values (3)
+- Docker Compose Demo (3)
+- Docker Compose Demo (4)
+- Request: Checksum
+- Bucket: Subresource Documents (2)
+- Bucket: Subresource Documents (3)
+- Tickets: 025 Tink Kms Hcvault
+- Monitoring: Metrics Coverage Test
+- Monitoring: Status
+- Docker Compose Demo (5)
+- Docker Compose Demo (6)
+- Workflows: Test Pipeline (3)
+- Integration: Encryption Validation Helper
+- Velero: Kind Config
+- Manifests: Minio (3)
+- Helm: Install
+- S3 Encryption Proxy: Values (4)
+- S3 Encryption Proxy: Values (5)
+- S3 Encryption Proxy: Values Production
+- S3 Encryption Proxy: Values Production (2)
+- Docker Compose Demo (7)
+- Docker Compose: Action
+- Workflows: Push
+- Workflows: Test Pipeline (4)
+- Multipart: Xml
+- Velero: Values Velero
+- Velero: Values Velero (2)
+- Scripts: Coverage Summary
+- S3 Encryption Proxy: Values (6)
+- S3 Encryption Proxy: Values Monitoring
+- Workflows: Test Pipeline (5)
+- S3 Methods: Conditional Requests Test
+- Scripts: Conformance Run
+- Harness: Backend
+- Velero: E2E Up
+- Manifests: Minio (4)
+- Velero: Values Velero (3)
+- 360 Degree Variants: Segment Tamper Test
+- Bucket: Subresource Documents (4)
+- Dataencryption: Segmented Gcm Io
+- S3 Encryption Proxy: Values Monitoring (2)
+- S3 Encryption Proxy: Values Monitoring (3)
+- S3 Encryption Proxy: Values (7)
+- S3 Encryption Proxy: Values Production (3)
+- Docker Compose Demo (8)
+- Workflows: Push (2)
+- Workflows: Push (3)
+- Harness: Verdict
+- Orchestration: Metadata Coverage Test
+- Response: Error Mapping Coverage Test
+- Manifests: Snapshotclass
+- Velero: Values Proxy
+- Velero: Values Velero (4)
+- Misc (2)
+- S3 Encryption Proxy: Values (8)
+- S3 Encryption Proxy: Values (9)
+- S3 Encryption Proxy: Values (10)
+- Docker Compose Demo (9)
+- Workflows: Test Pipeline (6)
+- Request: Streaming Aws Decoder
+- Object: Range
+- Manifests: Minio (5)
+- Velero: Values Proxy (2)
+- Velero: Values Velero (5)
+- Shutdown: Shutdown Test
+- Bucket: Subresource Documents (5)
+- Bucket: Subresource Documents (6)
+- Dataencryption: Segmented Gcm Io (2)
+- Tests: Deployment Test (3)
+- S3 Encryption Proxy: Values (11)
+- S3 Encryption Proxy: Values (12)
+- S3 Encryption Proxy: Values Monitoring (4)
+- S3 Encryption Proxy: Values Monitoring (5)
+- S3 Encryption Proxy: Values (13)
+- S3 Encryption Proxy: Values Production (4)
+- S3 Encryption Proxy: Values Production (5)
+- Docker Compose Demo (10)
+- Adr: 0027 Conformance Is Asserted Against A Backend That Is Not Minio
+- Object: Range (2)
+- Tickets: 036 High Availability
+- Monitoring: Backend (2)
+- Rclone: Rclone Test (2)
+- Request: Crc64Nvme
+- Rclone: E2E Up
+- S3Cmd: E2E Up
+- Manifests: Minio (6)
+- Velero: Values Proxy (3)
+- Velero: Values Proxy (4)
+- Velero: Values Proxy (5)
+- Velero: Values Velero (6)
+- 180 Degree Variants: Test Constants
+- Bucket: Operations Coverage Test
+- Tests: Deployment Test (4)
+- S3 Encryption Proxy: Values Monitoring (6)
+- S3 Encryption Proxy: Values Monitoring (7)
+- S3 Encryption Proxy: Values Production (6)
+- S3 Encryption Proxy: Values Production (7)
+- Rclone: Scenarios Read Test
+- Scripts: Check Breaking Changes
+- Workflows: Test Pipeline (7)
+- Workflows: Test Pipeline (8)
+- S3 Methods: Bucket Policy Test
+- Dataencryption: Segmented Gcm Range
+- Tests: Deployment Test (5)
+- S3 Encryption Proxy: Values (14)
+- S3 Encryption Proxy: Values (15)
+- S3 Encryption Proxy: Values Production (8)
+- Workflows: Test Pipeline (9)
+- Workflows: Test Pipeline (10)
+- Monitoring: Server Coverage Test (2)
+- Middleware: Logging
+- Monitoring: Middleware
+- Velero: Values Proxy (6)
+- Velero: Values Proxy (7)
+- Velero: Values Proxy (8)
+- Velero: Values Proxy (9)
+- S3 Encryption Proxy: Values (16)
+- S3 Encryption Proxy: Values Monitoring (8)
+- S3 Encryption Proxy: Values (17)
+- Object: Subresource Documents
+- Object: Subresource Documents (2)
+- Harness: Harness
+- Scripts: Gen Keys
+- Velero: Values Proxy (10)
+- Velero: Values Proxy (11)
+- Velero: Values Proxy (12)
+- Velero: Values Velero (7)
+- Tests: Deployment Test (6)
+- Tests: Deployment Test (7)
+- Tests: Deployment Test (8)
+- Monitoring: Backend Test (2)
+- Object: Dispatch Coverage Test
+- Request: Checksum (2)
+- Scripts: Version Dry Run
+- Rclone: E2E Down
+- S3Cmd: E2E Down
+- Ssl Setup: Gen Certs
+- Security: Tenancy And Privilege
+- Tools: Go
 - Go
 
 ## God Nodes (most connected - your core abstractions)
-1. `EnsureMinIOAndProxyAvailable()` - 109 edges
-2. `NewErrorWriter()` - 91 edges
-3. `NewTestContextWithTimeout()` - 80 edges
-4. `MpuNewEnv()` - 71 edges
-5. `ObjGetdo()` - 67 edges
-6. `RandomString()` - 65 edges
-7. `MockS3Backend` - 64 edges
-8. `MockS3Backend` - 64 edges
-9. `ObjGetpayload()` - 60 edges
-10. `ADR 0013` - 59 edges
+1. `EnsureMinIOAndProxyAvailable()` - 122 edges
+2. `NewTestContextWithTimeout()` - 93 edges
+3. `NewErrorWriter()` - 91 edges
+4. `S3BackendInterface` - 83 edges
+5. `RandomString()` - 80 edges
+6. `MpuNewEnv()` - 71 edges
+7. `ADR 0003: Objects are an authenticated segment chain` - 70 edges
+8. `ObjGetdo()` - 67 edges
+9. `MockS3Backend` - 64 edges
+10. `MockS3Backend` - 64 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `WriteS3Error` --calls--> `MapError()`  [EXTRACTED]
+- `conformance-run.sh writes its own proxy configuration` --references--> `TestCfgShippedExamplesCarryNoUnknownKeys()`  [EXTRACTED]
+  docs/developer/testing.md → internal/config/loading_coverage_test.go
+- `Permanent object state is 4xx, transient failure is 5xx` --references--> `MapError()`  [INFERRED]
   docs/developer/errors.md → internal/proxy/response/error_mapping.go
-- `Error Conventions` --references--> `declaredChecksums()`  [EXTRACTED]
-  docs/developer/errors.md → internal/proxy/request/checksum.go
-- `Assert what is stored, compare by SHA-256` --references--> `TestSegmentChainRefusesTamperedBytes()`  [EXTRACTED]
-  docs/developer/testing.md → test/integration/360-degree-variants/segment_tamper_test.go
-- `ca_file per s3_backends entry (sole trust roots for that backend)` --references--> `backendHTTPClient()`  [EXTRACTED]
-  docs/tickets/039-backend-certificate-verification-failure-is-named.md → internal/proxy/server.go
-- `D-C: one licence token copied into each provisioned namespace` --references--> `checkClaims()`  [EXTRACTED]
-  docs/tickets/038-s3-encryption-operator.md → internal/license/validator.go
+- `encryption-modes starts the proxy in process` --references--> `NewServer()`  [EXTRACTED]
+  docs/developer/testing.md → internal/proxy/server.go
+- `Configuration: where a value comes from` --references--> `startupWarnings()`  [EXTRACTED]
+  docs/developer/configuration.md → cmd/s3-encryption-proxy/main.go
+- `shutdown integration package` --references--> `runShutdownTail()`  [EXTRACTED]
+  docs/developer/testing.md → cmd/s3-encryption-proxy/main.go
 
 ## Import Cycles
 - None detected.
 
 ## Hyperedges (group relationships)
-- **Graceful Shutdown of a Process That Holds Its Uploads** — docs_adr_0028_an_abandoned_upload_is_ended_not_forgotten_sweeper_aborts_at_backend, docs_adr_0029_the_shutdown_budget_finishes_work_and_sweeps_what_cannot_be_finished_shutdown_order, docs_adr_0033_a_proxy_instance_holds_its_uploads_single_replica_chart, docs_developer_multipart_shutdown_ends_what_it_holds, internal_orchestration_manager_abandonallsessions [EXTRACTED 0.95]
-- **The graceful drain: /readyz, the preStop sleep and the derived grace period** — deploy_helm_s3_encryption_proxy_templates_deployment_prestop_sleep_hook, deploy_helm_s3_encryption_proxy_values_prestopsleepseconds, deploy_helm_s3_encryption_proxy_values_readinessprobe, deploy_helm_s3_encryption_proxy_values_terminationgraceperiodseconds [EXTRACTED 1.00]
-- **The ADR 0020 D17 Instrument Set** — test_perf_readme_cryptofloor_instrument, test_perf_readme_local_performance_baseline, test_perf_readme_memory_instrument, test_perf_readme_rangeread_instrument, test_perf_readme_smallobject_instrument, test_perf_readme_throughput_instrument, test_perf_readme_unwrap_instrument, test_perf_readme_uploadpath_instrument [EXTRACTED 1.00]
-- **Three Runs of One Hour Establish the Between-Run Spread** — perf_baseline_20260911t101344z_cc62c05_report_post_v2_wave5_run, perf_baseline_20260911t102319z_cc62c05_report_post_v2_wave5_drained_run, perf_baseline_20260911t103132z_cc62c05_findings_between_run_spread, perf_baseline_20260911t103132z_cc62c05_report_post_v2_wave5_record_run [EXTRACTED 1.00]
-- **The tail-first whole-object read** — docs_operations_integrity_s3ep_gcm_seg_v2, docs_operations_integrity_x_amz_checksum_crc32c, docs_operations_s3_api_what_a_read_costs, docs_tickets_027_whole_object_read_first_window_evaluation, object_handler_fetchobjecttail [EXTRACTED 1.00]
-- **The Upload Deficit Investigation** — perf_baseline_20260909t175340z_9f3fbd1_findings_upload_cliff_at_threshold, perf_baseline_20260910t062529z_9f3fbd1_findings_self_copy_is_not_the_cause, perf_baseline_20260910t062529z_9f3fbd1_findings_streaming_path_faster_than_backend, perf_baseline_20260910t090543z_530472c_findings_deficit_is_per_byte [EXTRACTED 1.00]
-- **The Velero e2e kind stack** — test_e2e_velero_kind_config_cluster, test_e2e_velero_manifests_snapshotclass_csi_hostpath, test_e2e_velero_values_velero_values [EXTRACTED 1.00]
-- **The Velero e2e TLS Chain — Listener, Backend CA, Backend Certificate** — test_e2e_velero_values_proxy_backend_ca_ssl_cert_file, test_e2e_velero_values_proxy_service_tls_byo_cert [INFERRED 0.85]
-- **Operator Secret privilege and its bounds** — docs_tickets_038_s3_encryption_operator_cluster_scoped_operator, docs_tickets_038_s3_encryption_operator_no_cross_namespace_references, docs_tickets_038_s3_encryption_operator_validating_admission_policy_bound, docs_tickets_038_s3_encryption_operator_ownerreference_forgery_risk, docs_tickets_038_s3_encryption_operator_cluster_wide_secret_read_risk, docs_tickets_038_s3_encryption_operator_finding_m_privileged_pod_escape [EXTRACTED 1.00]
-- **Per-credential carried versus minted model** — docs_tickets_038_s3_encryption_operator_credential_model, docs_tickets_038_s3_encryption_operator_licence_copy_per_namespace, docs_tickets_038_s3_encryption_operator_finding_c_shared_key_pair, docs_tickets_038_s3_encryption_operator_finding_am_fleet_wide_expiry [EXTRACTED 1.00]
-- **Backend-trust session follow-ups (ADR 0037)** — docs_tickets_042_a_certificate_failure_is_not_retried, docs_tickets_043_the_backend_is_checked_before_the_first_client_request, docs_adr_0037_the_backend_leg_is_trusted_explicitly_and_its_failures_are_named, docs_tickets_042_a_certificate_failure_is_not_retried_backend_observer_classification [INFERRED 0.85]
-- **Pinned-tail resolution: held part, forward, identity pin, verdicts, CAS state machine** — docs_tickets_036_high_availability_held_short_part_stays_in_holder, docs_tickets_036_high_availability_complete_forward_peer_listener, docs_tickets_036_high_availability_holder_address_and_instance_identity, docs_tickets_036_high_availability_forward_verdict_table, docs_tickets_036_high_availability_completion_state_machine, docs_tickets_036_high_availability_failover_pinned_upload_out_of_scope [EXTRACTED 1.00]
-- **Shared session store design components** — docs_tickets_036_high_availability_shared_session_table_valkey_sentinel, docs_tickets_036_high_availability_session_layer_operations_interface, docs_tickets_036_high_availability_row_field_rule, docs_tickets_036_high_availability_row_keyed_by_upload_id_set_nx, docs_tickets_036_high_availability_member_register_rotation, docs_tickets_036_high_availability_store_clock_cas_sweep, docs_tickets_036_high_availability_high_availability_config_block [INFERRED 0.85]
-- **Backend leg trust and named certificate failure** — docs_tickets_039_backend_certificate_verification_failure_is_named_ca_file_per_backend, docs_tickets_039_backend_certificate_verification_failure_is_named_ca_file_insecure_skip_verify_refusal, docs_tickets_039_backend_certificate_verification_failure_is_named_tls_certificate_class, docs_tickets_039_backend_certificate_verification_failure_is_named_backend_observer_below_sdk, docs_tickets_039_backend_certificate_verification_failure_is_named_backend_transport_failures_metric [EXTRACTED 1.00]
-- **Pass engine operations: rename, rewrap, replicate** — docs_tickets_017_filename_encryption_pass_engine, docs_tickets_017_filename_encryption_rename_operation, docs_tickets_040_managed_buckets_kek_rewrap_pass, docs_tickets_037_multiple_backends_backend_parity_replicate [EXTRACTED 1.00]
-- **Mixed-bucket name resolution machinery** — docs_tickets_017_filename_encryption_mode_set, docs_tickets_017_filename_encryption_other_form_directory_cache, docs_tickets_017_filename_encryption_multi_source_paged_listing, docs_tickets_017_filename_encryption_lockstep_dedup, docs_tickets_017_filename_encryption_request_scoped_resolution_memo, docs_tickets_017_filename_encryption_explicit_forwarder [EXTRACTED 1.00]
-- **Self-copy rewrap hazards measured against MinIO** — docs_tickets_040_managed_buckets_no_reupload_refuted, docs_tickets_040_managed_buckets_cas_copy_if_match, docs_tickets_040_managed_buckets_worm_strip_on_self_copy, docs_tickets_040_managed_buckets_five_gib_copy_cliff, docs_tickets_040_managed_buckets_renamed_prefix_double_encryption [EXTRACTED 1.00]
-- **Stored object format, envelope wrap and refusal form the integrity guarantee** — readme_s3ep_gcm_seg_v2_format, readme_envelope_encryption, readme_four_metadata_keys, readme_invalidobjectstate_refusal, claude_tail_first_read, docs_adr_0003_objects_are_an_authenticated_segment_chain [INFERRED 0.85]
-- **E2E client suites gating the release, one job each** — claude_velero_e2e_suite, claude_rclone_e2e_suite, claude_s3cmd_e2e_suite, claude_e2e_harness, claude_one_tool_one_job, developer_ci_test_pipeline [EXTRACTED 1.00]
-- **Helm pod drain: preStop sleep, readiness 503, shutdown budget and multipart sweep** — deploy_helm_s3_encryption_proxy_readme_prestop_sleep, deploy_helm_s3_encryption_proxy_readme_split_probes, deploy_helm_s3_encryption_proxy_readme_termination_grace_derivation, docs_adr_0029_the_shutdown_budget_finishes_work_and_sweeps_what_cannot_be_finished, docs_adr_0028_an_abandoned_upload_is_ended_not_forgotten, deploy_helm_s3_encryption_proxy_readme_single_instance [INFERRED 0.85]
-- **Jobs gating semantic-release** — _github_workflows_test_pipeline_semantic_release, _github_workflows_test_pipeline_integration_tests, _github_workflows_test_pipeline_conformance, _github_workflows_test_pipeline_e2e_velero, _github_workflows_test_pipeline_e2e_rclone, _github_workflows_test_pipeline_e2e_s3cmd, _github_workflows_test_pipeline_unit_tests, _github_workflows_test_pipeline_race, _github_workflows_test_pipeline_coverage_report [EXTRACTED 1.00]
-- **403 InvalidObjectState read-refusal and detection path** — docs_operations_integrity_foreign_object_refusal, docs_operations_integrity_mid_stream_abort, docs_security_stored_objects_failure_surfaces, docs_developer_request_paths_tail_first_get, docs_developer_request_paths_head_trailer_read, docs_operations_monitoring_s3ep_object_integrity_failures_total [INFERRED 0.85]
-- **Upload checksum verification on the client leg** — docs_developer_request_paths_checksum_verifier, docs_security_upload_integrity_held_final_byte, docs_security_upload_integrity_client_leg_verification, docs_operations_integrity_client_checksum_verification, docs_security_upload_integrity_checksum_family_claimed, docs_developer_request_paths_complete_unverified_body [INFERRED 0.85]
-- **The four s3ep- metadata keys of the stored format** — docs_adr_0002_one_data_key_per_object_s3ep_kek_algorithm, docs_adr_0002_one_data_key_per_object_s3ep_encrypted_dek, docs_adr_0002_one_data_key_per_object_s3ep_kek_fingerprint, docs_adr_0009_the_metadata_prefix_is_the_proxys_namespace_metadata_prefix_namespace [EXTRACTED 1.00]
-- **Fail-closed refusals answered 403 InvalidObjectState** — docs_adr_0001_the_backend_is_hostile_fail_closed_on_foreign_objects, docs_adr_0003_objects_are_an_authenticated_segment_chain_wrapped_key_auth_failure_403, docs_adr_0004_one_local_key_provider_tampered_wrap_distinct_error, docs_adr_0002_one_data_key_per_object_key_layer_fails_closed [INFERRED 0.85]
+- **Fail-closed refusals answered 403 InvalidObjectState** — docs_adr_0001_the_backend_is_hostile_fail_closed_on_foreign_objects, docs_adr_0003_objects_are_an_authenticated_segment_chain_wrapped_key_auth_failure_403, docs_adr_0002_one_data_key_per_object_key_layer_fails_closed [INFERRED 0.85]
+- **The four s3ep- metadata keys of the stored format** — docs_adr_0003_objects_are_an_authenticated_segment_chain_s3ep_dek_algorithm, docs_adr_0002_one_data_key_per_object_s3ep_encrypted_dek, docs_adr_0002_one_data_key_per_object_s3ep_kek_algorithm, docs_adr_0002_one_data_key_per_object_s3ep_kek_fingerprint, docs_adr_0009_the_metadata_prefix_is_the_proxys_namespace_metadata_prefix_namespace [EXTRACTED 1.00]
 - **Request and response honesty: forward, refuse or state, never fake success** — docs_adr_0007_forward_it_or_refuse_it_forward_or_refuse_rule, docs_adr_0007_forward_it_or_refuse_it_error_under_success_status, docs_adr_0008_every_response_describes_the_proxy_proxy_composed_response, docs_adr_0008_every_response_describes_the_proxy_non_error_status_failure, docs_adr_0008_every_response_describes_the_proxy_typed_error_translation [INFERRED 0.85]
-- **Fail-Closed Startup Refusals** — docs_adr_0013_a_configuration_key_exists_only_if_code_reads_it_unknown_key_refuses_start, docs_adr_0013_a_configuration_key_exists_only_if_code_reads_it_unworkable_config_refuses_start, docs_adr_0013_a_configuration_key_exists_only_if_code_reads_it_unreadable_config_refuses_start, docs_adr_0016_the_license_is_a_startup_gate_license_startup_gate, docs_adr_0013_a_configuration_key_exists_only_if_code_reads_it_backend_scheme_decides_tls [INFERRED 0.85]
 - **Upload-Leg Checksum Integrity** — docs_adr_0012_client_checksums_are_verified_never_forwarded_checksum_verified_against_plaintext, docs_adr_0012_client_checksums_are_verified_never_forwarded_missing_trailer_checksum_fails, docs_adr_0012_client_checksums_are_verified_never_forwarded_baddigest_invaliddigest, docs_adr_0012_client_checksums_are_verified_never_forwarded_verdict_before_commit, docs_adr_0012_client_checksums_are_verified_never_forwarded_checksum_never_forwarded, docs_adr_0012_client_checksums_are_verified_never_forwarded_no_plaintext_checksum_in_metadata [EXTRACTED 1.00]
-- **Breaking-Change Release Process** — docs_adr_0017_stored_data_compatibility_is_not_owed_no_at_rest_compatibility_owed, docs_adr_0017_stored_data_compatibility_is_not_owed_release_notes_state_break, docs_adr_0018_a_major_release_is_declared_by_a_label_release_major_label, docs_adr_0018_a_major_release_is_declared_by_a_label_breaking_commit_guard, docs_adr_0018_a_major_release_is_declared_by_a_label_long_lived_major_bundle_branch, docs_adr_0019_integration_and_e2e_tests_are_the_product_e2e_gates_release [INFERRED 0.85]
-- **Documentation governance: ADRs, tickets, five homes, per-perspective security pages** — docs_adr_0022_tickets_are_work_lists_that_get_archived_adr_is_decision_record, docs_adr_0022_tickets_are_work_lists_that_get_archived_ticket_is_work_list, docs_adr_0022_tickets_are_work_lists_that_get_archived_extraction_is_the_close, docs_adr_0035_the_readme_advertises_the_reference_lives_under_docs_five_documentation_homes, docs_adr_0038_the_security_architecture_is_one_page_per_perspective_one_page_per_perspective, docs_adr_0022_tickets_are_work_lists_that_get_archived_adr_no_code_references [INFERRED 0.85]
-- **Pod shutdown lifecycle: preStop hold, readiness drain, grace period** — docs_adr_0034_a_probe_reports_the_process_never_its_dependencies_prestop_hold, docs_adr_0034_a_probe_reports_the_process_never_its_dependencies_readyz_readiness, docs_adr_0034_a_probe_reports_the_process_never_its_dependencies_termination_grace_period_sum, docs_adr_0034_a_probe_reports_the_process_never_its_dependencies_livez_liveness [EXTRACTED 1.00]
-- **Backend failure reporting across status, counters, logs and the client answer** — docs_adr_0034_a_probe_reports_the_process_never_its_dependencies_backend_transport_failure_counter, docs_adr_0034_a_probe_reports_the_process_never_its_dependencies_status_document, docs_adr_0037_the_backend_leg_is_trusted_explicitly_and_its_failures_are_named_tls_certificate_failure_class, docs_adr_0037_the_backend_leg_is_trusted_explicitly_and_its_failures_are_named_backend_failure_is_internal_error [INFERRED 0.85]
+- **Documentation governance: ADRs, tickets, five homes, per-perspective security pages** — docs_adr_0022_tickets_are_work_lists_that_get_archived_ticket_is_work_list, docs_adr_0035_the_readme_advertises_the_reference_lives_under_docs_five_documentation_homes, docs_adr_0022_tickets_are_work_lists_that_get_archived_adr_no_code_references [INFERRED 0.85]
+- **Backend failure reporting across status, counters, logs and the client answer** — docs_adr_0034_a_probe_reports_the_process_never_its_dependencies_status_document, docs_adr_0037_the_backend_leg_is_trusted_explicitly_and_its_failures_are_named_tls_certificate_failure_class, docs_adr_0037_the_backend_leg_is_trusted_explicitly_and_its_failures_are_named_backend_failure_is_internal_error [INFERRED 0.85]
+- **Upload checksum verification on the client leg** — docs_developer_request_paths_checksum_verifier, docs_security_upload_integrity_held_final_byte, docs_security_upload_integrity_client_leg_verification, docs_operations_integrity_client_checksum_verification, docs_security_upload_integrity_checksum_family_claimed, docs_developer_request_paths_complete_unverified_body [INFERRED 0.85]
+- **Backend-trust session follow-ups (ADR 0037)** — docs_tickets_042_a_certificate_failure_is_not_retried, docs_tickets_043_the_backend_is_checked_before_the_first_client_request, docs_adr_0037_the_backend_leg_is_trusted_explicitly_and_its_failures_are_named, docs_tickets_042_a_certificate_failure_is_not_retried_backend_observer_classification [INFERRED 0.85]
+- **Major release declaration and guard flow** — docs_adr_0018_a_major_release_is_declared_by_a_label_release_major_label, docs_adr_0018_a_major_release_is_declared_by_a_label_breaking_marker_guard, docs_adr_0018_a_major_release_is_declared_by_a_label_release_dry_run, developer_semantic_release_dry_run_workflow, contributing_conventional_commits, developer_module_path_move, docs_adr_0018_a_major_release_is_declared_by_a_label_major_notes_compat_banner [EXTRACTED 1.00]
+- **Key encryption key lifecycle: generate, admit, derive, wrap, rotate** — docs_adr_0021_key_material_is_generated_never_committed_on_demand_key_generator, docs_adr_0021_key_material_is_generated_never_committed_s3ep_aes_key_variable, docs_adr_0004_one_local_key_provider_aes_key_admission_rules, docs_adr_0004_one_local_key_provider_hkdf_derived_fingerprint, docs_adr_0004_one_local_key_provider_gcm_key_wrap, readme_key_rotation, docs_adr_0005_a_kms_key_is_a_provider_custody_by_injection [INFERRED 0.85]
+- **Tests-as-product discipline across layers** — docs_adr_0019_integration_and_e2e_tests_are_the_product_never_skipped, docs_adr_0019_integration_and_e2e_tests_are_the_product_at_rest_from_backend, docs_adr_0019_integration_and_e2e_tests_are_the_product_test_fails_without_change, claude_target_behaviour_rule, claude_one_tool_one_job, contributing_test_layers, docs_adr_0020_performance_is_measured_before_and_after_no_throughput_gate [INFERRED 0.85]
+- **Graceful shutdown sequence: hold, readiness false, drain 503, finish transfers, sweep uploads, close listener** — docs_adr_0034_a_probe_reports_the_process_never_its_dependencies_prestop_hold, docs_adr_0034_a_probe_reports_the_process_never_its_dependencies_readyz, docs_adr_0029_the_shutdown_budget_finishes_work_and_sweeps_what_cannot_be_finished_shutdown_order, docs_adr_0029_the_shutdown_budget_finishes_work_and_sweeps_what_cannot_be_finished_drain_guard_503, docs_adr_0029_the_shutdown_budget_finishes_work_and_sweeps_what_cannot_be_finished_shutdown_sweep, docs_adr_0029_the_shutdown_budget_finishes_work_and_sweeps_what_cannot_be_finished_remaining_budget, docs_adr_0034_a_probe_reports_the_process_never_its_dependencies_termination_grace_period_sum [EXTRACTED 1.00]
+- **Process-local multipart session lifecycle and its cleanup paths** — docs_adr_0033_a_proxy_instance_holds_its_uploads_process_local_session, docs_developer_multipart_client_driven_upload, docs_developer_multipart_part_table_authority, docs_developer_multipart_short_part_budget, docs_adr_0028_an_abandoned_upload_is_ended_not_forgotten_sweeper_backend_abort, docs_adr_0029_the_shutdown_budget_finishes_work_and_sweeps_what_cannot_be_finished_shutdown_sweep, docs_adr_0033_a_proxy_instance_holds_its_uploads_single_instance_chart [INFERRED 0.95]
+- **Helm chart refuses a misleading configuration at render time rather than documenting it** — docs_adr_0033_a_proxy_instance_holds_its_uploads_single_instance_chart, docs_adr_0026_the_proxy_terminates_tls_at_its_own_service_ingress_tls_every_host, docs_adr_0026_the_proxy_terminates_tls_at_its_own_service_certificate_needs_consumer, docs_adr_0026_the_proxy_terminates_tls_at_its_own_service_chart_adds_tls_block, docs_adr_0030_the_network_boundary_belongs_to_the_administrator_no_network_policy, docs_adr_0034_a_probe_reports_the_process_never_its_dependencies_prestop_hold [INFERRED 0.85]
+- **Tail-first whole-object read and authenticated length** — docs_developer_request_paths_tail_first_get, docs_developer_request_paths_head_trailer_read, docs_developer_storage_format_sealed_trailer, docs_developer_performance_tail_first_second_request_cost, docs_operations_s3_api_what_a_read_costs, object_handler_fetchobjecttail [INFERRED 0.85]
+- **The s3ep- metadata namespace: written, filtered, refused** — docs_security_stored_objects_metadata_namespace, docs_security_stored_objects_metadata_key_table, docs_developer_storage_format_four_metadata_keys, pkg_encryption_storedobject_storedobject_isreserved, object_handler_cleanmetadata, internal_proxy_handlers_object_helpers_usermetadata [INFERRED 0.85]
+- **Open security gaps carrying H-<n> identifiers** — docs_security_readme_h_n_identifier, docs_security_request_authentication_h2_per_chunk_signatures_never_verified, docs_security_stored_objects_h3_rollback_and_substitution, docs_security_operational_security_h4_velero_kopia_default_password [EXTRACTED 1.00]
+- **Multi-Instance Multipart Coordination Design (ticket 036)** — docs_tickets_036_high_availability_valkey_sentinel_session_table, docs_tickets_036_high_availability_session_store_interface, docs_tickets_036_high_availability_held_short_part_holder, docs_tickets_036_high_availability_address_pin_instance_identity, docs_tickets_036_high_availability_completion_state_machine, docs_tickets_036_high_availability_store_clock_sweep, docs_tickets_036_high_availability_part_row_etag_set [EXTRACTED 1.00]
+- **Upload Deficit Investigation: Hypothesis, Falsification, Fix** — perf_baseline_20260909t175340z_9f3fbd1_findings_upload_cliff_at_threshold, perf_baseline_20260910t062529z_9f3fbd1_findings_self_copy_not_cause, perf_baseline_20260910t062529z_9f3fbd1_findings_auto_multipart_write_path_deficit, perf_baseline_20260910t090543z_530472c_findings_per_byte_serialisation_inside_part, perf_baseline_20260911t103132z_cc62c05_findings_upload_deficit_gone [EXTRACTED 1.00]
+- **Managed-Bucket Pass Hazards (ticket 040)** — docs_tickets_040_managed_buckets_kek_rewrap_pass, docs_tickets_040_managed_buckets_self_copy_is_full_rewrite, docs_tickets_040_managed_buckets_fail_switches_dos, docs_tickets_040_managed_buckets_prefix_rename_destruction, docs_tickets_040_managed_buckets_dek_cache_bypass [EXTRACTED 1.00]
 
-## Communities (300 total, 114 thin omitted)
+## Communities (312 total, 81 thin omitted)
 
-### Community 0 - "Object GET Coverage Tests"
-Cohesion: 0.05
-Nodes (135): TestObjCrcARangedReadStatesNoChecksum(), TestObjCrcAWriteAndAReadAgreeOnTheChecksum(), ObjTagserve(), TestObjTagAProxyPinNeverCarriesTheMarker(), TestObjTagEveryObjectVerbAnswersTheMarker(), TestObjTagPreconditionsAreUnmarkedOnTheWayOut(), TestObjTagTheInternalPinIsNeverMarked(), ObjGetdigest() (+127 more)
-
-### Community 1 - "Changelog and Project Front Page"
-Cohesion: 0.04
-Nodes (67): CHANGELOG, encryption.integrity_verification modes removed, Provider type none removed, becomes exit provider, Release 4.0.0 (2026-09-07): prefix validation, pprof on loopback listener, Release 5.1.0 (2026-09-15): probes refined, one endpoint per question, Release 5.1.5 (2026-10-07): dependency updates, CLAUDE.md AI Coding Instructions, Adding a new KEK provider checklist (stable Fingerprint) (+59 more)
-
-### Community 2 - "Velero E2E Backup Suite"
-Cohesion: 0.08
-Nodes (83): sinceStart(), AssertEncryptedAtRest(), MetadataValue(), backendClient(), caTrustingHTTPClient(), listBackendObjects(), proxyClient(), readBackendObject() (+75 more)
-
-### Community 3 - "Multipart Handler Coverage Tests"
-Cohesion: 0.09
-Nodes (83): MpuAPIError(), MpuBytesAllocated(), MpuChain(), MpuCompleteBody(), MpuDigest(), MpuNewEnv(), MpuNewEnvWithProvider(), MpuNewExitEnv() (+75 more)
-
-### Community 4 - "Bucket Handler Error Fixtures"
-Cohesion: 0.07
-Nodes (75): BktclosingBody, BktfailingReader, BktfailingWriter, BktforeignHits, errBkt, TestBktTagAMultipartTagInAListingIsNotMarked(), TestBktTagBothListingsMarkADigestShapedTag(), TestBktTagTheExitProviderListingIsUnmarked() (+67 more)
-
-### Community 5 - "Bucket ACL and Accelerate Handlers"
-Cohesion: 0.05
-Nodes (16): LifecycleHandler, LoggingHandler, TaggingHandler, WebsiteHandler, Hlthprobe, Handler, readDocument(), UserMetadata() (+8 more)
-
-### Community 6 - "ADR Web: Auth, Checksums, Config"
-Cohesion: 0.04
-Nodes (32): Licence routes: chart-managed Secret or S3EP_LICENSE_TOKEN env, ADR 0013, ADR 0014: authentication is sigv4 no rate limiting, ADR 0016, ADR 0021, ADR 0030, ADR 0034, ADR 0037 (+24 more)
-
-### Community 7 - "DEK Cache and Provider Manager"
+### Community 0 - "Handler Core and Entry Points"
 Cohesion: 0.06
-Nodes (48): Case, Recorder, row, buildDEKCacheKey(), OrcMetaAESProvider(), OrcMetaCachingManager(), OrcMetaNewProviderManager(), OrcMetaProviderConfig() (+40 more)
+Nodes (36): commonPrefix, ownerEntry, errAfterReader, The Storage Format (s3ep-gcm-seg-v2), test/e2e/harness shared helper package, KEK/DEK envelope key hierarchy, ListParts answered from the session part table, No multi-tenancy, per-client keys or rate limiting (+28 more)
 
-### Community 8 - "Checksum and ETag Echo Tests"
-Cohesion: 0.11
+### Community 1 - "Shutdown and Test Contexts"
+Cohesion: 0.02
+Nodes (162): SimpleTestContext, runShutdownTail(), TestMainShutdownClosesTheListenerEvenWhenTheSweepFails(), TestMainShutdownExhaustedBudgetStillSweepsAndCloses(), TestMainShutdownListenerGetsTheSameDeadlineAsTheSweep(), TestMainShutdownSweepGetsWhatIsLeftOfTheBudget(), TestMainShutdownSweepsBeforeClosingTheListener(), TestCfgGetActiveProviderErrorPaths() (+154 more)
+
+### Community 2 - "Bucket Sub-Resource Handlers"
+Cohesion: 0.04
+Nodes (40): AccelerateHandler, ACLHandler, CORSHandler, Handler, LifecycleHandler, LocationHandler, LoggingHandler, NotificationHandler (+32 more)
+
+### Community 3 - "Multipart Checksum Answers"
+Cohesion: 0.05
+Nodes (97): MpuCrcwant(), TestMpuCrcARefusedPartStatesNoChecksum(), TestMpuCrcAReplacedPartAnswersTheNewChecksum(), TestMpuCrcEveryPartAnswersItsOwnChecksum(), TestMpuCrcTheCompletionAnswersTheWholeObjectChecksum(), TestMpuCrcTheCompletionCoversAHeldShortPart(), TestMpuCrcTheExitProviderStatesNoChecksum(), MpuTagacceptParts() (+89 more)
+
+### Community 4 - "Object Checksum and Tagging Tests"
+Cohesion: 0.09
+Nodes (91): TestObjCrcARangedReadStatesNoChecksum(), TestObjCrcAWriteAndAReadAgreeOnTheChecksum(), ObjTagserve(), TestObjTagAProxyPinNeverCarriesTheMarker(), TestObjTagEveryObjectVerbAnswersTheMarker(), TestObjTagPreconditionsAreUnmarkedOnTheWayOut(), TestObjTagTheInternalPinIsNeverMarked(), ObjGetdigest() (+83 more)
+
+### Community 5 - "ADR Corpus and Release History"
+Cohesion: 0.04
+Nodes (38): CHANGELOG release history, Per-release quality metrics block (coverage, security, lint), CLAUDE.md AI coding instructions, ADR 0006: The proxy serves any S3 client, CloudNativePG Barman, Velero (with kopia), ?tagging, ?retention, ?legal-hold passthrough, Ten storage headers forwarded on every upload path (+30 more)
+
+### Community 6 - "Velero E2E Suite"
+Cohesion: 0.08
+Nodes (82): tbTrickleReader, backendClient(), caTrustingHTTPClient(), listBackendObjects(), proxyClient(), readBackendObject(), readViaProxy(), veleroBucket() (+74 more)
+
+### Community 7 - "Bucket Handler Tests"
+Cohesion: 0.06
+Nodes (81): bktChunkedTarget, BktfailingReader, BktforeignHits, TestBktTagAMultipartTagInAListingIsNotMarked(), TestBktTagBothListingsMarkADigestShapedTag(), TestBktTagTheExitProviderListingIsUnmarked(), BktassertIsListBucketResult(), BktassertNoSDKElements() (+73 more)
+
+### Community 8 - "Sub-Resource Handler Tests"
+Cohesion: 0.08
+Nodes (82): BaseSubResourceHandler, NewAccelerateHandler(), TestAccelerateHandler_AccelerateStatuses(), TestAccelerateHandler_AccelerationBenefits(), TestAccelerateHandler_BucketNamingRequirements(), TestAccelerateHandler_ContentTypeHandling(), TestAccelerateHandler_Handle(), TestAccelerateHandler_HandleErrors() (+74 more)
+
+### Community 9 - "Key Hierarchy and Threat Rules"
+Cohesion: 0.04
+Nodes (39): ADR 0002: One data key per object, s3ep-encrypted-dek metadata key, s3ep-kek-algorithm metadata key, s3ep-kek-fingerprint metadata key, Bounded unwrapped data key cache, s3ep-dek-algorithm metadata key, ADR 0004: One local key provider, ADR 0005: A KMS key is a provider (+31 more)
+
+### Community 10 - "Object Checksum Agreement Tests"
+Cohesion: 0.10
 Nodes (70): ObjCrcwant(), TestObjCrcADeclaredChecksumAndTheAnsweredOneAgree(), TestObjCrcAnEmptyObjectStillAnswersAChecksum(), TestObjCrcARefusedUploadStatesNoChecksum(), TestObjCrcIsNotTheChecksumOfTheStoredBytes(), TestObjCrcSingleRequestPutAnswersThePlaintextChecksum(), TestObjCrcTheExitProviderStatesNoChecksum(), TestObjCrcTheProducerAnswersTheSameChecksumAsAPut() (+62 more)
 
-### Community 9 - "SigV4 Header and Presign Tests"
-Cohesion: 0.05
-Nodes (51): Canonical header whitespace collapsing matches aws-sdk-go-v2, SigV4 header and pre-signed forms, No multi-tenancy, per-client keys or rate limiting, MwauthService(), MwhmacSHA256(), MwsignDateHeaderRequest(), TestMwAuthenticateRequestDateHeaderPath(), TestMwAuthenticateRequestRejections() (+43 more)
+### Community 11 - "Perf Harness and Report"
+Cohesion: 0.06
+Nodes (69): GitInfo, Hardware, InstrumentStatus, Measurement, rangeCase, ratioKey, rssSampler, Run (+61 more)
 
-### Community 10 - "Streaming Integration Test Harness"
-Cohesion: 0.07
-Nodes (61): PerformanceMetrics, StreamingReader, TestLargeMultipart500MB(), cleanupTestFile(), downloadLargeFile(), generateLargeFileTestData(), NewStreamingReader(), TestComprehensiveMultipartUpload() (+53 more)
-
-### Community 11 - "Storage Format Integrity Guarantees"
+### Community 12 - "Monitoring and Licence Removal"
 Cohesion: 0.04
-Nodes (31): Internal multipart producer (concurrency+1 buffers, receive overlaps send), ADR 0003, Plaintext length is a pure function of stored length, ADR 0010: Sizes and listings describe the plaintext, ADR 0012: client checksums are verified never forwarded, ADR 0024: an upload forwards while it receives, ADR 0032: The entity tag is a change token, Developer: Storage format (+23 more)
+Nodes (46): Release 5.2.0: Apache 2.0, license check removed, Helm chart README, Upgrading to the release that stops checking a licence, PrometheusRule alerts S3EPObjectIntegrityFailure and S3EPBackendTransportFailing, Upgrading the chart to 5.0.0, ADR 0016: Apache 2.0, no license check, Business Source License 1.1 for releases up to 5.1, ADR 0026: The proxy terminates TLS at its own Service (+38 more)
 
-### Community 12 - "Config Accessors and Dashboard Contract"
-Cohesion: 0.08
-Nodes (54): TestCfgGetActiveProviderErrorPaths(), TestCfgGetActiveProviderReturnsLivePointer(), TestCfgGetAllProvidersReflectsSlice(), TestCfgIsValidProviderType(), TestCfgStreamingAccessors(), TestGetMultipartPartSize(), TestOptimizationsConfig(), TestCORSComplexConfiguration() (+46 more)
+### Community 13 - "Multipart Handlers and Manager"
+Cohesion: 0.09
+Nodes (53): Manager, NewAbortHandler(), NewCompleteHandler(), NewCopyHandler(), TestCopyHandler_NotSupportedWithEncryption(), NewCreateHandler(), NewHandler(), NewListHandler() (+45 more)
 
-### Community 13 - "Hostile Backend and Key Material ADRs"
+### Community 14 - "Streaming Integration Helpers"
+Cohesion: 0.06
+Nodes (64): PerformanceMetrics, StreamingReader, ComparisonResult, PerformanceResult, weightedLeg, cleanupTestFile(), downloadLargeFile(), generateLargeFileTestData() (+56 more)
+
+### Community 15 - "Request Middleware Plumbing"
 Cohesion: 0.05
-Nodes (21): S3EP_AES_KEY injected from a chart or external Secret, ADR 0002, s3ep-encrypted-dek metadata key, s3ep-kek-algorithm metadata key, s3ep-kek-fingerprint metadata key, Bounded unwrapped data key cache, s3ep-gcm-seg-v2 AES-256-GCM segment chain, ADR 0004: One local key provider (+13 more)
+Nodes (30): BktfailingWriter, UtlNewFailingWriter(), MwFlushErrorWriter, MwNotAFlusher, MonFlushErrorWriter, MonNotAFlusher, MpuFailingWriter, ObjIntfailingWriter (+22 more)
 
-### Community 15 - "Multipart Part Layout Decisions"
+### Community 16 - "Segment Codec and Range Planner"
 Cohesion: 0.05
-Nodes (33): ADR 0001: The backend is hostile, ADR 0011, ADR 0020: Performance is measured before and after, Stored objects: what is written, what it guarantees, what leaks, Upload integrity: the client leg, Ticket 026: SSE-C on every verb, or not at all, MinIO accepts SSE-C only over TLS (tests in TLS suite), SSE-C algorithm and key-MD5 echo headers join the response allowlist (+25 more)
+Nodes (64): errReader, Invariant 3: A Nonce Is Never Reused Under One Key, PlanRange(), TestForeignObjectIsRefusedOnGetAndHead(), CiphertextSize(), TestSegEncryptReaderChecksum(), TestSegEncryptReaderMatchesWriter(), TestSegEncryptReaderPropagatesSourceError() (+56 more)
 
-### Community 16 - "Object Response Header Helpers"
-Cohesion: 0.09
-Nodes (25): RecordObjectIntegrityFailure(), PlaintextSize(), applyResponseOverrides(), integrityReason(), objectVersionID(), writeEntityHeaders(), WriteSSEHeaders(), writeVersionHeaders() (+17 more)
+### Community 17 - "Release Process and Doc Homes"
+Cohesion: 0.05
+Nodes (24): Release 5.0.0: stored format break, graphify knowledge graph: shape, never facts, Contributing guide, Pull request requirements (every CI job green), Test layers and build tags, Developer guide (DEVELOPER.md), Makefile build/test/lint/perf/coverage matrix, test-pipeline.yml CI jobs (+16 more)
 
-### Community 17 - "Orchestration Manager Coverage"
+### Community 18 - "Integrity and Tail-First Read"
+Cohesion: 0.04
+Nodes (20): ADR 0001: The S3 backend is hostile, What the backend learns anyway, ADR 0003: Objects are an authenticated segment chain, Plaintext length is a pure function of stored length, s3ep-gcm-seg-v2 AES-256-GCM segment chain, Data key cache (1024 LRU, no expiry yet), ADR 0023: Filename encryption of key segments, The Second Backend Request of a Whole-Object Read Costs About 300 Microseconds (+12 more)
+
+### Community 19 - "Client Library and Storage Format"
+Cohesion: 0.05
+Nodes (47): Release 5.4.0: client library for the stored format, ADR 0041: The project ships a client library for its stored format, HEAD as a 40-byte trailer read, Developer: Storage format, Invariant 1: Each Seal Is Bound to Its Position and Its Object, The Four Metadata Keys That Mark an Object as Ours, Parts Are Segment-Aligned, The Ranged-Read Window and Its Amplification Bound (+39 more)
+
+### Community 20 - "Configuration Loading"
 Cohesion: 0.10
-Nodes (47): OrcMgrAESConfig(), OrcMgrNewManager(), orcMgrOpenSession(), OrcMgrPrefixPtr(), orcMgrSessionCount(), TestOrcMgrAccessorsAndMetadataFiltering(), TestOrcMgrBackgroundCleanupRemovesExpiredSessions(), TestOrcMgrCleanupExpiredSessions() (+39 more)
+Nodes (58): initConfig(), createProviderFromProviderMap(), InitConfig(), Load(), loadProviderConfigs(), loadProvidersFromInterfaceSlice(), loadProvidersFromMapSlice(), setDefaults() (+50 more)
 
-### Community 19 - "Release and Test Discipline ADRs"
-Cohesion: 0.06
-Nodes (12): Semantic-release generated changelog with quality metrics, ADR 0006: the proxy serves any s3 client, CloudNativePG Barman, Velero (with kopia), ADR 0017, ADR 0018, ADR 0019: Integration and e2e tests are the product, ADR 0027: conformance is asserted against a backend that is not minio (+4 more)
+### Community 21 - "S3 API Behaviour"
+Cohesion: 0.05
+Nodes (36): ADR 0007: Forward it or refuse it, Developer: Request paths, Bucket sub-resource routing table, Upload checksum verifier reader, CRC-64/NVME slicing-by-8 table, DELETE and DeleteObjects, Listings report plaintext size, The multipart verbs routing (+28 more)
 
-### Community 20 - "Integration Corpus Seed and Budget"
-Cohesion: 0.11
-Nodes (41): Budget, CorpusObject, bucketAlreadyThere(), seedClientMultipart(), TestCorpusStillExercisesEveryWritePath(), TestSeed(), TestSeedIsComplete(), TestBudgetRefusesWhatItCannotPayFor() (+33 more)
-
-### Community 21 - "AWS-Chunked Reader Tests"
-Cohesion: 0.10
-Nodes (42): ChunkedReader, tbTrickleReader, createAWSChunkedDataMultiChunk(), createAWSChunkedEncodedBody(), downloadObjectSimple(), generateTestData(), NewChunkedReader(), parseChunkedDataManually() (+34 more)
-
-### Community 22 - "Segment Encrypt Reader Tests"
+### Community 22 - "DeleteObjects Handling"
 Cohesion: 0.09
-Nodes (43): errAfterReader, errReader, TestSegEncryptReaderChecksum(), TestSegEncryptReaderMatchesWriter(), TestSegEncryptReaderPropagatesSourceError(), TestSegEncryptReaderRoundTrip(), TestSegEncryptReaderStaysFailedAfterAnError(), TestSegEncryptReaderTinyReads() (+35 more)
+Nodes (52): ObjMiscbodyDigest(), ObjMiscdeleteObjects(), ObjMiscnewFailWriter(), ObjMiscparseDeleteResult(), TestObjMiscDeleteObjectsBackendErrorsAreMapped(), TestObjMiscDeleteObjectsBodyReadErrorIsRefused(), TestObjMiscDeleteObjectsEmptyBodyIsMalformed(), TestObjMiscDeleteObjectsEmptyDocumentIsRefused() (+44 more)
 
-### Community 23 - "Forward-or-Refuse Response Rules"
-Cohesion: 0.06
-Nodes (10): Response timestamps via response.S3Timestamp, omitempty for absent values, ADR 0007: Forward it or refuse it, ?tagging, ?retention, ?legal-hold passthrough, Ten storage headers forwarded on every upload path, ADR 0008: every response describes the proxy, S3 backend interface (52 SDK methods), Refusals: where the proxy says no rather than pretending, Managed-bucket list in configuration (+2 more)
-
-### Community 24 - "Keygen and KEK Factory"
-Cohesion: 0.09
-Nodes (34): KeyEncryptionType, FacFactoryWithAES(), TestFacAESFingerprintIsDerivedFromTheKeyNotHashedFromIt(), TestFacCreateKeyEncryptorFromConfigTypes(), TestFacGetKeyEncryptor(), TestFacKeyEncryptionTypeConstants(), TestFacRegisterKeyEncryptorKeysByFingerprint(), Factory (+26 more)
-
-### Community 25 - "Proxy Server Lifecycle Tests"
-Cohesion: 0.09
-Nodes (37): RtPxconfig(), RtPxnewFailingListener(), RtPxstringPtr(), TestRtPxListenerBudgetsReachTheServer(), TestRtPxMetadataPrefixResolution(), TestRtPxNewServerLoadsAllProvidersButActivatesOne(), TestRtPxNewServerRejectsUnusableConfig(), TestRtPxProbesReportShutdownState() (+29 more)
-
-### Community 26 - "Bucket Sub-Resource Handlers"
-Cohesion: 0.15
-Nodes (38): NewAccelerateHandler(), TestAccelerateHandler_AccelerateStatuses(), TestAccelerateHandler_AccelerationBenefits(), TestAccelerateHandler_BucketNamingRequirements(), TestAccelerateHandler_ContentTypeHandling(), TestAccelerateHandler_Handle(), TestAccelerateHandler_HandleErrors(), TestAccelerateHandler_XMLValidation() (+30 more)
-
-### Community 27 - "Encryption Mode Proxy Instances"
-Cohesion: 0.15
-Nodes (37): AESProxyTestInstance, ExitProxyTestInstance, getKeys(), IsAESProviderActive(), StartAESProviderProxyInstance(), TestAESProvider_LargeFile(), TestAESProvider_MetadataHandling(), TestAESProviderMultipleObjects() (+29 more)
-
-### Community 28 - "Filename Encryption Design"
-Cohesion: 0.06
-Nodes (20): ADR 0023: Filename encryption, ADR 0025, Ticket 017: Filename encryption, Velero leaf census and name side channels, Listing encoding asymmetry across one backend call, Lockstep duplicate drop across listing phases, Mixed-bucket name leak via clear-form fallback requests, Multi-source paged listing with proxy-minted continuation token (F3) (+12 more)
-
-### Community 29 - "Request Parser and Framing Tests"
-Cohesion: 0.10
-Nodes (34): newChunkedRequest(), mustStream(), newTestRequest(), TestReqDecodedVsPlaintextContentLength_DivergeOnlyWhereDocumented(), TestReqPlaintextContentLength(), TestReqReadAllSized_HintBoundaries(), TestReqReadBody_ForgedDecodedContentLength(), TestReqReadBody_IdentityBodyReadError() (+26 more)
-
-### Community 30 - "Filename Encryption Pass Engine"
+### Community 23 - "Tampering Harness"
 Cohesion: 0.07
-Nodes (33): Multipart abandoner closure calls raw SDK client outside the interface, names CLI surface: wrap, map, unmap, audit, migrate, Off-state accident: feature off on a mapped bucket serves ciphertext names (D-J), Extensible pass engine: enumerate/plan/transfer/verify/delete/report/config (F11), Rename operation (names migrate), Request-scoped resolution memo, s3ep-admin operator binary (favourite home of tools), Ticket 025: Vault as a key provider (parked) (+25 more)
+Nodes (14): TamEnv, ExitProvider, leg, AESProvider, shutdownTail, failingKEK, ReadStored(), driveMemoryLoad() (+6 more)
 
-### Community 31 - "Segmented Session Tests"
-Cohesion: 0.14
-Nodes (36): assembleSession(), segCompleted(), segRegisteredSession(), segStreamPart(), slowlyOver(), TestSegmentedSessionAlignedLastPartOutOfOrderIsRefused(), TestSegmentedSessionASlowPartOutlivesTheIdleTimeout(), TestSegmentedSessionEveryPartMovesTheIdleClock() (+28 more)
+### Community 24 - "Request Documents and Owner Guard"
+Cohesion: 0.08
+Nodes (15): What One In-Flight Request Costs in Memory, completionLocation(), firstForwardedValue(), clientETag(), callerOwner(), formatListTime(), parseListingCount(), declaredChecksums() (+7 more)
 
-### Community 32 - "Encryption-at-Rest Assertions"
-Cohesion: 0.17
-Nodes (31): EncObjectView, EncStored, EncAPICode(), EncAssertBodyIsCiphertext(), EncAssertEncryptedAtRest(), EncAssertHeadersClean(), EncAssertNoMetadataLeak(), EncAssertRoundTrip() (+23 more)
+### Community 25 - "Chunked Encoding Tests"
+Cohesion: 0.07
+Nodes (51): ChunkedReader, downloadObjectSimple(), NewChunkedReader(), TestChunkedEncodingCornerCases(), TestPureHTTPChunkedEncodingWithoutSDK(), TestRealChunkedEncodingWithoutSDK(), uploadWithChunkedEncodingPureHTTP(), uploadWithRealChunkedEncoding() (+43 more)
 
-### Community 33 - "Multipart Handler Wiring"
-Cohesion: 0.15
-Nodes (21): Manager, NewAbortHandler(), NewCompleteHandler(), NewCopyHandler(), NewHandler(), NewListHandler(), NewACLHandler(), NewHandler() (+13 more)
-
-### Community 34 - "Transfer Bounds and Shutdown"
+### Community 26 - "Key Material and Deployment Secrets"
 Cohesion: 0.06
-Nodes (18): Release 5.0.2: multipart idle clock moves while a part arrives, ADR 0015: a transfer is bounded by the client and by shutdown, ADR 0028: an abandoned upload is ended not forgotten, ADR 0029, Key management: hierarchy, providers, custody, rotation, Tenancy and privilege: the blast radius, Security: Threat model, Roles table (operator, client, proxy, backend, legs) (+10 more)
+Nodes (37): secrets.encryption.* and secrets.s3.* injection, ADR 0021: Key material is generated, never committed, S3EP_AES_KEY as the one key variable name, rclone, rclone over HTTPS with force_path_style, rclone's X-Amz-Meta-Md5chksum annotation, s3cmd, s3cmd compares every PUT and part ETag with its MD5 (+29 more)
 
-### Community 35 - "Multipart Conformance Suite"
-Cohesion: 0.20
-Nodes (34): MpuShape, MpuTarget, TestRangeReadErrors(), TestRangeReadsOnEncryptedObjects(), NewTestContextWithTimeout(), ProxyIsTLS(), MpuAbortQuiet(), MpuComplete() (+26 more)
+### Community 27 - "Exit Provider and Session Lifecycle"
+Cohesion: 0.05
+Nodes (20): type: none refused by name, AbortIncompleteMultipartUpload bucket lifecycle rule, multipart_session_max_age refused by name, shutdown_timeout configuration key, rclone client, s3cmd client, Major-release PR moves the /vN suffix, Proxy/library interoperability proved on every PR (+12 more)
 
-### Community 36 - "Performance Harness Shell Script"
-Cohesion: 0.15
-Nodes (34): build_project(), check_dependencies(), check_services(), cleanup(), generate_markdown_report(), get_iso_timestamp(), get_timestamp(), log_error() (+26 more)
+### Community 29 - "In-Process Provider Instances"
+Cohesion: 0.11
+Nodes (47): AESProxyTestInstance, ExitProxyTestInstance, createAWSChunkedDataMultiChunk(), generateTestData(), TestChunkedUploadDecoding(), TestComprehensiveChunkedEncoding(), getKeys(), IsAESProviderActive() (+39 more)
 
-### Community 37 - "Segmented Manager Streaming IO"
+### Community 30 - "Paid Conformance Workflow"
+Cohesion: 0.04
+Nodes (48): concurrency, cancel-in-progress, group, environment, name, runs-on, steps, strategy (+40 more)
+
+### Community 31 - "Checksum Verifier"
+Cohesion: 0.11
+Nodes (45): teeBuffer, BenchmarkChkVerifyingRead(), chkAssertOutcome(), chkChunkedRequest(), chkEncode(), chkFramed(), chkIdentityRequest(), chkParser() (+37 more)
+
+### Community 32 - "Renovate Configuration"
+Cohesion: 0.04
+Nodes (46): :automergeDigest, config:recommended, :dependencyDashboard, docker:enableMajor, :semanticCommits, assignAutomerge, automerge, automergeType (+38 more)
+
+### Community 33 - "Planned Work: SSE-C and HA"
+Cohesion: 0.05
+Nodes (36): SSE-C algorithm and key-MD5 echo headers join the response allowlist, SSE-C headers refused with 501 NotImplemented (D-35 middleware), sseCustomerHeaders helper applied to Put/Get/Head/CreateMultipart/UploadPart inputs, Ticket 036: High Availability, Pinned Part Size, Session Store Interface of Operations (RaisePartSizeAndComputeOffset, RecordPartIfCurrent), Three Deployment Forms (no store / store x1 / store xN), Reference Scenario: Velero Backup Through Rolling Update (+28 more)
+
+### Community 34 - "Server and Listings"
+Cohesion: 0.07
+Nodes (13): Handler, AWSV4Signer, callerOwner(), formatLastModified(), clientWantsURLEncoding(), decodeBackendValue(), encodeForClient(), parseMaxKeys() (+5 more)
+
+### Community 35 - "Keygen and Encrypt Readers"
+Cohesion: 0.06
+Nodes (18): main(), printKey(), TestKeygenDrawsAFreshKeyEachTime(), TestKeygenOutput(), sealSink, copyWithSize(), countingBody, ObjGetclosedBody (+10 more)
+
+### Community 36 - "Conformance Suite"
+Cohesion: 0.12
+Nodes (38): Budget, CorpusObject, bucketAlreadyThere(), seedClientMultipart(), TestSeed(), TestSeedIsComplete(), TestBudgetRefusesWhatItCannotPayFor(), BackendClient() (+30 more)
+
+### Community 37 - "Router and Middleware Setup"
 Cohesion: 0.10
-Nodes (9): Manager, PartStoredLen(), PlanRange(), ObjGetclosedBody, ObjGetcloseErrReader, SealedPart, SegmentedUpload, SegmentedWrite (+1 more)
+Nodes (35): RtPxauthHeader(), RtPxserver(), RtPxsignedRequest(), TestRtPxDetermineErrorCodeMapping(), TestRtPxDrainGuardRefusesNewWorkWithoutClosingTheDoor(), TestRtPxMiddlewareChainStreamsBodyUnchanged(), TestRtPxMiddlewareWrappersInitialiseOnDemand(), TestRtPxS3AuthMiddlewareAcceptsSignedRequest() (+27 more)
 
-### Community 38 - "Segmented Session Lifecycle"
-Cohesion: 0.10
-Nodes (6): CanStreamPart(), Manager, SegmentedSession, FinalPart, sessionPart, touchingReader
+### Community 38 - "AES TLS Example Config"
+Cohesion: 0.05
+Nodes (40): bind_address, aes_key, encryption, encryption_method_alias, providers, log_format, log_health_requests, log_level (+32 more)
 
-### Community 39 - "Ranged Read and Passthrough Tests"
-Cohesion: 0.21
-Nodes (29): ckAnswer, NewTestContext(), RandomString(), TestDeleteObjectFunctionality(), TestListBucketsOperation(), TestListBucketsPassthrough(), TestPassthroughOperations_DeleteObjects(), TestPassthroughOperations_GetObjectTorrent() (+21 more)
+### Community 39 - "Error Mapping"
+Cohesion: 0.07
+Nodes (41): MapError internalMarkers table has no producer, IsChecksumFailure(), IsChecksumUnsupported(), checksumVerdict(), codeForStatus(), RespAPIErrorNoResponse(), RespStatusOnlyError(), RespWrapMarker() (+33 more)
 
-### Community 41 - "rclone E2E Suite"
-Cohesion: 0.15
-Nodes (24): corpus, endpoint, remote, suite, SHA256Bytes(), endpoints(), newSuite(), preflight() (+16 more)
+### Community 40 - "Delete and Checksum Integration"
+Cohesion: 0.16
+Nodes (37): ckAnswer, NewTestContext(), RandomString(), TestDeleteObjectFunctionality(), TestListBucketsOperation(), TestListBucketsPassthrough(), TestPassthroughOperations_DeleteObjects(), TestPassthroughOperations_GetObjectTorrent() (+29 more)
 
-### Community 42 - "ListObjects Conformance Fixtures"
+### Community 41 - "Config Types and Monitoring Plan"
+Cohesion: 0.07
+Nodes (37): monitoringPlan(), TestMainMonitoringPlanKeepsPprofIndependent(), MonitoringConfig, OptimizationsConfig, S3BackendConfig, S3SecurityConfig, TLSConfig, backendUsesTLS() (+29 more)
+
+### Community 42 - "SigV4 Authentication Rules"
+Cohesion: 0.06
+Nodes (17): config as one string rendered into the ConfigMap, Inert values (logging.*, monitoring ports), ADR 0014: Authentication is SigV4, no rate limiting, Unsynchronised per-address failure map was a remote kill switch, Static s3_clients (8/16 char minimums), No request rate limiting, Client-declared checksums verified, never forwarded, s3_security.verify_payload_hash (+9 more)
+
+### Community 43 - "Whole-Object Read Window"
+Cohesion: 0.07
+Nodes (36): Ticket 027: Whole-Object Read First Window, Tail-First Read First Window (65604 bytes), Unbounded Concurrent Whole-Object Reads, Self-CopyObject is a Full Server-Side Rewrite (measured), Perf Findings: pre-v2 Baseline, HMAC-SHA256 Dominates the CTR+HMAC Path, Memory Far Below 512 MiB Container Limit, RSA Unwrap Four Orders of Magnitude Above AES (+28 more)
+
+### Community 44 - "Segmented Session Tests"
+Cohesion: 0.13
+Nodes (36): TestOrcMetaUnprefixedObjectIsRefused(), segCompleted(), segRegisteredSession(), slowlyOver(), TestSegmentedSessionAlignedLastPartOutOfOrderIsRefused(), TestSegmentedSessionASlowPartOutlivesTheIdleTimeout(), TestSegmentedSessionEveryPartMovesTheIdleClock(), TestSegmentedSessionFailedStreamKeepsTheHeldPart() (+28 more)
+
+### Community 45 - "Segment Seal and Trailer"
+Cohesion: 0.08
+Nodes (11): PartStoredLen(), objectTail, FinalPart, SealedPart, SegmentedUpload, Codec, crc32Combine(), gf2MatrixSquare() (+3 more)
+
+### Community 46 - "AES Example Config"
+Cohesion: 0.05
+Nodes (36): bind_address, aes_key, encryption, encryption_method_alias, providers, log_format, log_health_requests, log_level (+28 more)
+
+### Community 47 - "Backend Interface Calls"
+Cohesion: 0.11
+Nodes (3): MockS3Backend, MockS3Backend, MockKeyEncryptor
+
+### Community 48 - "Renovate Workflow"
+Cohesion: 0.06
+Nodes (35): concurrency, cancel-in-progress, group, LOG_LEVEL, RENOVATE_AUTODISCOVER, RENOVATE_AUTODISCOVER_FILTER, RENOVATE_REQUIRE_CONFIG, logLevel (+27 more)
+
+### Community 49 - "Backend TLS Trust"
+Cohesion: 0.08
+Nodes (34): ca_file per Backend Entry, SSL_CERT_FILE / SSL_CERT_DIR Root Loading, TestBackendHTTPClient_SkipVerifyKeepsEverythingElse(), TestBackendHTTPClient_VerifiesByDefault(), backendClientOptions(), backendHTTPClient(), RtPxconfig(), RtPxstringPtr() (+26 more)
+
+### Community 50 - "CORS and Middleware"
+Cohesion: 0.08
+Nodes (22): SSECustomerHeader(), CORS, NewCORS(), MwechoHandler(), MwtestLogger(), TestMwCORSMiddleware(), TestMwLoggerDefaultsToOKWithoutExplicitWriteHeader(), TestMwLoggerMiddleware() (+14 more)
+
+### Community 51 - "Semantic-Release Dry Run"
+Cohesion: 0.06
+Nodes (33): concurrency, cancel-in-progress, group, BASE_REF, GITHUB_TOKEN, HAS_LABEL, HAS_MAJOR_LABEL, HEAD_SHA (+25 more)
+
+### Community 52 - "ListObjects Conformance"
 Cohesion: 0.15
 Nodes (31): lstBulkFixture, lstRefFixture, lstAssertElementOrder(), lstBody(), lstBulkKeys(), lstChildElements(), lstCiphertextSize(), lstElementSequence() (+23 more)
 
-### Community 43 - "DeleteObjects Coverage Tests"
-Cohesion: 0.13
-Nodes (29): ObjMiscbodyDigest(), ObjMiscdeleteObjects(), ObjMiscnewFailWriter(), ObjMiscparseDeleteResult(), TestObjMiscDeleteObjectsBackendErrorsAreMapped(), TestObjMiscDeleteObjectsBodyReadErrorIsRefused(), TestObjMiscDeleteObjectsEmptyBodyIsMalformed(), TestObjMiscDeleteObjectsEmptyDocumentIsRefused() (+21 more)
-
-### Community 44 - "Bucket XML Document Types"
-Cohesion: 0.12
-Nodes (31): abortIncompleteUploadDocument, accessControlXlatePD, encryptionConfigPD, errorDocumentPD, indexDocumentPD, lifecycleAndDocument, lifecycleConfigurationDocument, lifecycleExpirationDocument (+23 more)
-
-### Community 45 - "Configuration Struct and Accessors"
-Cohesion: 0.12
-Nodes (29): EncryptionConfig, MonitoringConfig, OptimizationsConfig, S3BackendConfig, S3SecurityConfig, TLSConfig, Defaults Written Into Viper Before the File Is Read, A Provider Block Swallows Its Own Parameters (the ErrorUnused Boundary) (+21 more)
-
-### Community 46 - "Config Loading Coverage Tests"
-Cohesion: 0.28
-Nodes (32): InitConfig(), Load(), CfgNoLicense(), CfgResetViper(), CfgWriteConfigFile(), TestCfgAbsentSessionIdleTimeoutTakesTheDefault(), TestCfgBackendsAreAList(), TestCfgInitConfigDiscoversFileInHomeDirectory() (+24 more)
-
-### Community 47 - "Monitoring Test Imports"
-Cohesion: 0.09
-Nodes (15): MonfreeAddr(), Monserve(), TestMonMetricsEndpointExportsTheRequestMetrics(), TestMonNewServerConfiguration(), TestMonServerEndpointsSurviveWriteFailures(), TestMonServerLivenessEndpoint(), TestMonServerMetricsEndpoint(), TestMonServerNeverServesPprof() (+7 more)
-
-### Community 48 - "Integration Failing Writer Fixtures"
-Cohesion: 0.15
-Nodes (25): ObjIntfailingWriter, HdrCaptureResponseBody(), HdrCaptureResponseHeaders(), HdrCleanupBucket(), HdrGetHeaders(), HdrHeadHeaders(), HdrIsContentDigestShape(), HdrIsObjectHeader() (+17 more)
-
-### Community 49 - "Bucket Location and Logging Tests"
-Cohesion: 0.09
-Nodes (26): TestBucketLocationErrorHandling(), TestBucketLocationMethodHandling(), TestBucketLocationRegionMapping(), TestBucketLocationSecurityScenarios(), TestBucketLocationXMLFormat(), TestBucketLocationXMLValidation(), TestHandleBucketLocation_GET_NoClient(), TestBucketLoggingErrorHandling() (+18 more)
-
-### Community 50 - "XML Document Marshalling"
-Cohesion: 0.08
-Nodes (26): accelerateConfigurationDocument, BkterrorDoc, locationConstraintDocument, requestPaymentConfigurationDocument, versioningConfigurationDocument, TestRespNewXMLWriter(), commonPrefix, completeMultipartUploadResult (+18 more)
-
-### Community 51 - "Renovate Dependency Configuration"
+### Community 53 - "Exit Example Config"
 Cohesion: 0.06
-Nodes (30): assignAutomerge, automerge, automergeType, branchConcurrentLimit, commitMessagePrefix, configMigration, customManagers, dockerfile (+22 more)
+Nodes (32): bind_address, aes_key, encryption, encryption_method_alias, providers, log_format, log_health_requests, log_level (+24 more)
 
-### Community 52 - "CI Pipeline and Renovate Jobs"
-Cohesion: 0.09
-Nodes (26): Assign on Renovate Pipeline Failure job, Self-hosted Renovate job, Test pipeline workflow (test-pipeline.yml), Combined Coverage job, E2E rclone (minio) job, E2E s3cmd (minio) job, E2E Velero (kind) job, GoSec Security Scan job (+18 more)
+### Community 54 - "Encryption At Rest Tests"
+Cohesion: 0.23
+Nodes (31): EncObjectView, EncStored, NewProxyTLSClient(), EncAPICode(), EncAssertBodyIsCiphertext(), EncAssertEncryptedAtRest(), EncAssertHeadersClean(), EncAssertNoMetadataLeak() (+23 more)
 
-### Community 53 - "Bucket Sub-Resource Handler Registry"
-Cohesion: 0.09
-Nodes (18): AccelerateHandler, ACLHandler, BaseSubResourceHandler, LocationHandler, NotificationHandler, RequestPaymentHandler, NewACLHandler(), TestBucketHandle_BaseOperationsStillReachTheBackend() (+10 more)
+### Community 55 - "GET Response Writing"
+Cohesion: 0.11
+Nodes (31): TestObjGetWriteGetObjectResponseBodyFailure(), TestObjGetWriteGetObjectResponseMinimalOutput(), assertNoChecksumHeaders(), headerNames(), newEncryptingTestHandler(), newResponseTestHandler(), objAWSChunked(), objCallAutoMultipart() (+23 more)
 
-### Community 54 - "Segmented GCM Reader and Writer"
-Cohesion: 0.13
-Nodes (5): reader, sealSink, Writer, Codec, EncryptReader
+### Community 56 - "Performance and Test Docs"
+Cohesion: 0.07
+Nodes (18): Developer: Performance, The After Column (perf-baseline 20260911T103132Z-cc62c05), Three Suspicions Measured and Falsified, S3EP_PERF_ALT_PROXY second proxy, Three-Leg Upload Comparison, Two Transports Inside One Ratio (HTTP proxy leg vs HTTPS backend leg), What Ruins a Before/After Comparison, Developer: Testing (+10 more)
 
-### Community 55 - "Health Probes and Request Tracker"
-Cohesion: 0.12
-Nodes (10): Handler, AWSV4Signer, StripAWSChunked(), TestStripAWSChunked(), ReadEntityHeaders(), ReadStorageAttributes(), ReadUploadHeaders(), pacedBody (+2 more)
+### Community 57 - "Multipart Conformance"
+Cohesion: 0.29
+Nodes (28): MpuShape, MpuTarget, NewTestContextWithTimeout(), MpuAbortQuiet(), MpuComplete(), MpuCreate(), MpuDigest(), MpuEncryptionMeta() (+20 more)
 
-### Community 56 - "Checksum Verifier Tests"
-Cohesion: 0.25
-Nodes (29): BenchmarkChkVerifyingRead(), chkAssertOutcome(), chkChunkedRequest(), chkEncode(), chkFramed(), chkIdentityRequest(), chkParser(), chkPayload() (+21 more)
+### Community 58 - "Release Tooling"
+Cohesion: 0.08
+Nodes (25): ADR-0017, ADR-0018, author, description, devDependencies, conventional-changelog-conventionalcommits@9.3.1, semantic-release@^25.0.0, @semantic-release/changelog@^7.0.0 (+17 more)
 
-### Community 57 - "DeleteObjects Batch Documents"
+### Community 59 - "DeleteObjects Conformance"
 Cohesion: 0.24
 Nodes (29): DelDeletedEntry, DelErrorDoc, DelErrorEntry, DelRequestDoc, DelRequestObject, DelResponse, DelResultDoc, DelBuildDoc() (+21 more)
 
-### Community 58 - "Bucket CORS Handler"
-Cohesion: 0.11
-Nodes (4): CORSHandler, PolicyHandler, ReplicationHandler, Handler
-
-### Community 59 - "Service TLS and Operator Certificates"
-Cohesion: 0.12
-Nodes (20): ADR 0026, ADR 0033, Ticket 038: s3-encryption-operator, Accepted risk: cluster-wide Secret read bounded by nothing, Configuration read only at start (no SIGHUP, no watch), Operator credential model (backend carried, client minted, licence copied, KEK open), Finding AM: one licence token guarantees fleet-wide simultaneous expiry, Finding C: one key pair serves as backend and client credential (+12 more)
-
-### Community 60 - "Semantic Release Toolchain"
+### Community 60 - "PrometheusRule Chart Tests"
 Cohesion: 0.07
-Nodes (25): ADR-0017, ADR-0018, author, description, devDependencies, conventional-changelog-conventionalcommits, semantic-release, @semantic-release/changelog (+17 more)
+Nodes (27): equal, hasDocuments, isKind, lengthEqual, matchRegex, path, value, count (+19 more)
 
-### Community 61 - "Config Env Var Expansion"
-Cohesion: 0.12
-Nodes (25): ${VAR} References Inside a Named List of Fields, Where each secret lives, default_config_test.go — the ${VAR} set of the shipped image config, TestCfgExpandConfigEnvVarsErrorPerField(), TestCfgExpandConfigEnvVarsExpandsEveryField(), expandConfigEnvVars(), expandEnvVars(), TestExpandConfigEnvVars_MissingProviderVarReturnsError() (+17 more)
+### Community 61 - "Development Chart Values"
+Cohesion: 0.07
+Nodes (27): autoscaling, enabled, certificate, enabled, config, image, pullPolicy, repository (+19 more)
 
-### Community 62 - "Performance Baselines and Findings"
+### Community 62 - "Manager Tests"
+Cohesion: 0.16
+Nodes (25): OrcMgrAESConfig(), OrcMgrNewManager(), orcMgrOpenSession(), OrcMgrPrefixPtr(), orcMgrSessionCount(), TestOrcMgrAccessorsAndMetadataFiltering(), TestOrcMgrBackgroundCleanupRemovesExpiredSessions(), TestOrcMgrCleanupExpiredSessions() (+17 more)
+
+### Community 63 - "Multi-Provider Example Config"
+Cohesion: 0.07
+Nodes (26): bind_address, aes_key, encryption, encryption_method_alias, providers, log_format, log_health_requests, log_level (+18 more)
+
+### Community 64 - "Filename Encryption Ticket"
 Cohesion: 0.10
-Nodes (22): closeDrained(), wave3 — 1 MiB Ranged Read at 153.8 MiB/s (68 % of Direct), wave3 Run — uploadpath and memory Skipped, Baseline Run wave3-checksums (20260911T064137Z-233d559), Baseline Run post-v2-wave5 (20260911T101344Z-cc62c05), Baseline Run post-v2-wave5-drained (20260911T102319Z-cc62c05), Between-Run Spread — Anything Under 15 % End to End Is the Machine, The Multipart Leg Moved (+33 % to +47 %) (+14 more)
+Nodes (23): s3cmd e2e suite S1-S7, Velero e2e suite in kind, LRU DEK cache bounded at 1024 entries, Where each secret lives, Ticket 017: Filename encryption, Multipart abandoner closure calls raw SDK client outside the interface, Hand-rolled RFC 5297 AES-SIV with 512-bit key (F5), Exit provider accepts only off/drain; ADR 0025 carve-out (F10) (+15 more)
 
-### Community 64 - "Error Mapping Coverage Tests"
+### Community 65 - "Image Push Workflow"
+Cohesion: 0.07
+Nodes (27): with, build-args, command, context, driver-opts, fetch-depth, file, files (+19 more)
+
+### Community 66 - "Test Pipeline Workflow"
+Cohesion: 0.10
+Nodes (27): name, runs-on, steps, name, runs-on, steps, govulncheck, helm-chart (+19 more)
+
+### Community 67 - "s3cmd E2E Suite"
+Cohesion: 0.19
+Nodes (25): endpoint, suite, CopyFile(), SHA256File(), WriteRandomFile(), boolWord(), containsStr(), endpoints() (+17 more)
+
+### Community 68 - "Bucket Sub-Resource Documents"
+Cohesion: 0.14
+Nodes (24): abortIncompleteUploadDocument, accessControlXlatePD, encryptionConfigPD, errorDocumentPD, indexDocumentPD, lifecycleConfigurationDocument, lifecycleExpirationDocument, lifecycleRuleDocument (+16 more)
+
+### Community 69 - "Bucket XML Documents"
+Cohesion: 0.08
+Nodes (23): accelerateConfigurationDocument, BkterrorDoc, listBucketResultV1, listBucketResultV2, locationConstraintDocument, objectEntry, requestPaymentConfigurationDocument, versioningConfigurationDocument (+15 more)
+
+### Community 70 - "S3 Methods: Sealed Checksum Test"
 Cohesion: 0.15
-Nodes (23): RespAPIErrorNoResponse(), RespCapturingLogger(), RespFindEntry(), RespNewFailingWriter(), RespStatusOnlyError(), RespWrapMarker(), TestRespMapErrorBackend5xxKeepsReasonPhrase(), TestRespMapErrorCodeForStatusFallback() (+15 more)
+Nodes (22): benchGetResponse(), BenchmarkGetResponseCopy(), TestContext, BenchmarkStreamingDownload(), BenchmarkStreamingUpload(), EnsureBenchmarkEnvironment(), prepareBenchmarkBucket(), downloadAndVerifyWithSDK() (+14 more)
 
-### Community 65 - "License Tool"
-Cohesion: 0.18
-Nodes (22): collectLicenseInfo(), LicTcaptureStdout(), LicTextractToken(), LicTkey(), LicTwithStdin(), LicTwritePEM(), TestLicTCollectLicenseInfo(), TestLicTEndToEnd() (+14 more)
+### Community 71 - "Request: Parser Test"
+Cohesion: 0.14
+Nodes (26): newChunkedRequest(), mustStream(), newTestRequest(), TestReqDecodedVsPlaintextContentLength_DivergeOnlyWhereDocumented(), TestReqPlaintextContentLength(), TestReqReadBody_ForgedDecodedContentLength(), TestReqReadBody_IdentityBodyReadError(), TestReqReadBody_ZeroLengthBody() (+18 more)
 
-### Community 66 - "Helm ConfigMap and Deployment"
-Cohesion: 0.09
-Nodes (19): configmap.yaml (renders config.yaml), s3-encryption-proxy.probe helper, s3-encryption-proxy.validatePreStop, s3-encryption-proxy.validateReplicas, s3-encryption-proxy.validateTLS, HorizontalPodAutoscaler Template, Ingress Template, PodDisruptionBudget Template (+11 more)
-
-### Community 67 - "Multipart Handler Constructors"
-Cohesion: 0.23
-Nodes (23): NewCreateHandler(), alignedPlaintext(), assertDetachedContext(), setupMultipartTestEnv(), TestAbortHandler_AbortSurvivesCancelledRequestContext(), TestAbortHandler_Handle(), TestCompleteHandler_AbortSurvivesClientDisconnect(), TestCompleteHandler_Handle() (+15 more)
-
-### Community 68 - "Object Dispatch Coverage Tests"
-Cohesion: 0.24
-Nodes (23): ObjMiscallowedMethods(), ObjMiscassertNotImplemented(), ObjMiscdo(), ObjMiscdoFunc(), ObjMiscnewHandler(), ObjMiscsealed(), TestObjMiscACLHandlerDirectEntryPoint(), TestObjMiscHandleACLBeatsTaggingWhenBothArePresent() (+15 more)
-
-### Community 69 - "ListBuckets Coverage Tests"
-Cohesion: 0.15
-Nodes (18): RtPxdoListBuckets(), RtPxlistBuckets(), RtPxnewHandler(), TestRtPxListBucketsBackendErrors(), TestRtPxListBucketsClientDisconnect(), TestRtPxListBucketsDocumentShape(), TestRtPxListBucketsEchoesPrefixAndContinuationToken(), TestRtPxListBucketsEmptyAccount() (+10 more)
-
-### Community 70 - "S3 Error Mapping"
-Cohesion: 0.15
-Nodes (23): IsChecksumFailure(), IsChecksumUnsupported(), checksumVerdict(), codeForStatus(), internalMarkers, MapError(), discardLogger(), sdkError() (+15 more)
-
-### Community 72 - "Segment Seal and Open Internals"
+### Community 72 - "Storedobject: Storedobject"
 Cohesion: 0.13
-Nodes (8): Handlers that reach past orchestration into the format package, objectTail, Codec, crc32Combine(), gf2MatrixSquare(), gf2MatrixTimes(), Checksum, Codec
+Nodes (15): ClaimsFormat(), Fingerprint(), IsReserved(), KEKAlgorithm(), Metadata(), TestGettersReportMissingAndMalformedFields(), TestIsReservedIgnoresCase(), testKEK() (+7 more)
 
-### Community 73 - "Object Metadata Coverage Tests"
+### Community 73 - "Misc"
+Cohesion: 0.10
+Nodes (5): RtPxnewFailingListener(), MwHijackWriter, MonfailingListener, MonHijackWriter, RtPxfailingListener
+
+### Community 74 - "Middleware: S3Auth Robust"
+Cohesion: 0.13
+Nodes (12): canonicalQueryString(), canonicalURI(), isPresignedRequest(), parseCredentialScope(), TestAuthCanonicalQueryIsSortedByName(), TestCanonicalQueryString(), TestCanonicalURI(), TestURIEncode() (+4 more)
+
+### Community 75 - "Orchestration: Providers Coverage Test"
+Cohesion: 0.17
+Nodes (25): OrcMetaAESProvider(), OrcMetaNewProviderManager(), OrcMetaProviderConfig(), TestOrcMetaDecryptDEKUnknownFingerprint(), TestOrcMetaDecryptionSelectsProviderByFingerprint(), TestOrcMetaExitProviderStillUnwrapsWhatTheAESProviderWrapped(), TestOrcMetaFingerprintIsStableAcrossConstruction(), TestOrcMetaForgedExitFingerprintIsRefused() (+17 more)
+
+### Community 76 - "Orchestration: Segmented Session"
+Cohesion: 0.14
+Nodes (8): CanStreamPart(), SegmentedSession, sinceStart(), assembleSession(), segStreamPart(), SessionPart, sessionPart, touchingReader
+
+### Community 77 - "Object: Metadata Coverage Test"
 Cohesion: 0.13
 Nodes (21): ObjMiscnewHandlerWithPrefix(), copyWithPooledBuffer(), ObjMiscdigest(), ObjMiscpayload(), ObjMiscstore(), TestObjMiscCleanMetadataEdgeInputs(), TestObjMiscCleanMetadataHonoursACustomPrefix(), TestObjMiscCleanMetadataStripsOnlyThePrefixedKeys() (+13 more)
 
-### Community 74 - "E2E At-Rest Assertions"
-Cohesion: 0.13
-Nodes (19): corpus, AssertStoredIsNotPlaintext(), Format, statSize(), CopyFile(), MD5Base64File(), MD5File(), StoredObject (+11 more)
+### Community 78 - "Request: Streaming Decoder Coverage Test"
+Cohesion: 0.14
+Nodes (25): ChkpayloadHash(), ChkverifyingParser(), TestChkPayloadHashIsNotVerifiedUnlessConfigured(), TestChkPayloadHashIsVerifiedBesideAnotherDigest(), TestChkPayloadHashIsVerifiedWhenConfigured(), TestChkPayloadHashNeverSatisfiesTheDeleteObjectsRule(), newStreamingAWSChunkedReader(), testLogger() (+17 more)
 
-### Community 75 - "s3cmd E2E Suite"
-Cohesion: 0.21
-Nodes (20): endpoint, suite, SHA256File(), WriteRandomFile(), boolWord(), containsStr(), endpoints(), newSuite() (+12 more)
+### Community 79 - "S3 Encryption Proxy: Values"
+Cohesion: 0.08
+Nodes (23): clusterDomain, config, configMap, existingConfigMapName, useExistingConfigMap, env, fullnameOverride, imagePullSecrets (+15 more)
 
-### Community 76 - "Performance Test Client"
-Cohesion: 0.18
-Nodes (19): rssSampler, emptyBucket(), ensureBucket(), httpClientFor(), isAlreadyOwned(), legsFor(), newS3Client(), testCAPool() (+11 more)
+### Community 80 - "Object: Storage Headers"
+Cohesion: 0.14
+Nodes (12): Exit provider pass-through on every path, StripAWSChunked(), TestStripAWSChunked(), optionalString(), ReadEntityHeaders(), ReadStorageAttributes(), ReadUploadHeaders(), CleanupContext() (+4 more)
 
-### Community 77 - "Config Defaults and Provider Loading"
-Cohesion: 0.12
-Nodes (22): loadProviderConfigs(), setDefaults(), TestGetActiveProvider(), TestGetActiveProvider_NoAlias(), TestGetActiveProvider_NotFound(), TestGetAllProviders(), TestListenerBudgetDefaults(), TestLoad_MissingTargetEndpoint() (+14 more)
+### Community 81 - "Tests: Deployment Test"
+Cohesion: 0.09
+Nodes (22): example.com/owner, autoscaling.enabled, certificate.enabled, clusterDomain, config, configMap.existingConfigMapName, configMap.useExistingConfigMap, ingress.enabled (+14 more)
 
-### Community 78 - "Monitoring Middleware Tests"
-Cohesion: 0.13
-Nodes (12): MonrequestMetric(), TestMonHTTPMiddlewareDefaultsToStatus200(), TestMonHTTPMiddlewareRecordsRoutedRequest(), TestMonHTTPMiddlewareTracksActiveConnections(), TestMonHTTPMiddlewareUnknownEndpoint(), TestMonResponseWriterCapturesStatusCode(), TestMonResponseWriterForwardsToTheLiveWriter(), TestMonResponseWriterKeepsTheWriterCapabilities() (+4 more)
-
-### Community 79 - "Object Listing Handler"
-Cohesion: 0.16
-Nodes (10): callerOwner(), formatLastModified(), Handler, clientWantsURLEncoding(), decodeBackendValue(), encodeForClient(), parseMaxKeys(), ClientIdentity() (+2 more)
-
-### Community 80 - "Documentation Homes and Ticket Lifecycle"
-Cohesion: 0.11
-Nodes (5): Five documentation homes (ADR, developer, operations, security, tickets), ADR 0022, ADR 0035: the readme advertises the reference lives under docs, ADR 0038: The security architecture is one page per perspective, ADR numbers assigned by hand with no uniqueness check
-
-### Community 81 - "Validation"
-Cohesion: 0.16
-Nodes (20): backendUsesTLS(), validate(), validateBackendTransport(), validateLicenseAndEncryption(), validateS3Clients(), validateS3Security(), CfgExitProviderConfig(), CfgValidClients() (+12 more)
-
-### Community 82 - "Multipart ListParts Handler"
-Cohesion: 0.17
-Nodes (6): ListParts answered from the session part table, clientETag(), callerOwner(), formatListTime(), parseListingCount(), UploadHandler
-
-### Community 83 - "Integration Test Imports"
-Cohesion: 0.15
-Nodes (11): CksAssertChecksumSealed(), CksAssertServedChecksum(), CksCheckWritePath(), CksDelete(), CksExpected(), CksOffsets(), CksPayload(), CksStored() (+3 more)
-
-### Community 84 - "aws-chunked Streaming Decoder"
-Cohesion: 0.23
-Nodes (20): newStreamingAWSChunkedReader(), testLogger(), TestStreamingAWSChunkedReader_Errors(), TestStreamingAWSChunkedReader_MultipleTrailers(), TestStreamingAWSChunkedReader_RoundTrip(), TestStreamingAWSChunkedReader_SizeMismatch(), TestStreamingAWSChunkedReader_SmallReads(), TestReqStreamingAWSChunkedReader_BlankLineBetweenChunks() (+12 more)
-
-### Community 85 - "Health Probe Handler"
+### Community 82 - "Health: Handler Coverage Test"
 Cohesion: 0.20
 Nodes (16): HlthfailingWriter, HlthrecordingWriter, HlthnewFailingWriter(), HlthnewTestLogger(), TestHlthLiveIsConstantEvenWhileDraining(), TestHlthLogHealthRequests(), TestHlthNewHandler(), TestHlthReadyReportsTheDrain() (+8 more)
 
-### Community 86 - "Harness"
-Cohesion: 0.19
-Nodes (20): GitInfo, Hardware, InstrumentStatus, Measurement, Run, RunInfo, StackInfo, collectGit() (+12 more)
-
-### Community 87 - "Configuration"
-Cohesion: 0.10
-Nodes (19): config/default.yaml (the image's own configuration), ${VAR} environment reference mechanism, optimizations.multipart_part_size, S3EP_AES_KEY, S3EP_BACKEND_ENDPOINT, S3EP_LICENSE_TOKEN, An undefined configuration key refuses the start, One instance per release; the chart refuses a second (+11 more)
-
-### Community 88 - "Copy and Delete Object Handlers"
-Cohesion: 0.16
-Nodes (17): TestCopyHandler_NotSupportedWithEncryption(), TestHandler_CopyObjectHeaderDetection(), TestHandler_CopyObjectNotSupported(), TestHandleDeleteObject_InputValidation(), TestHandleDeleteObject_S3Error(), TestHandleDeleteObject_Success(), TestHandleDeleteObject_VersionID(), TestHandleDeleteObjectIntegration_BaseObjectOperations() (+9 more)
-
-### Community 89 - "Vault Transit KEK Provider (parked)"
-Cohesion: 0.10
-Nodes (17): The HMAC Is The Entire Difference, The Container Memory Limit Is Nowhere Near Reached, pre-v2 Baseline Findings, Ranged Reads: The Alignment Before-Column, The Proxy Barely Gets Faster With More Clients, RSA Unwrap Is Four Orders Of Magnitude Off The Local Provider, Upload Falls Off A Cliff At The Routing Threshold, pre-v2 Baseline Run Record (+9 more)
-
-### Community 90 - "Subresource Documents"
+### Community 83 - "Keyencryption: Aes Test"
 Cohesion: 0.13
-Nodes (12): accessControlListPD, accessControlPolicyDocument, bucketLoggingStatusDocument, grantDocument, granteeDocument, loggingEnabledDocument, ownerDocument, targetGrantsPD (+4 more)
+Nodes (21): KekBytePattern(), KekNewAES(), TestKekAESDEKRoundTrip(), TestKekAESEncryptDEKUsesFreshSalt(), TestKekAESFingerprintStabilityAndUniqueness(), TestKekAESNewFromRawKEK(), TestKekAESNewProviderFromConfigMap(), NewAESKeyEncryptor() (+13 more)
 
-### Community 91 - "Exec"
-Cohesion: 0.18
-Nodes (10): teeBuffer, FirstMatch(), Result, io2(), MustRun(), Redact(), Run(), RunWithEnv() (+2 more)
+### Community 84 - "Harness: Atrest"
+Cohesion: 0.15
+Nodes (20): TestUserMetadataIsNilWhenNothingIsLeft(), corpus, AssertEncryptedAtRest(), AssertStoredIsNotPlaintext(), Format, statSize(), DemoStack(), MD5Base64File() (+12 more)
 
-### Community 92 - "Performance"
-Cohesion: 0.21
-Nodes (18): BenchmarkChkAlgorithms(), chkKey(), ComparisonResult, PerformanceResult, weightedLeg, chkAlgorithm, BenchmarkStreamingDownload(), BenchmarkStreamingUpload() (+10 more)
-
-### Community 93 - "Backend Call Observation"
-Cohesion: 0.38
-Nodes (18): backendSnapshot(), ObserveBackendClient(), MonbackendRequest(), MoncounterValue(), MonresetBackendObservation(), TestMonBackendCancelledRequestIsNeitherCountedNorLogged(), TestMonBackendClassifiesFailures(), TestMonBackendFailureIsCountedAndLogged() (+10 more)
-
-### Community 94 - "ETag Marker Codec"
-Cohesion: 0.18
-Nodes (13): isHexDigest(), leadingSpace(), Mark(), requote(), TestEtagMarkOnlyTouchesTheDigestShape(), TestEtagRoundTripsForEveryShapeTheProxyAnswers(), TestEtagTheMarkerIsNotAShapeS3Produces(), TestEtagUnmarkIsShapeDrivenNotATrim() (+5 more)
-
-### Community 95 - "S3 Error Document Writer"
-Cohesion: 0.28
-Nodes (16): TestRespErrorDocumentCarriesTheResponseRequestID(), TestRespWriteS3Error_DoesNotLeakBackendDetail(), TestRespWriteS3Error_EscapesResource(), TestRespWriteS3Error_InternalTextStaysInternal(), TestRespWriteS3Error_NilError(), TestRespWriteS3Error_ResourceComposition(), TestRespWriteS3Error_StatusDrivesLogLevel(), TestRespWriteS3Error_WriteFailureIsLogged() (+8 more)
-
-### Community 96 - "Main"
-Cohesion: 0.16
-Nodes (13): initConfig(), monitoringPlan(), runProxy(), runShutdownTail(), startupWarnings(), TestMainMonitoringPlanKeepsPprofIndependent(), TestMainShutdownClosesTheListenerEvenWhenTheSweepFails(), TestMainShutdownExhaustedBudgetStillSweepsAndCloses() (+5 more)
-
-### Community 97 - "Client E2E Verdicts"
-Cohesion: 0.11
-Nodes (17): test/perf baseline records, never asserts throughput, e2e verdict table (Still broken section), rclone's X-Amz-Meta-Md5chksum annotation, rclone, use_multipart_etag = false, host_bucket must equal host_base (path style), s3cmd sends no Content-MD5 for an object body, s3cmd (+9 more)
-
-### Community 98 - "Backend"
-Cohesion: 0.18
-Nodes (12): Backend observer on o.HTTPClient below the SDK (classifyBackendFailure: dns/tls/timeout/connect/other), s3ep_backend_transport_failures_total{class}, classifyBackendFailure(), isConnectFailure(), isTimeoutFailure(), isTLSFailure(), observeRequestBody(), recordBackendFailure() (+4 more)
-
-### Community 99 - "Metrics"
-Cohesion: 0.18
-Nodes (14): MondefaultMetric(), MongatherMetric(), TestMonGetKubernetesLabels(), TestMonLicenseDaysRemainingIsGone(), TestMonLicenseInfoCarriesNoLicenseeIdentity(), TestMonSetLicenseInfo(), TestMonSetServerInfo(), Gatherer() (+6 more)
-
-### Community 100 - "Checksum"
-Cohesion: 0.18
-Nodes (12): declaredChecksums(), declaredPayloadHash(), DeclaresChecksum(), decodeDigest(), malformed(), mismatch(), TestChkPayloadHashIgnoresEverythingThatIsNotADigest(), Verdict() (+4 more)
-
-### Community 101 - "Logger"
-Cohesion: 0.23
-Nodes (17): LiclevelOf(), TestLicFormatTimeRemainingSubHour(), TestLicLogLicenseInfoExhaustedTimeRemaining(), TestLicLogLicenseInfoExpiringSoon(), TestLicLogLicenseInfoFullDetails(), TestLicLogLicenseInfoInvalidResult(), TestLicLogLicenseInfoMinimalClaims(), TestLicLogLicenseInfoWithoutClaims() (+9 more)
-
-### Community 102 - "HTTP Middleware Coverage Tests"
-Cohesion: 0.20
-Nodes (10): MwechoHandler(), MwtestLogger(), TestMwCORSMiddleware(), TestMwLoggerDefaultsToOKWithoutExplicitWriteHeader(), TestMwLoggerMiddleware(), TestMwRequestTracker(), TestMwResponseWriterForwardsToTheLiveWriter(), TestMwResponseWriterKeepsTheWriterCapabilities() (+2 more)
-
-### Community 103 - "Testing"
-Cohesion: 0.12
-Nodes (14): Conformance cost rule and Budget.Authorize, Conformance suite (any backend), Two-process coverage merge, one toolchain, LINT_TAGS covers the tagged trees, Paid-run bucket policy (scoped sub-user), Five test layers, x-amz-expected-bucket-owner forwarded on every verb, Part numbers run 1 to 9999 (+6 more)
-
-### Community 104 - "Monitoring"
-Cohesion: 0.11
-Nodes (16): Docker Compose deployment, Helm chart install, Three installation paths, Unauthenticated metrics listener, PrometheusRule alerting rules ship with the chart, s3ep_active_connections, s3ep_backend_last_failure_timestamp, s3ep_backend_last_response_timestamp (+8 more)
-
-### Community 105 - "Segment Tamper"
-Cohesion: 0.29
-Nodes (10): TamEnv, TamShape, What a ranged read proves, TamAssertRefused(), TamDigest(), TamInspect(), TamSetup(), TestSegmentChainRefusesTamperedBytes() (+2 more)
-
-### Community 106 - "Integration Test Layers"
-Cohesion: 0.12
-Nodes (13): encryption-modes starts the proxy in process, Integration suites under test/integration, shutdown integration package, AbortIncompleteMultipartUpload lifecycle rule, Graceful shutdown ends open uploads, optimizations.multipart_session_idle_timeout, Shipped configuration examples, GET /livez (+5 more)
-
-### Community 107 - "Object Sub-Resource Documents"
-Cohesion: 0.17
-Nodes (9): newTagDocuments(), newLegalHoldDocument(), newRetentionDocument(), newTaggingDocument(), legalHoldDocument, retentionDocument, tagDocument, taggingDocument (+1 more)
-
-### Community 108 - "Streaming Upload and Sealed Checksum"
-Cohesion: 0.24
-Nodes (13): TestContext, downloadAndVerifyWithSDK(), performMultipartUploadWithSDK(), TestStreamingMultipartUpload(), TestStreamingVsStandardPerformance(), TestVbClientDrivenMultipartEntityHeaders(), TestVbDeleteMarkerAndVersionDelete(), TestVbMultipartUploadLeavesExactlyOneVersion() (+5 more)
-
-### Community 109 - "Object Sub-Resource Dispatch"
-Cohesion: 0.14
-Nodes (3): Handler, IsAWSProtocolQueryParam(), TestReqIsAWSProtocolQueryParam()
-
-### Community 110 - "Range Conformance"
-Cohesion: 0.36
-Nodes (14): rngCase, rngFixture, rngObserved, rngCasesFor(), rngNewFixture(), rngPayload(), rngRawGet(), rngViaMinIO() (+6 more)
-
-### Community 111 - "Demo Stack and Integration Jobs"
+### Community 85 - "Orchestration: Providers"
 Cohesion: 0.13
-Nodes (13): Integration Tests job, Performance summary and badge step, Demo MinIO service (HTTPS, pgsty/minio), Proxy healthcheck sidecar, Demo proxy service (container proxy, :8080), Demo TLS proxy service (container proxy-tls, :8443), S3 explorer through the proxy (encrypted-manager), Vault dev server (transit engine) (+5 more)
+Nodes (7): buildDEKCacheKey(), TestOrcMetaDEKCacheKeyIsScopedByFingerprint(), TestOrcMetaDEKCacheStoresACopyOfTheCallerSlice(), TestProviderManager_CacheLRUEviction(), ProviderInfo, ProviderManager, ProviderSummary
 
-### Community 112 - "Backend Client"
-Cohesion: 0.19
-Nodes (11): backendOptions(), TestBackendClientOptions_ChecksumsOnlyWhenRequired(), TestBackendClientOptions_EveryPathIsObserved(), TestBackendClientOptions_InsecureSkipVerifyReachesTheTransport(), TestBackendClientOptions_NoEndpointLeavesDefaults(), TestBackendClientOptions_PathStyleAndEndpoint(), TestBackendHTTPClient_SkipVerifyKeepsEverythingElse(), TestBackendHTTPClient_VerifiesByDefault() (+3 more)
+### Community 86 - "Adr: 0039 The Analysis Tools Move With The Go Toolchain"
+Cohesion: 0.11
+Nodes (9): Enforced known-failure manifest (rejected alternative), No emergency release path past red gates, Red test names its rule and record; suite reports what is still broken, x-amz-checksum-crc32c (proxy-sealed plaintext CRC32C), SECURITY.md vulnerability reporting policy, Go 1.27.2 export data version 5 incompatibility, golangci-lint, gosec (+1 more)
 
-### Community 113 - "Cryptofloor"
-Cohesion: 0.17
-Nodes (8): AESProvider, 64 KiB Is Where the Instrument Stops Resolving, Downloads and the Crypto Floor Are Unchanged, openSegments(), sealSegments(), TestCryptoFloor(), cryptofloor Instrument (In-Process Crypto Floor), Noise Floor — Below 10 % Is the Machine
+### Community 87 - "Factory: Factory"
+Cohesion: 0.18
+Nodes (12): KeyEncryptionType, FacFactoryWithAES(), TestFacAESFingerprintIsDerivedFromTheKeyNotHashedFromIt(), TestFacCreateKeyEncryptorFromConfigTypes(), TestFacGetKeyEncryptor(), TestFacRegisterKeyEncryptorKeysByFingerprint(), Factory, NewFactory() (+4 more)
 
-### Community 114 - "Types"
-Cohesion: 0.17
-Nodes (10): LicenseValidator, calculateTimeRemaining(), checkClaims(), TestLicCalculateTimeRemainingBoundaries(), TestLicCheckClaimsRejectsATokenWithoutAnExpiryClaim(), TestCalculateTimeRemaining(), LicenseClaims, LicenseInfo (+2 more)
+### Community 88 - "Workflows: Renovate Assign On Failure"
+Cohesion: 0.10
+Nodes (19): if, runs-on, steps, jobs, assign-on-failure, name, on, workflow_run (+11 more)
 
-### Community 115 - "Monitoring Status Endpoint"
-Cohesion: 0.25
-Nodes (14): SetActiveProvider(), StatusSnapshot(), MonresetStatusState(), MonstatusBody(), TestMonStatusBeforeAnythingHappened(), TestMonStatusCarriesBuildAndActiveProvider(), TestMonStatusEndpointRendersTheObservedBackend(), TestMonStatusExpiredLicenseRemainsAtZero() (+6 more)
-
-### Community 116 - "Authentication Integration Tests"
+### Community 89 - "Rclone: Rclone Test"
 Cohesion: 0.27
-Nodes (13): SimpleTestContext, authErrorCode(), NewSimpleTestContext(), proxyHost(), sendWellFormedAuthHeader(), TestAuthentication(), testClockSkewProtection(), testEnterpriseSecurityConfiguration() (+5 more)
+Nodes (17): endpoint, remote, suite, endpoints(), newSuite(), preflight(), rcloneBin(), remoteName() (+9 more)
 
-### Community 117 - "Crc64nvme"
-Cohesion: 0.15
-Nodes (7): BenchmarkChkCRC64NVME(), TestChkCRC64NVMEAllocatesNothingPerWrite(), TestChkCRC64NVMECheckValue(), crc64NVMEUpdate(), naiveCRC64NVME(), newCRC64NVME(), crc64NVME
+### Community 90 - "Monitoring: Server Coverage Test"
+Cohesion: 0.16
+Nodes (16): runProxy(), SetServerInfo(), Monserve(), TestMonMetricsEndpointExportsTheRequestMetrics(), TestMonNewServerConfiguration(), TestMonServerLivenessEndpoint(), TestMonServerMetricsEndpoint(), TestMonServerNeverServesPprof() (+8 more)
 
-### Community 118 - "Validator"
-Cohesion: 0.21
-Nodes (10): LicclaimsFor(), LicforeignKey(), LicrequireStopReturns(), LicsignWith(), LictamperPayload(), TestLicParseEmbeddedPublicKey(), TestLicStartRuntimeMonitoringIsStartedOnlyOnce(), TestLicStopIsIdempotent() (+2 more)
+### Community 91 - "Config: Default"
+Cohesion: 0.11
+Nodes (18): aes_key, encryption, encryption_method_alias, providers, alias, config, description, type (+10 more)
 
-### Community 119 - "Conformance Run"
-Cohesion: 0.19
-Nodes (9): Conformance (paid backends) job, Conformance matrix job (minio, localstack), pull_image(), S3EP_CONFORMANCE_BACKEND_NAME, S3EP_CONFORMANCE_PROXY_ENDPOINT, S3EP_CONFORMANCE_SEGMENT_SIZE, conformance-run.sh script, start_localstack() (+1 more)
+### Community 92 - "Semantic Release Toolchain: Action"
+Cohesion: 0.11
+Nodes (18): description, IGNORE_SCRIPTS, default, description, required, inputs, ignore-scripts, name (+10 more)
 
-### Community 120 - "Entity Tag Marker"
+### Community 93 - "S3 Methods: Range Conformance Test"
+Cohesion: 0.27
+Nodes (16): rngCase, rngFixture, rngObserved, rngCasesFor(), rngNewFixture(), rngPayload(), rngRawGet(), rngViaMinIO() (+8 more)
+
+### Community 94 - "Start Demo"
+Cohesion: 0.30
+Nodes (17): check_dependencies(), cleanup(), ensure_certificates(), ensure_keys(), is_demo_running(), is_proxy_running(), log_error(), log_info() (+9 more)
+
+### Community 95 - "Orchestration: Providers Coverage Test (2)"
 Cohesion: 0.14
-Nodes (11): The -0 Entity Tag Marker, Under the Exit Provider There Is No Session at All, ListParts Is Answered From the Session Part Table, Multipart Uploads, The Part Size Is Inferred and Must Survive Arrival Order, The Trailer's Part Number Is Reserved, Parts Are Segment-Aligned, ErrPartNumberReserved (+3 more)
+Nodes (12): OrcMetaCachingManager(), orcMetaXOR(), TestOrcMetaDEKCacheDoesNotCacheFailedUnwrap(), TestOrcMetaDEKCacheIsConcurrencySafe(), TestOrcMetaDEKCacheNeverServesStaleDEKAfterReupload(), TestOrcMetaDEKCacheReturnsSharedStorage(), TestOrcMetaDEKCacheServesRepeatedReadsWithoutTouchingTheKEK(), TestOrcMetaEncryptDEKSurfacesKEKFailure() (+4 more)
 
-### Community 121 - "License Loading"
+### Community 96 - "Workflows: Test Pipeline"
+Cohesion: 0.11
+Nodes (18): with, cache, client-id, fetch-depth, go-version-file, ignore-scripts, name, password (+10 more)
+
+### Community 97 - "Monitoring: Backend Test"
+Cohesion: 0.39
+Nodes (17): backendSnapshot(), ObserveBackendClient(), MonbackendRequest(), MoncounterValue(), MonresetBackendObservation(), TestMonBackendCancelledRequestIsNeitherCountedNorLogged(), TestMonBackendClassifiesFailures(), TestMonBackendFailureIsCountedAndLogged() (+9 more)
+
+### Community 98 - "Middleware: S3Auth Presigned Test"
+Cohesion: 0.18
+Nodes (18): TestMwPresignedRejections(), TestMwPresignedSigningTimeInTheFuture(), requireAuthErr(), signWithSDK(), TestAuthenticateRequest_ClockSkew(), TestAuthenticateRequest_HeaderTampering(), TestAuthenticateRequest_MalformedHeaders(), TestAuthenticateRequest_SDKSignedHeaders() (+10 more)
+
+### Community 99 - "Etag: Etag"
+Cohesion: 0.21
+Nodes (13): Entity tag -0 marker gates, isHexDigest(), leadingSpace(), Mark(), requote(), TestEtagMarkOnlyTouchesTheDigestShape(), TestEtagRoundTripsForEveryShapeTheProxyAnswers(), TestEtagTheMarkerIsNotAShapeS3Produces() (+5 more)
+
+### Community 100 - "Config: Config"
+Cohesion: 0.13
+Nodes (15): startupWarnings(), TestMainStartupWarnings(), EncryptionConfig, Provider block ,remain boundary of ErrorUnused, TestCfgIsValidProviderType(), aesKeyError(), EncryptionProvider, isValidProviderType() (+7 more)
+
+### Community 101 - "Tests: Deployment Test (2)"
+Cohesion: 0.12
+Nodes (17): exists, failedTemplate, hasDocuments, isKind, notEqual, notExists, notMatchRegex, path (+9 more)
+
+### Community 102 - "Perf: Compare"
 Cohesion: 0.19
-Nodes (12): LicclearLicenseEnv(), TestLicLoadLicenseFromEnvIsOneName(), TestLicLoadLicenseFromFile(), TestLicLoadLicenseFromFileBinding(), TestLicLoadLicensePrefersEnvironment(), LoadLicense(), LoadLicenseFromEnv(), LoadLicenseFromFile() (+4 more)
+Nodes (9): combined_spread(), human(), key(), load(), lower_is_better(), machine_line(), main(), reference_key() (+1 more)
 
-### Community 122 - "Server"
-Cohesion: 0.19
-Nodes (3): RequestTracker, NewRequestTracker(), Server
-
-### Community 123 - "Values Proxy"
+### Community 103 - "Manifests: Minio"
 Cohesion: 0.15
-Nodes (8): AES Key via Chart Secret Wiring (s3ep-aes-key), Embedded Proxy Configuration for the Velero Run, Velero e2e Proxy Helm Values, S3EP_LICENSE_TOKEN from Secret s3ep-license, livenessProbe /livez, readinessProbe /readyz, serviceTLS with the Test PKI Secret s3ep-tls, Missing License Token Blocks Every Instrument
+Nodes (16): Namespace minio, Service minio, Job minio-mkbucket, apiVersion, kind, metadata, name, namespace (+8 more)
 
-### Community 124 - "Subresource Chunked Body"
-Cohesion: 0.32
-Nodes (10): bktChunkedTarget, BktChunkedBody(), BktChunkedHandler(), bktChunkedOutput(), BktChunkedRequest(), bktChunkedTargets(), TestBktChunkedBodyWithACorrectTrailerIsApplied(), TestBktChunkedBodyWithAMalformedTrailerIsRefused() (+2 more)
+### Community 104 - "S3Enc: Helpers Test"
+Cohesion: 0.35
+Nodes (17): TestCopyOfCorruptSourceStoresNothing(), TestForeignObjectIsRefused(), TestGetRange(), TestKeyRotation(), TestReservedMetadataStoresNothing(), TestRoundTrip(), TestTamperingIsRefused(), crc32cBase64() (+9 more)
 
-### Community 125 - "Bucket Notification Documents"
+### Community 105 - "S3 Encryption Proxy: Chart"
+Cohesion: 0.12
+Nodes (15): annotations, category, apiVersion, appVersion, description, home, keywords, kubeVersion (+7 more)
+
+### Community 106 - "Workflows: Test Pipeline (2)"
+Cohesion: 0.12
+Nodes (16): BASELINE, COMBINED, DIFF_EMOJI, DIFF_VALUE, GOCOVER, GOMAXPROCS, INTEGRATION, INTEGRATION_TESTS (+8 more)
+
+### Community 107 - "S3Enc: Client"
+Cohesion: 0.17
+Nodes (11): Client, Options, New(), randomKey(), TestKeyRing(), TestNewRefusesBadOptions(), TestNewRefusesWeakOrMalformedKeys(), TestReservedUserMetadataIsRefused() (+3 more)
+
+### Community 108 - "Harness: Exec"
+Cohesion: 0.18
+Nodes (10): Result, MustRun(), Redact(), Run(), RunWithEnv(), Binary(), CACert(), RepoRoot() (+2 more)
+
+### Community 109 - "S3 Encryption Proxy: Values (2)"
+Cohesion: 0.14
+Nodes (15): certificate, annotations, dnsNames, enabled, issuer, secretName, kind, name (+7 more)
+
+### Community 110 - "Docker Compose Demo"
+Cohesion: 0.13
+Nodes (14): VAULT_DEV_LISTEN_ADDRESS, VAULT_DEV_ROOT_TOKEN_ID, networks, s3-demo, driver, services, vault, cap_add (+6 more)
+
+### Community 111 - "Docker Compose Demo (2)"
+Cohesion: 0.13
+Nodes (15): resources, cpus, memory, deploy, command, container_name, depends_on, deploy (+7 more)
+
+### Community 112 - "Monitoring: Backend"
+Cohesion: 0.18
+Nodes (6): observeRequestBody(), BackendHTTPClient, MonreadingBackend, MonstubBackend, observedBackendClient, observedBody
+
+### Community 113 - "Golangci"
+Cohesion: 0.13
+Nodes (14): presets, rules, linters, enable, exclusions, settings, linters, path (+6 more)
+
+### Community 114 - "Manifests: Minio (2)"
+Cohesion: 0.14
+Nodes (15): Service minio-nodeport, app, name, nodePort, port, targetPort, app, matchLabels (+7 more)
+
+### Community 115 - "Bucket: Subresource Documents"
+Cohesion: 0.16
+Nodes (10): replicationConfigurationDocument, replicationRuleDocument, sourceSelectionPD, statusOnlyPD, newReplicationConfigurationDocument(), newTagDocuments(), newTaggingDocument(), taggingDocument (+2 more)
+
+### Community 116 - "S3 Encryption Proxy: Values (3)"
+Cohesion: 0.15
+Nodes (14): path, port, livenessProbe, failureThreshold, httpGet, initialDelaySeconds, periodSeconds, timeoutSeconds (+6 more)
+
+### Community 117 - "Docker Compose Demo (3)"
+Cohesion: 0.14
+Nodes (14): ACCESS_KEY_ID, ENDPOINT, REGION, SECRET_ACCESS_KEY, USE_SSL, container_name, depends_on, environment (+6 more)
+
+### Community 118 - "Docker Compose Demo (4)"
+Cohesion: 0.14
+Nodes (14): MINIO_CACHE_DRIVES, MINIO_CACHE_SIZE, MINIO_ROOT_PASSWORD, MINIO_ROOT_USER, MINIO_STORAGE_CLASS_STANDARD, command, container_name, environment (+6 more)
+
+### Community 119 - "Request: Checksum"
+Cohesion: 0.19
+Nodes (10): decodeDigest(), mismatch(), BenchmarkChkCRC64NVME(), TestChkCRC64NVMEAllocatesNothingPerWrite(), TestChkCRC64NVMECheckValue(), naiveCRC64NVME(), newCRC64NVME(), checksumAlgorithm (+2 more)
+
+### Community 120 - "Bucket: Subresource Documents (2)"
+Cohesion: 0.17
+Nodes (8): accessControlListPD, bucketLoggingStatusDocument, grantDocument, granteeDocument, loggingEnabledDocument, targetGrantsPD, newBucketLoggingStatusDocument(), newGranteeDocument()
+
+### Community 121 - "Bucket: Subresource Documents (3)"
 Cohesion: 0.19
 Nodes (11): cloudFunctionConfigPD, eventBridgeConfigurationPD, filterRulePD, notificationConfigurationDocument, notificationFilterPD, queueConfigurationPD, s3KeyFilterPD, topicConfigurationPD (+3 more)
 
-### Community 126 - "Error Conventions"
-Cohesion: 0.15
-Nodes (11): Error Conventions, 403 InvalidObjectState: The Three Integrity Refusals, Five Error Codes the Proxy Invented, ProviderManager.DecryptDEK, SegmentedSession.PartChecksum, WriteChecksumVerdict, ErrorWriter.writeErrorDocument, WriteGenericError (+3 more)
+### Community 122 - "Tickets: 025 Tink Kms Hcvault"
+Cohesion: 0.21
+Nodes (10): Ticket 025: Vault as a key provider (parked), DEK cache: 1024-entry LRU with no expiry, Demo Vault compose defects (unpinned image, obsolete login), Optional key_scope fingerprint salt, Provider registry shutdown path (manager -> registry -> provider), Thread request context to the key provider, Rewrap campaign is a full server-side rewrite, not a metadata edit, Tink stub and module removed; type tink refused by name (+2 more)
 
-### Community 128 - "ListBuckets Root Handler"
+### Community 123 - "Monitoring: Metrics Coverage Test"
+Cohesion: 0.22
+Nodes (12): MondefaultMetric(), MongatherMetric(), TestMonNoLicenseSeriesIsExported(), TestMonSetServerInfo(), Gatherer(), MonrequestMetric(), TestMonHTTPMiddlewareDefaultsToStatus200(), TestMonHTTPMiddlewareRecordsRoutedRequest() (+4 more)
+
+### Community 124 - "Monitoring: Status"
+Cohesion: 0.22
+Nodes (12): recordBackendResponse(), SetActiveProvider(), setStatusBuild(), StatusSnapshot(), MonresetStatusState(), TestMonStatusBeforeAnythingHappened(), TestMonStatusCarriesBuildAndActiveProvider(), TestMonStatusEndpointRendersTheObservedBackend() (+4 more)
+
+### Community 125 - "Docker Compose Demo (5)"
+Cohesion: 0.17
+Nodes (12): minio, condition, command, container_name, depends_on, environment, networks, ports (+4 more)
+
+### Community 126 - "Docker Compose Demo (6)"
+Cohesion: 0.17
+Nodes (12): vault, command, container_name, depends_on, environment, networks, ports, shm_size (+4 more)
+
+### Community 127 - "Workflows: Test Pipeline (3)"
+Cohesion: 0.20
+Nodes (12): semantic-release, permissions, contents, id-token, issues, pull-requests, if, name (+4 more)
+
+### Community 128 - "Integration: Encryption Validation Helper"
 Cohesion: 0.23
-Nodes (10): NewHandler(), TestHandleListBuckets(), TestHandleListBucketsError(), TestHandleListBucketsMultipleBuckets(), TestNewHandler(), TestRtPxNewHandlerIsUsableImmediately(), ListAllMyBucketsResult, S3Bucket (+2 more)
-
-### Community 130 - "Encryption Validation Helper"
-Cohesion: 0.35
 Nodes (12): EncryptionValidationConfig, EncryptionValidationResult, AssertDataIsEncrypted(), calculateShannonEntropy(), CompareEncryptionStrength(), ConfigForDataSize(), containsForbiddenPatterns(), containsReadableStrings() (+4 more)
 
-### Community 131 - "License Expiry Handling"
-Cohesion: 0.21
-Nodes (11): TestLicExpiryHandlerReplacesTheExit(), TestLicGracefulShutdownExitsWithRestartCode(), TestLicValidateLicenseWhitespaceTokenIsRejected(), TestLicValidateProviderTypeMessage(), NewValidator(), TestLicenseClaims(), TestNewValidator(), TestValidateLicense_EmptyToken() (+3 more)
+### Community 129 - "Velero: Kind Config"
+Cohesion: 0.17
+Nodes (11): apiVersion, containerPort, hostPort, listenAddress, protocol, kind, name, nodes (+3 more)
 
-### Community 132 - "Readme"
-Cohesion: 0.21
-Nodes (10): Resident Memory Fell — 130 MB to 109 MB Peak, HeadBucket Answered 200 for a Missing Bucket, Local Performance Baseline Suite, Memory Bound (ADR 0020 D14) — the One Assertion, memory Instrument (RSS and Profiles), smallobject Instrument, unwrap Instrument (KEK Wrap/Unwrap), median() (+2 more)
+### Community 130 - "Manifests: Minio (3)"
+Cohesion: 0.17
+Nodes (12): spec, app, labels, backoffLimit, restartPolicy, template, volumes, metadata (+4 more)
 
-### Community 133 - "Conditional Requests"
-Cohesion: 0.36
-Nodes (12): condOutcome, condPrecondition, condCodeOf(), condGet(), condHead(), condHTTPStatus(), condPayload(), condPutObject() (+4 more)
-
-### Community 134 - "Compare"
-Cohesion: 0.26
-Nodes (9): combined_spread(), human(), key(), load(), lower_is_better(), machine_line(), main(), reference_key() (+1 more)
-
-### Community 135 - "Segmented GCM Range Reader"
-Cohesion: 0.21
-Nodes (5): rangeReader, Codec, Window, segmentStoredLen(), segmentCount()
-
-### Community 137 - "Integrity Operator Notes"
-Cohesion: 0.18
-Nodes (10): kopia reads pack blobs with ranges, Under exit the decision is taken per object, 403 InvalidObjectState for objects this proxy did not write, s3ep-dek-algorithm, metadata_key_prefix is the proxy's exclusive namespace, stored = plaintext + ceil(plaintext/65536)*28 + 40, HEAD, GET and listings report the plaintext size, Ranged reads (Range: bytes=...) (+2 more)
-
-### Community 140 - "Requestid"
-Cohesion: 0.29
-Nodes (9): EnsureRequestID(), NewRequestID(), RequestID(), RequestIDMiddleware(), TestMwEnsureRequestIDDoesNotRestateAnExistingID(), TestMwRequestIDIsEmptyOutsideTheMiddleware(), TestMwRequestIDIsStatedAndReachesTheHandler(), TestMwRequestIDIsUniquePerRequest() (+1 more)
-
-### Community 141 - "Install"
+### Community 131 - "Helm: Install"
 Cohesion: 0.40
 Nodes (10): check_prerequisites(), create_namespace(), get_version(), install_chart(), log_error(), log_info(), log_warn(), main() (+2 more)
 
-### Community 142 - "Pprof"
-Cohesion: 0.25
-Nodes (6): TestPprofNewServerConfiguration(), TestPprofServerReportsItsFailures(), TestPprofServerServesOnlyProfiling(), TestPprofServerStartServesAndShutsDownOnContextCancel(), NewPprofServer(), PprofServer
+### Community 132 - "S3 Encryption Proxy: Values (4)"
+Cohesion: 0.18
+Nodes (11): failureRatio, for, window, window, prometheusRule, annotations, backend, enabled (+3 more)
 
-### Community 143 - "Report"
-Cohesion: 0.38
-Nodes (9): ratioKey, fmtFloats(), fmtValue(), humanBytes(), orDash(), renderPlainSection(), renderRatioSection(), renderReport() (+1 more)
+### Community 133 - "S3 Encryption Proxy: Values (5)"
+Cohesion: 0.18
+Nodes (11): annotations, enabled, labels, namespace, dashboard, grafana_dashboard, enabled, grafana (+3 more)
 
-### Community 144 - "E2E Harness Backend Client"
-Cohesion: 0.38
+### Community 134 - "S3 Encryption Proxy: Values Production"
+Cohesion: 0.18
+Nodes (11): host, paths, ingress, className, enabled, hosts, tls, path (+3 more)
+
+### Community 135 - "S3 Encryption Proxy: Values Production (2)"
+Cohesion: 0.18
+Nodes (11): monitoring, enabled, metricsPath, port, service, serviceMonitor, enabled, enabled (+3 more)
+
+### Community 136 - "Docker Compose Demo (7)"
+Cohesion: 0.18
+Nodes (11): device, o, type, driver, driver_opts, name, driver, name (+3 more)
+
+### Community 137 - "Docker Compose: Action"
+Cohesion: 0.18
+Nodes (10): description, COMPOSE_VERSION, name, runs, steps, using, env, name (+2 more)
+
+### Community 138 - "Workflows: Push"
+Cohesion: 0.20
+Nodes (11): release-helm-gh, permissions, actions, attestations, contents, id-token, pages, name (+3 more)
+
+### Community 139 - "Workflows: Test Pipeline (4)"
+Cohesion: 0.18
+Nodes (10): concurrency, cancel-in-progress, group, name, runs-on, steps, timeout-minutes, jobs (+2 more)
+
+### Community 140 - "Multipart: Xml"
+Cohesion: 0.24
+Nodes (8): commonPrefix, completeMultipartUploadResult, initiateMultipartUploadResult, listMultipartUploadsResult, listPartsResult, ownerEntry, partEntry, uploadEntry
+
+### Community 141 - "Velero: Values Velero"
+Cohesion: 0.18
+Nodes (10): backupsEnabled, cleanUpCRDs, credentials, existingSecret, useSecret, deployNodeAgent, metrics, enabled (+2 more)
+
+### Community 142 - "Velero: Values Velero (2)"
+Cohesion: 0.18
+Nodes (11): accessMode, bucket, caCert, credential, default, name, provider, validationFrequency (+3 more)
+
+### Community 143 - "Scripts: Coverage Summary"
+Cohesion: 0.31
+Nodes (4): main(), module_path(), percent(), read_profile()
+
+### Community 144 - "S3 Encryption Proxy: Values (6)"
+Cohesion: 0.20
+Nodes (10): host, paths, ingress, annotations, className, enabled, hosts, tls (+2 more)
+
+### Community 145 - "S3 Encryption Proxy: Values Monitoring"
+Cohesion: 0.24
+Nodes (10): prometheus.io/path, prometheus.io/port, prometheus.io/scrape, service, annotations, enabled, port, targetPort (+2 more)
+
+### Community 146 - "Workflows: Test Pipeline (5)"
+Cohesion: 0.22
+Nodes (10): steps, steps, name, runs-on, steps, timeout-minutes, integration-tests, continue-on-error (+2 more)
+
+### Community 147 - "S3 Methods: Conditional Requests Test"
+Cohesion: 0.33
+Nodes (10): condOutcome, condPrecondition, condCodeOf(), condGet(), condHead(), condPayload(), condPutObject(), condStatusOf() (+2 more)
+
+### Community 148 - "Scripts: Conformance Run"
+Cohesion: 0.29
+Nodes (7): pull_image(), S3EP_CONFORMANCE_BACKEND_NAME, S3EP_CONFORMANCE_PROXY_ENDPOINT, S3EP_CONFORMANCE_SEGMENT_SIZE, conformance-run.sh script, start_localstack(), start_minio()
+
+### Community 149 - "Harness: Backend"
+Cohesion: 0.24
 Nodes (10): BackendClient(), caTrustingHTTPClient(), EmptyAndDeleteBucket(), EmptyBucket(), EnsureBucket(), OpenUploads(), ProxyClient(), ProxyETag() (+2 more)
 
-### Community 145 - "Abandoned Upload Sweeper"
-Cohesion: 0.20
-Nodes (6): AbortIncompleteMultipartUpload Lifecycle Rule, optimizations.multipart_session_idle_timeout, The Session Sweeper Measures Inactivity, Not Age, CleanupExpiredSegmentedSessions, Manager.SetMultipartAbandoner, SegmentedSession.TouchWhileReading
+### Community 150 - "Velero: E2E Up"
+Cohesion: 0.29
+Nodes (7): e2e-down.sh script, k(), KUBECONFIG, log(), need(), proxy_upgrade(), e2e-up.sh script
 
-### Community 146 - "Shutdown Order and Probes"
+### Community 151 - "Manifests: Minio (4)"
+Cohesion: 0.20
+Nodes (10): args, command, envFrom, image, name, ports, readinessProbe, resources (+2 more)
+
+### Community 152 - "Velero: Values Velero (3)"
+Cohesion: 0.20
+Nodes (10): config, checksumAlgorithm, publicUrl, region, s3ForcePathStyle, s3Url, volumeSnapshotLocation, config (+2 more)
+
+### Community 153 - "360 Degree Variants: Segment Tamper Test"
+Cohesion: 0.33
+Nodes (8): TamShape, TamAssertRefused(), TamDigest(), TamInspect(), TamSetup(), TestSegmentChainRefusesTamperedBytes(), TestSegmentChainRefusesTamperedMetadata(), TestSegmentChainVerifiesRangedReads()
+
+### Community 154 - "Bucket: Subresource Documents (4)"
+Cohesion: 0.25
+Nodes (6): accessControlPolicyDocument, ownerDocument, parseACLXMLForTest(), TestACLXMLParsing(), newAccessControlPolicyDocument(), newOwnerDocument()
+
+### Community 156 - "S3 Encryption Proxy: Values Monitoring (2)"
 Cohesion: 0.22
-Nodes (7): Drain Guard: 503 ServiceUnavailable With Retry-After While the Listener Stays Up, A Multipart Session Is Process-Local and Unfinishable Once the Process Exits, A Second Replica Answers NoSuchUpload for an Upload the First Holds, Shutdown Ends What the Process Is Still Holding, AbandonAllSessions, Manager.Shutdown, drainGuardMiddleware
+Nodes (9): prometheus.io/instance, prometheus.io/scrape, serviceMonitor, annotations, enabled, interval, labels, namespace (+1 more)
 
-### Community 147 - "Short-Part Budget and Memory"
-Cohesion: 0.20
-Nodes (9): The Process-Wide Short-Part Budget, What One In-Flight Request Costs in Memory, RecordStreamedPart, SegmentedSession.SealStreamingPart, readHeldPart, readWholePart, uploadStreamedPart, Parser.ReadBodyLimited (+1 more)
+### Community 157 - "S3 Encryption Proxy: Values Monitoring (3)"
+Cohesion: 0.22
+Nodes (9): enabled, labels, namespace, dashboard, app.kubernetes.io/component, dashboard-category, grafana_dashboard, team (+1 more)
 
-### Community 148 - "Client-Driven Multipart Paths"
-Cohesion: 0.20
-Nodes (8): The Client-Driven Multipart Upload, The Internal Multipart Producer, A Part Is Streamed or Held, and the Declared Length Decides, orchestration.CanStreamPart, SegmentedSession, UploadHandler.Handle, putObjectAutoMultipart, utils.CleanupContext
+### Community 158 - "S3 Encryption Proxy: Values (7)"
+Cohesion: 0.22
+Nodes (9): serviceMonitor, annotations, enabled, interval, labels, namespace, path, port (+1 more)
 
-### Community 149 - "Storage Format Invariants"
-Cohesion: 0.20
-Nodes (7): Invariant 1: Each Seal Is Bound to Its Position and Its Object, The Four Metadata Keys That Mark an Object as Ours, Invariant 3: A Nonce Is Never Reused Under One Key, The Ranged-Read Window and Its Amplification Bound, The Storage Format (s3ep-gcm-seg-v2), Manager.ClaimsSegmentedFormat, Manager.IsSegmentedObject
+### Community 159 - "S3 Encryption Proxy: Values Production (3)"
+Cohesion: 0.22
+Nodes (8): autoscaling, enabled, config, image, pullPolicy, podDisruptionBudget, enabled, replicaCount
 
-### Community 150 - "Segmented GCM"
-Cohesion: 0.27
-Nodes (10): Invariant 2: The Stored Length Is a Pure Function of the Plaintext Length, maxWindowOverAsk, CiphertextSize(), PlaintextSize(), SegmentOverhead, SegmentSize, TestSegOversizeRefused(), TestSegSizeFunctionsRoundTrip() (+2 more)
+### Community 160 - "Docker Compose Demo (8)"
+Cohesion: 0.28
+Nodes (9): BUILD_NUMBER, BUILD_TIME, GIT_COMMIT, GOCOVER, args, context, dockerfile, build (+1 more)
 
-### Community 151 - "Router"
+### Community 161 - "Workflows: Push (2)"
+Cohesion: 0.22
+Nodes (8): name, runs-on, jobs, build, name, on, release, types
+
+### Community 162 - "Workflows: Push (3)"
 Cohesion: 0.31
-Nodes (5): CORS, NewCORS(), allowedMethods(), bucketRoute(), Server
+Nodes (9): steps, GITHUB_TOKEN, steps, env, id, if, name, run (+1 more)
 
-### Community 153 - "Segmented GCM Part"
-Cohesion: 0.40
-Nodes (8): partCodec(), sealInParts(), TestSegOpenTrailerRejectsTampering(), TestSegPartWriterOffsetIsAuthenticated(), TestSegPartWriterRefusesShortMiddlePart(), TestSegPartWriterRefusesUnalignedOffset(), TestSegPartWriterRoundTrip(), TestSegSealTrailerMatchesSequentialWriter()
+### Community 163 - "Harness: Verdict"
+Cohesion: 0.28
+Nodes (6): Case, Recorder, row, escapePipes(), NewRecorder(), oneLine()
 
-### Community 154 - "Renovate Automerge Settings"
-Cohesion: 0.20
-Nodes (10): lockFileMaintenance, automerge, automergeType, commitMessageAction, commitMessagePrefix, dependencyDashboardApproval, enabled, platformAutomerge (+2 more)
+### Community 164 - "Orchestration: Metadata Coverage Test"
+Cohesion: 0.33
+Nodes (9): OrcMetaAssertOnlyAllowedKeys(), OrcMetaConfig(), OrcMetaNewManager(), OrcMetaPrefixedKeys(), OrcMetaPrefixPtr(), OrcMetaSHA256(), TestOrcMetaEndToEndDefaultPrefixIsS3EP(), TestOrcMetaEndToEndStoredMetadataIsOnlyAllowedKeys() (+1 more)
 
-### Community 155 - "GET Copy Benchmarks"
-Cohesion: 0.31
-Nodes (6): benchGetResponse(), BenchmarkGetResponseCopy(), copyWithSize(), benchReader, hidingWriter, writerOnly
+### Community 165 - "Response: Error Mapping Coverage Test"
+Cohesion: 0.42
+Nodes (9): RespCapturingLogger(), RespFindEntry(), RespNewFailingWriter(), TestRespWriteErrorDocumentSurvivesFailedWrite(), TestRespWriteS3ErrorLogLevels(), TestRespWriteS3ErrorNilErrorLogsNoDetail(), TestRespWriteS3ErrorSurvivesFailedWrite(), TestRespNewXMLWriter() (+1 more)
 
-### Community 156 - "E2E Harness Environment"
-Cohesion: 0.47
-Nodes (6): Env, Binary(), CACert(), DemoStack(), LoadEnv(), RepoRoot()
+### Community 166 - "Manifests: Snapshotclass"
+Cohesion: 0.22
+Nodes (8): apiVersion, deletionPolicy, driver, kind, velero.io/csi-volumesnapshot-class, metadata, labels, name
 
-### Community 157 - "Smallobject"
-Cohesion: 0.47
-Nodes (8): leg, smallObjectBatch(), smallObjectGet(), smallObjectKeys(), smallObjectLegOrder(), smallObjectOps(), smallObjectPut(), TestSmallObjectRate()
+### Community 167 - "Velero: Values Proxy"
+Cohesion: 0.25
+Nodes (9): path, port, livenessProbe, failureThreshold, httpGet, initialDelaySeconds, periodSeconds, timeoutSeconds (+1 more)
 
-### Community 158 - "S3 Method Error Mapping Tests"
-Cohesion: 0.47
-Nodes (8): apiCodeOf(), apiMessageOf(), errorsAs(), httpStatusOf(), TestBackendErrorsKeepTheirStatusAndCode(), TestConditionalRequestErrors(), TestLstListObjectsMissingBucket(), TestVbRefusedCopiesLeaveNothingBehind()
+### Community 168 - "Velero: Values Velero (4)"
+Cohesion: 0.22
+Nodes (9): memory, nodeAgent, pluginVolumePath, podVolumePath, resources, cpu, memory, limits (+1 more)
 
-### Community 159 - "Shutdown"
-Cohesion: 0.56
+### Community 170 - "S3 Encryption Proxy: Values (8)"
+Cohesion: 0.25
+Nodes (8): affinity, podAntiAffinity, matchExpressions, labelSelector, topologyKey, preferredDuringSchedulingIgnoredDuringExecution, podAffinityTerm, weight
+
+### Community 171 - "S3 Encryption Proxy: Values (9)"
+Cohesion: 0.25
+Nodes (8): aesKey, existingSecret, existingSecretKey, accessKeyId, secretKey, secrets, encryption, s3
+
+### Community 172 - "S3 Encryption Proxy: Values (10)"
+Cohesion: 0.36
+Nodes (8): service, annotations, enabled, nodePort, port, targetPort, type, service
+
+### Community 173 - "Docker Compose Demo (9)"
+Cohesion: 0.43
+Nodes (8): interval, retries, start_interval, start_period, test, timeout, healthcheck, healthcheck
+
+### Community 174 - "Workflows: Test Pipeline (6)"
+Cohesion: 0.25
+Nodes (8): name, runs-on, strategy, timeout-minutes, conformance, backend, fail-fast, matrix
+
+### Community 176 - "Object: Range"
+Cohesion: 0.29
+Nodes (6): parseByteRange(), TestParseByteRange(), TestParseByteRange_EmptyObject(), TestParseByteRange_Errors(), TestObjGetParseByteRangeEdgeCases(), byteRange
+
+### Community 177 - "Manifests: Minio (5)"
+Cohesion: 0.25
+Nodes (8): apiVersion, kind, metadata, spec, Deployment minio, replicas, strategy, type
+
+### Community 178 - "Velero: Values Proxy (2)"
+Cohesion: 0.25
+Nodes (7): affinity, config, env, name, value, fullnameOverride, replicaCount
+
+### Community 179 - "Velero: Values Velero (5)"
+Cohesion: 0.25
+Nodes (8): configuration, backupSyncPeriod, defaultVolumesToFsBackup, features, garbageCollectionFrequency, logFormat, logLevel, uploaderType
+
+### Community 180 - "Shutdown: Shutdown Test"
+Cohesion: 0.43
 Nodes (8): docker(), openUploads(), preflight(), proxyLogs(), restartProxy(), shutdownBudget(), TestShutdownEndsOpenMultipartUploadsUnderSIGTERM(), waitForExit()
 
-### Community 160 - "Listing Document"
-Cohesion: 0.36
-Nodes (5): commonPrefix, listBucketResultV1, listBucketResultV2, objectEntry, ownerEntry
-
-### Community 161 - "Bucket Versioning Handler"
-Cohesion: 0.39
-Nodes (6): VersioningHandler, NewVersioningHandler(), TestVersioningHandler_Handle(), TestVersioningHandler_HandleErrors(), TestVersioningHandler_MFAValidation(), TestVersioningHandler_XMLParsing()
-
-### Community 162 - "Prometheusrule"
-Cohesion: 0.25
-Nodes (6): Alert S3EPBackendTransportFailing (share, not count), Alert S3EPLicenseExpired, Alert S3EPLicenseExpiringSoon, Alert S3EPObjectIntegrityFailure, helm-unittest suite: alerting rules, monitoring.prometheusRule thresholds and windows
-
-### Community 163 - "Performance Measurement Rules"
-Cohesion: 0.25
-Nodes (5): The In-Process Crypto Floor Rules the Cipher Out, The Memory Instrument Is the One Asserted Figure, Performance, Three Suspicions Measured and Falsified, The Second Backend Request of a Whole-Object Read Costs About 300 Microseconds
-
-### Community 164 - "Default Config"
-Cohesion: 0.39
-Nodes (6): cfgDefaultLicence(), cfgLoadFrom(), TestCfgDefaultConfigAsksForExactlyTheDocumentedVariables(), TestCfgDefaultConfigFailsClosedOnEveryVariable(), TestCfgDefaultConfigLoads(), TestCfgShippedExamplesLoad()
-
-### Community 165 - "Bucket Replication Handler"
-Cohesion: 0.39
-Nodes (6): NewReplicationHandler(), TestReplicationHandler_ComplexConfigurations(), TestReplicationHandler_Handle(), TestReplicationHandler_HandleErrors(), TestReplicationHandler_ReplicationMetrics(), TestReplicationHandler_XMLValidation()
-
-### Community 166 - "Multipart Checksum Echo Tests"
-Cohesion: 0.39
-Nodes (7): MpuCrcwant(), TestMpuCrcARefusedPartStatesNoChecksum(), TestMpuCrcAReplacedPartAnswersTheNewChecksum(), TestMpuCrcEveryPartAnswersItsOwnChecksum(), TestMpuCrcTheCompletionAnswersTheWholeObjectChecksum(), TestMpuCrcTheCompletionCoversAHeldShortPart(), TestMpuCrcTheExitProviderStatesNoChecksum()
-
-### Community 167 - "Logging Middleware"
-Cohesion: 0.32
-Nodes (3): Logger, NewLogger(), responseWriter
-
-### Community 168 - "Pipeline"
-Cohesion: 0.29
-Nodes (4): Semantic-release toolchain composite action, Breaking-change marker inspection (commits, title, body), release:major label is the declaration of a major, Semantic-Release (dry run) job
-
-### Community 169 - "Default"
-Cohesion: 0.29
-Nodes (3): Chart version, appVersion and image tag rewritten from the release tag, config/default.yaml (the configuration the image starts with), values.yaml (chart defaults)
-
-### Community 171 - "Bucket CORS Documents"
+### Community 181 - "Bucket: Subresource Documents (5)"
 Cohesion: 0.29
 Nodes (4): corsConfigurationDocument, corsRuleDocument, newCORSConfigurationDocument(), optional()
 
-### Community 172 - "Integrity Failure Reporting"
-Cohesion: 0.29
-Nodes (6): s3ep_object_integrity_failures_total, Phased Before-Response and Mid-Stream, A Fault Found After WriteHeader Aborts the Body, The Sealed 40-Byte Trailer, Segment Chain Layout, Handler.reportStreamFault, Checksum.Append
-
-### Community 173 - "Multipart Complete Handler"
+### Community 182 - "Bucket: Subresource Documents (6)"
 Cohesion: 0.38
-Nodes (4): completionLocation(), firstForwardedValue(), CompletedPart, CompleteMultipartUpload
+Nodes (7): lifecycleAndDocument, lifecycleFilterDocument, replicationAndPD, replicationFilterDocument, tagDocument, taggingDocument, tagSetDocument
 
-### Community 174 - "Rclone"
+### Community 227 - "Tests: Deployment Test (3)"
+Cohesion: 0.29
+Nodes (7): contains, content, path, mountPath, readOnly, secret, valueFrom
+
+### Community 228 - "S3 Encryption Proxy: Values (11)"
+Cohesion: 0.29
+Nodes (7): drop, securityContext, allowPrivilegeEscalation, capabilities, readOnlyRootFilesystem, runAsNonRoot, runAsUser
+
+### Community 229 - "S3 Encryption Proxy: Values (12)"
+Cohesion: 0.29
+Nodes (7): cpu, memory, cpu, memory, resources, limits, requests
+
+### Community 230 - "S3 Encryption Proxy: Values Monitoring (4)"
+Cohesion: 0.29
+Nodes (7): drop, securityContext, allowPrivilegeEscalation, capabilities, readOnlyRootFilesystem, runAsNonRoot, runAsUser
+
+### Community 231 - "S3 Encryption Proxy: Values Monitoring (5)"
+Cohesion: 0.29
+Nodes (7): cpu, memory, cpu, memory, resources, limits, requests
+
+### Community 232 - "S3 Encryption Proxy: Values (13)"
+Cohesion: 0.29
+Nodes (7): podSecurityContext, fsGroup, runAsGroup, runAsNonRoot, runAsUser, seccompProfile, type
+
+### Community 233 - "S3 Encryption Proxy: Values Production (4)"
+Cohesion: 0.29
+Nodes (7): certificate, dnsNames, enabled, issuer, secretName, kind, name
+
+### Community 234 - "S3 Encryption Proxy: Values Production (5)"
+Cohesion: 0.29
+Nodes (7): cpu, memory, cpu, memory, resources, limits, requests
+
+### Community 235 - "Docker Compose Demo (10)"
+Cohesion: 0.38
+Nodes (7): ulimits, hard, soft, ulimits, ulimits, memlock, nofile
+
+### Community 236 - "Adr: 0027 Conformance Is Asserted Against A Backend That Is Not Minio"
+Cohesion: 0.29
+Nodes (5): Backend-agnostic conformance suite, x-amz-expected-bucket-owner not enforced by any reachable backend, LocalStack (free conformance backend), Corpus seeded once, then only read, Wasabi (paid conformance backend)
+
+### Community 237 - "Object: Range (2)"
+Cohesion: 0.33
+Nodes (7): Ranged GET window planning, Range header decided twice (parseRangeSpec classifies, parseByteRange resolves), closeDrained(), parseRangeSpec(), provisionalWindow(), TestObjGetParseRangeSpec(), rangeSpec
+
+### Community 238 - "Tickets: 036 High Availability"
+Cohesion: 0.33
+Nodes (4): Row Completion State Machine (open/completing/completed/dead) via CAS, Held Short Part Stays with its Holder, Idle Clock vs Lease (two clocks, two owners), Peer Listener for Forwarded Complete
+
+### Community 239 - "Monitoring: Backend (2)"
+Cohesion: 0.33
+Nodes (6): Backend Transport Observer (five failure classes), classifyBackendFailure(), isConnectFailure(), isTimeoutFailure(), isTLSFailure(), recordBackendFailure()
+
+### Community 240 - "Rclone: Rclone Test (2)"
 Cohesion: 0.33
 Nodes (6): WriteStepSummary(), reportDir(), TestMain(), reportDir(), TestMain(), TestMain()
 
-### Community 175 - "Monitoring Dashboard Contract"
-Cohesion: 0.43
-Nodes (6): monExportedSeries(), TestMonAlertRulesQueryOnlySeriesTheProxyExports(), TestMonAlertRulesReadTheBackendFailureShareNotItsCount(), TestMonDashboardQueriesOnlySeriesTheProxyExports(), TestMonDashboardVariablesResolveBeforeTheFirstRequest(), TestMonScrapeCarriesTheRuntimeCollectors()
+### Community 242 - "Rclone: E2E Up"
+Cohesion: 0.57
+Nodes (5): install_rclone(), log(), need(), e2e-up.sh script, wait_for()
 
-### Community 177 - "E2e Up"
-Cohesion: 0.48
-Nodes (6): k(), KUBECONFIG, log(), need(), proxy_upgrade(), e2e-up.sh script
+### Community 243 - "S3Cmd: E2E Up"
+Cohesion: 0.57
+Nodes (5): install_s3cmd(), log(), need(), e2e-up.sh script, wait_for()
 
-### Community 178 - "Throughput"
-Cohesion: 0.52
-Nodes (6): getTimed(), measureThroughput(), putTimed(), TestThroughput(), throughputSizes(), uploadNote()
+### Community 244 - "Manifests: Minio (6)"
+Cohesion: 0.29
+Nodes (7): Secret minio-root, apiVersion, kind, stringData, type, MINIO_ROOT_PASSWORD, MINIO_ROOT_USER
 
-### Community 209 - "Bucket Replication Documents"
-Cohesion: 0.40
-Nodes (5): replicationConfigurationDocument, replicationRuleDocument, sourceSelectionPD, statusOnlyPD, newReplicationConfigurationDocument()
+### Community 245 - "Velero: Values Proxy (3)"
+Cohesion: 0.29
+Nodes (7): drop, securityContext, allowPrivilegeEscalation, capabilities, readOnlyRootFilesystem, runAsNonRoot, runAsUser
 
-### Community 210 - "Keygen Command"
+### Community 246 - "Velero: Values Proxy (4)"
+Cohesion: 0.29
+Nodes (7): cpu, memory, cpu, memory, resources, limits, requests
+
+### Community 247 - "Velero: Values Proxy (5)"
+Cohesion: 0.29
+Nodes (7): podSecurityContext, fsGroup, runAsGroup, runAsNonRoot, runAsUser, seccompProfile, type
+
+### Community 248 - "Velero: Values Velero (6)"
+Cohesion: 0.29
+Nodes (7): initContainers, image, imagePullPolicy, name, volumeMounts, mountPath, name
+
+### Community 249 - "180 Degree Variants: Test Constants"
 Cohesion: 0.47
-Nodes (4): main(), printKey(), TestKeygenDrawsAFreshKeyEachTime(), TestKeygenOutput()
+Nodes (4): simplePRNG, TestLargeMultipart500MB(), generateDeterministicData(), newSimplePRNG()
 
-### Community 211 - "Check Breaking Changes"
+### Community 251 - "Tests: Deployment Test (4)"
+Cohesion: 0.33
+Nodes (5): suite, templates, tests, it, template
+
+### Community 252 - "S3 Encryption Proxy: Values Monitoring (6)"
+Cohesion: 0.33
+Nodes (6): description, grafana.com/auto-import, grafana.com/dashboard-uid, grafana-folder, kubernetes.io/managed-by, annotations
+
+### Community 253 - "S3 Encryption Proxy: Values Monitoring (7)"
+Cohesion: 0.33
+Nodes (5): config, image, pullPolicy, repository, replicaCount
+
+### Community 254 - "S3 Encryption Proxy: Values Production (6)"
+Cohesion: 0.33
+Nodes (6): affinity, podAntiAffinity, matchExpressions, requiredDuringSchedulingIgnoredDuringExecution, labelSelector, topologyKey
+
+### Community 255 - "S3 Encryption Proxy: Values Production (7)"
+Cohesion: 0.33
+Nodes (6): env, name, valueFrom, key, name, secretKeyRef
+
+### Community 256 - "Rclone: Scenarios Read Test"
+Cohesion: 0.47
+Nodes (4): corpus, hashsum(), seedCorpus(), TestR5_ReportedHashes()
+
+### Community 257 - "Scripts: Check Breaking Changes"
 Cohesion: 0.47
 Nodes (5): add_message(), die(), FOOTER_PATTERN, HEADER_PATTERN, check-breaking-changes.sh script
 
-### Community 212 - "ACL"
-Cohesion: 0.47
-Nodes (4): mapCannedACLForBucket(), parseACLXMLForTest(), TestACLXMLParsing(), TestCannedACLMapping()
-
-### Community 214 - "Etag Marker"
-Cohesion: 0.60
-Nodes (5): MpuTagacceptParts(), TestMpuTagAClientReturnsTheMarkedPartTagsAndCompletes(), TestMpuTagExitProviderMarksNothingAndForwardsTheList(), TestMpuTagListPartsAnswersTheMarker(), TestMpuTagPartUploadsAnswerTheMarker()
-
-### Community 215 - "Payload Hash Verification Tests"
-Cohesion: 0.40
-Nodes (6): ChkpayloadHash(), ChkverifyingParser(), TestChkPayloadHashIsNotVerifiedUnlessConfigured(), TestChkPayloadHashIsVerifiedBesideAnotherDigest(), TestChkPayloadHashIsVerifiedWhenConfigured(), TestChkPayloadHashNeverSatisfiesTheDeleteObjectsRule()
-
-### Community 216 - "Rangeread"
-Cohesion: 0.67
-Nodes (5): rangeCase, rangeCases(), rangeNote(), TestRangeRead(), timeRangeGet()
-
-### Community 217 - "Renovate Presets"
+### Community 258 - "Workflows: Test Pipeline (7)"
 Cohesion: 0.33
-Nodes (6): :automergeDigest, config:recommended, :dependencyDashboard, docker:enableMajor, :semanticCommits, extends
+Nodes (6): name, needs, outputs, runs-on, coverage-report, coverage
 
-### Community 218 - "rclone E2E Bring-Up"
-Cohesion: 0.73
-Nodes (5): install_rclone(), log(), need(), e2e-up.sh script, wait_for()
-
-### Community 219 - "s3cmd E2E Bring-Up"
-Cohesion: 0.73
-Nodes (5): install_s3cmd(), log(), need(), e2e-up.sh script, wait_for()
-
-### Community 220 - "Values Velero"
+### Community 259 - "Workflows: Test Pipeline (8)"
 Cohesion: 0.33
-Nodes (4): csi-hostpath-snapclass with the Velero discovery label, BackupStorageLocation pointing s3Url at the proxy, uploaderType kopia with EnableCSI and the node agent, Velero Helm values for the e2e cluster
+Nodes (6): on, pull_request, push, workflow_dispatch, branches, branches
 
-### Community 221 - "Bucket Policy"
+### Community 260 - "S3 Methods: Bucket Policy Test"
 Cohesion: 0.60
 Nodes (5): analyzePolicySecurity(), TestBucketPolicyComplexStructures(), TestBucketPolicySecurityAnalysis(), TestBucketPolicyValidation(), validatePolicyJSON()
 
-### Community 222 - "Constants"
-Cohesion: 0.60
-Nodes (3): simplePRNG, generateDeterministicData(), newSimplePRNG()
-
-### Community 223 - "Strict Configuration Loading"
+### Community 262 - "Tests: Deployment Test (5)"
 Cohesion: 0.40
-Nodes (3): Strict Decoding: An Unknown Key Refuses the Start, Configuration: Where a Value Comes From, loading_coverage_test.go — pins the AutomaticEnv removal
+Nodes (5): notContains, name, any, content, path
 
-### Community 225 - "Monitoring HTTP Server"
-Cohesion: 0.60
-Nodes (3): NewServer(), Config, Server
+### Community 263 - "S3 Encryption Proxy: Values (14)"
+Cohesion: 0.40
+Nodes (5): autoscaling, enabled, maxReplicas, minReplicas, targetCPUUtilizationPercentage
 
-### Community 226 - "Bucket Lifecycle Handler"
+### Community 264 - "S3 Encryption Proxy: Values (15)"
+Cohesion: 0.40
+Nodes (5): image, pullPolicy, registry, repository, tag
+
+### Community 265 - "S3 Encryption Proxy: Values Production (8)"
+Cohesion: 0.40
+Nodes (5): nginx.ingress.kubernetes.io/force-ssl-redirect, nginx.ingress.kubernetes.io/proxy-body-size, nginx.ingress.kubernetes.io/proxy-request-buffering, nginx.ingress.kubernetes.io/ssl-redirect, annotations
+
+### Community 266 - "Workflows: Test Pipeline (9)"
+Cohesion: 0.40
+Nodes (5): name, runs-on, steps, timeout-minutes, e2e-s3cmd
+
+### Community 267 - "Workflows: Test Pipeline (10)"
+Cohesion: 0.40
+Nodes (5): name, runs-on, steps, timeout-minutes, e2e-velero
+
+### Community 271 - "Velero: Values Proxy (6)"
+Cohesion: 0.40
+Nodes (5): image, pullPolicy, registry, repository, tag
+
+### Community 272 - "Velero: Values Proxy (7)"
+Cohesion: 0.40
+Nodes (5): readinessProbe, failureThreshold, initialDelaySeconds, periodSeconds, timeoutSeconds
+
+### Community 273 - "Velero: Values Proxy (8)"
+Cohesion: 0.40
+Nodes (5): defaultMode, secretName, volumes, name, secret
+
+### Community 274 - "Velero: Values Proxy (9)"
+Cohesion: 0.40
+Nodes (5): service, nodePort, port, targetPort, type
+
+### Community 275 - "S3 Encryption Proxy: Values (16)"
 Cohesion: 0.50
-Nodes (3): NewLifecycleHandler(), TestLifecycleHandler_ComplexRules(), TestLifecycleHandler_Handle()
+Nodes (4): logging, enabled, format, level
 
-### Community 228 - "AES KEK Vector Tests"
-Cohesion: 0.70
-Nodes (4): aesVecProvider(), TestAesVectorFingerprintIsStable(), TestAesVectorWrapIsBoundToItsSalt(), TestAesVectorWrappedKeyStillOpens()
-
-### Community 229 - "Perf Stack Detection"
-Cohesion: 0.70
-Nodes (4): detectStack(), insecureClient(), reachable(), readProxyConfig()
-
-### Community 230 - "Push"
+### Community 276 - "S3 Encryption Proxy: Values Monitoring (8)"
 Cohesion: 0.50
-Nodes (4): Build Docker Image job (release:published), Release Helm Chart to GitHub Pages job, SBOM, provenance and Docker Scout on the released image, s3-encryption-proxy Helm chart (5.0.0)
+Nodes (4): monitoring, enabled, metricsPath, port
 
-### Community 231 - "S3 API"
+### Community 277 - "S3 Encryption Proxy: Values (17)"
 Cohesion: 0.50
-Nodes (4): s3cmd del --recursive and multipart are refused, optimizations.max_request_document_size, A query string containing ';' is 400 InvalidArgument, Sub-resources: 501 NotImplemented or 405 MethodNotAllowed
+Nodes (4): serviceAccount, annotations, create, name
+
+### Community 282 - "Velero: Values Proxy (10)"
+Cohesion: 0.50
+Nodes (4): existingSecret, existingSecretKey, secrets, encryption
+
+### Community 283 - "Velero: Values Proxy (11)"
+Cohesion: 0.50
+Nodes (4): serviceTLS, enabled, existingSecret, mountPath
+
+### Community 284 - "Velero: Values Proxy (12)"
+Cohesion: 0.50
+Nodes (4): volumeMounts, mountPath, name, readOnly
+
+### Community 285 - "Velero: Values Velero (7)"
+Cohesion: 0.50
+Nodes (4): image, pullPolicy, repository, tag
+
+### Community 286 - "Tests: Deployment Test (6)"
+Cohesion: 0.67
+Nodes (3): equal, path, value
+
+### Community 287 - "Tests: Deployment Test (7)"
+Cohesion: 0.67
+Nodes (3): matchRegex, path, pattern
+
+### Community 288 - "Tests: Deployment Test (8)"
+Cohesion: 0.67
+Nodes (3): hosts, secretName, ingress.tls
 
 ## Ambiguous Edges - Review These
-- `ADR 0021` → `Go toolchain version spelled out in Containerfile and go.mod only`  [AMBIGUOUS]
-  DEVELOPER.md · relation: conceptually_related_to
-- `s3ep-gcm-seg-v2 stored format (AES-256-GCM segment chain + sealed trailer)` → `Initial implementation (Google Tink envelope, aes-gcm direct)`  [AMBIGUOUS]
-  CHANGELOG.md · relation: conceptually_related_to
-- `Streaming in both directions (bounded part buffers)` → `One instance, the chart refuses a second`  [AMBIGUOUS]
-  deploy/helm/s3-encryption-proxy/README.md · relation: conceptually_related_to
 - `Short Part Held in Memory and Sealed at Complete (D5)` → `Verdict Lands Before Anything Is Committed (D7)`  [AMBIGUOUS]
   docs/adr/0011-the-proxy-owns-the-part-layout.md · relation: conceptually_related_to
-- `No working key material tracked in the repository` → `Per-backend ca_file trust root`  [AMBIGUOUS]
-  docs/adr/0037-the-backend-leg-is-trusted-explicitly-and-its-failures-are-named.md · relation: conceptually_related_to
-- `Per-object name form lookup in mixed and drain` → `/status document on the monitoring listener`  [AMBIGUOUS]
-  docs/adr/0023-filename-encryption-encrypts-directory-segments.md · relation: conceptually_related_to
+- `ADR 0005: A KMS key is a provider` → `An ADR states the current decision only (D9)`  [AMBIGUOUS]
+  docs/adr/0005-a-kms-key-is-a-provider.md · relation: conceptually_related_to
+- `ADR 0013: A configuration key exists only if code reads it` → `An ADR states the current decision only (D9)`  [AMBIGUOUS]
+  docs/adr/0013-a-configuration-key-exists-only-if-code-reads-it.md · relation: conceptually_related_to
+- `Contributing guide` → `Go toolchain version in Containerfile and go.mod`  [AMBIGUOUS]
+  CONTRIBUTING.md · relation: conceptually_related_to
+- `ADR 0004: One local key provider` → `An ADR states the current decision only (D9)`  [AMBIGUOUS]
+  docs/adr/0004-one-local-key-provider.md · relation: conceptually_related_to
+- `A test asserts the target behaviour, never today's` → `MinIO is the oracle, AWS docs the specification (DEVIATION comments)`  [AMBIGUOUS]
+  CONTRIBUTING.md · relation: conceptually_related_to
+- `ADR 0038: The security architecture is one page per perspective` → `ADR states the current decision only (rewrite, never supersede)`  [AMBIGUOUS]
+  docs/adr/README.md · relation: conceptually_related_to
+- `Bucket route twin invariant (/{bucket} and /{bucket}/)` → `s3cmd del --recursive and multipart are refused`  [AMBIGUOUS]
+  docs/operations/clients/s3cmd.md · relation: conceptually_related_to
 
 ## Knowledge Gaps
-- **314 isolated node(s):** `dekCacheEntry`, `tagDocument`, `UtlCtxKey`, `ratioKey`, `requestIDKey` (+309 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 747 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **114 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **118 isolated node(s):** `HEADER_PATTERN`, `FOOTER_PATTERN`, `github.com/guided-traffic/s3-encryption-proxy/v5`, `Codec`, `ADR-0018` (+113 more)
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 1383 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **81 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **What is the exact relationship between `ADR 0021` and `Go toolchain version spelled out in Containerfile and go.mod only`?**
+- **Why does `ADR 0003: Objects are an authenticated segment chain` connect `Integrity and Tail-First Read` to `Handler Core and Entry Points`, `Planned Work: SSE-C and HA`, `Key Material and Deployment Secrets`, `ADR Corpus and Release History`, `Key Hierarchy and Threat Rules`, `Whole-Object Read Window`, `Monitoring and Licence Removal`, `Release Process and Doc Homes`, `Client Library and Storage Format`, `S3 API Behaviour`, `Tickets: 025 Tink Kms Hcvault`?**
+  _High betweenness centrality (0.026) - this node is a cross-community bridge._
+- **What connects `HEADER_PATTERN`, `FOOTER_PATTERN`, `github.com/guided-traffic/s3-encryption-proxy/v5` to the rest of the system?**
+  _118 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **Should `Handler Core and Entry Points` be split into smaller, more focused modules?**
+  _Cohesion score 0.06044905008635579 - nodes in this community are weakly interconnected._
+- **Why does `ADR 0007: Forward it or refuse it` connect `S3 API Behaviour` to `Handler Core and Entry Points`, `Filename Encryption Ticket`, `Planned Work: SSE-C and HA`, `ADR Corpus and Release History`, `Key Hierarchy and Threat Rules`, `Release Process and Doc Homes`, `Integrity and Tail-First Read`, `Client Library and Storage Format`, `Exit Provider and Session Lifecycle`?**
+  _High betweenness centrality (0.017) - this node is a cross-community bridge._
+- **Should `Shutdown and Test Contexts` be split into smaller, more focused modules?**
+  _Cohesion score 0.017792207792207793 - nodes in this community are weakly interconnected._
+
+### Low-confidence Hints
+_AMBIGUOUS edges — the extractor was unsure. Verify before acting on these._
+
+- **What is the exact relationship between `Short Part Held in Memory and Sealed at Complete (D5)` and `Verdict Lands Before Anything Is Committed (D7)`?**
   _Edge tagged AMBIGUOUS (relation: conceptually_related_to) - confidence is low._
-- **Why does `Ticket 038: s3-encryption-operator` connect `Service TLS and Operator Certificates` to `Transfer Bounds and Shutdown`, `ADR Web: Auth, Checksums, Config`, `Storage Format Integrity Guarantees`, `Hostile Backend and Key Material ADRs`, `Multipart Part Layout Decisions`, `Documentation Homes and Ticket Lifecycle`, `Release and Test Discipline ADRs`, `Filename Encryption Design`, `Filename Encryption Pass Engine`?**
-  _High betweenness centrality (0.055) - this node is a cross-community bridge._
-- **Are the 5 inferred relationships involving `EnsureMinIOAndProxyAvailable()` (e.g. with `TestUnauthenticatedProbes()` and `EnsureBenchmarkEnvironment()`) actually correct?**
-  _`EnsureMinIOAndProxyAvailable()` has 5 INFERRED edges - model-reasoned connections that need verification._
-- **What connects `dekCacheEntry`, `tagDocument`, `UtlCtxKey` to the rest of the system?**
-  _314 weakly-connected nodes found - possible documentation gaps or missing edges._
-- **Should `Object GET Coverage Tests` be split into smaller, more focused modules?**
-  _Cohesion score 0.05262711145064086 - nodes in this community are weakly interconnected._
-- **What is the exact relationship between `s3ep-gcm-seg-v2 stored format (AES-256-GCM segment chain + sealed trailer)` and `Initial implementation (Google Tink envelope, aes-gcm direct)`?**
+- **What is the exact relationship between `ADR 0005: A KMS key is a provider` and `An ADR states the current decision only (D9)`?**
   _Edge tagged AMBIGUOUS (relation: conceptually_related_to) - confidence is low._
-- **Why does `ADR 0021` connect `ADR Web: Auth, Checksums, Config` to `Changelog and Project Front Page`, `Hostile Backend and Key Material ADRs`, `Demo Stack and Integration Jobs`, `Release and Test Discipline ADRs`, `Service TLS and Operator Certificates`, `Filename Encryption Design`?**
-  _High betweenness centrality (0.050) - this node is a cross-community bridge._

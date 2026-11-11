@@ -2,7 +2,7 @@
 
 > God node · 67 connections · `internal/proxy/handlers/object/getobject_coverage_test.go`
 
-**Community:** [Object GET Coverage Tests](Object_GET_Coverage_Tests.md)
+**Community:** [Object Checksum and Tagging Tests](Object_Checksum_and_Tagging_Tests.md)
 
 ## Connections by Relation
 
