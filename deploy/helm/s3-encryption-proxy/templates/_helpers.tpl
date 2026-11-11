@@ -211,10 +211,9 @@ worse than no control: it gets relied upon.
    to keep object data confidential (ADR 0001); an Ingress that answers a host in
    plaintext puts the client's credentials and object keys on the wire in front of
    it, and nothing in the rendered manifest says so.
-2. A rendered cert-manager Certificate has a consumer. The chart does not mount it
-   into the pod, so the only thing that can consume it is an ingress.tls entry
-   naming its secret. Issuing a certificate nothing uses reads as "TLS is
-   configured" and is not.
+2. A rendered cert-manager Certificate has a consumer: an ingress.tls entry naming
+   its secret, or serviceTLS serving that secret from the pod (ADR 0026 D7, D10).
+   Issuing a certificate nothing uses reads as "TLS is configured" and is not.
 */}}
 {{/*
 One instance, and the chart refuses to render a second.

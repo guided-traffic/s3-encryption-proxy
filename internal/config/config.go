@@ -301,7 +301,7 @@ func Load() (*Config, error) {
 
 	// Same question one key over: a written 0 switched the session sweeper off,
 	// and the short-part budget an abandoned upload holds was then never given
-	// back (ADR 0028 residual risks, ADR 0017 D8).
+	// back (ADR 0028, ADR 0017 D8).
 	if viper.InConfig("optimizations.multipart_session_cleanup_interval") &&
 		viper.GetInt("optimizations.multipart_session_cleanup_interval") < 1 {
 		return nil, fmt.Errorf(
