@@ -2,72 +2,56 @@
 
 ## Status
 
-**Accepted.** Date: 2026-09-07.
+**Accepted.** Date: 2026-09-10.
 
-**Implemented on the 5.0.0 branch, 2026-09-10.** `aes` is the one local provider: `rsa` is
-deleted from the tree, and the only other type an active provider may have is `none`. The
-data key is wrapped with AES-256-GCM under a key derived per wrap with HKDF-SHA256, so a
-flipped bit anywhere in the 76-byte wrap fails closed with its own error instead of yielding
-a different data key in silence; `s3ep-kek-fingerprint` is an HKDF expansion under a
-labelled context rather than a plain hash of the master key; and `aes_key` is base64 of
-exactly 32 bytes, with the raw-string fallback gone and the admission rules checked at
-startup — for every configured `aes` provider, not only the active one. The change breaks
-the stored format (`s3ep-encrypted-dek` and `s3ep-kek-fingerprint` both changed), which is
-why it shipped in the release that already forces a re-upload — see ADR 0003 and ADR 0017.
+**Implemented, and released in 5.0.0.** `aes` is the one local provider and the product holds
+exactly two provider types: `aes` and `exit`, which holds no key material (ADR 0025). The `rsa`
+provider and the unwired stub behind the `tink` type are not in the product. A configuration
+naming `type: "tink"` is refused at startup by that name as not a provider of this proxy, one
+naming `type: "none"` is refused by that name with an error that names `exit` in its place, any
+other type is refused as unsupported, and no KMS-backed provider exists — that is decided and
+unbuilt (ADR 0005).
 
-**The tree now carries only what this decision leaves standing, 2026-09-10.** The unwired
-stub behind the `tink` provider type is deleted along with the rest of the superseded code,
-so the product holds exactly two key providers: `aes` and `none`. A configuration naming
-`type: "tink"` is still refused at startup by that name, any other type is refused as
-unsupported, and no KMS-backed provider exists — that stays decided and unbuilt (ADR 0005).
-The never-read `encryption.key_rotation_days` setting is gone as well, so no configuration
-file hints at the rotation operation D12 says the product does not have (ADR 0013). The
-third-party key-management library that came with that stub left the build with it, which
-settles the open question under the AES-KWP alternative below: a deterministic wrap would
-now cost the self-written primitive that alternative priced.
+The data key is wrapped with AES-256-GCM under a key derived per wrap with HKDF-SHA256 and a
+fresh per-wrap salt, so a flipped bit anywhere in the 76-byte wrap fails closed with its own
+error instead of yielding a different data key in silence: the client is answered
+`InvalidObjectState` with HTTP 403 and the message "Object key material failed authentication",
+before a single stored byte is decrypted or delivered, and an object the proxy did not write is
+refused with the same code under its own message (ADR 0002, ADR 0003). `s3ep-kek-fingerprint`
+is an HKDF expansion under its own label rather than a plain hash of the master key. `aes_key`
+is base64 of exactly 32 bytes, with no raw-string fallback, and the admission rules run at
+startup over every configured `aes` provider, not only the active one. The change breaks the
+stored format (`s3ep-encrypted-dek` and `s3ep-kek-fingerprint` both changed), which is why it
+shipped in the release that already forces a re-upload — see ADR 0003 and ADR 0017.
 
-**Re-checked against the tree, 2026-09-10.** A wrapped key that fails its tag is answered as
-`InvalidObjectState` with HTTP 403 and the message "Object key material failed
-authentication", before a single stored byte is decrypted or delivered; an object the proxy
-did not write is refused with the same code under its own message (ADR 0002, ADR 0003). One
-premise of the Context below has disappeared in the meantime: the configurations "where no
-integrity check runs" no longer exist, because the integrity modes are gone and every stored
-object is an authenticated segment chain (ADR 0003). That removes the fallback the Context
-weighed against; it does not change the decision, whose reason was that the key layer must
-not depend on the data layer noticing.
-
-**Re-checked against the tree, 2026-09-12.** Everything above still holds — the wrap is 76
-bytes under a fresh per-wrap salt, `s3ep-kek-fingerprint` is an HKDF expansion under its own
-label, and the admission rules run at startup over every configured `aes` provider — with one
-name out of date. The two paragraphs above still call the pass-through provider `none`. It is
-`exit` since ADR 0025, and a configuration naming `type: "none"` is refused at startup by that
-name, with an error that names `exit` in its place. The count is unchanged: two provider types,
-`aes` and the pass-through one.
+No configuration key hints at the rotation operation D12 says the product does not have: the
+never-read `encryption.key_rotation_days` setting is not accepted (ADR 0013). The product
+carries no third-party key-management library, which is what prices the AES-KWP alternative
+below.
 
 ## Context
 
 The key-encryption layer wraps the per-object data key of ADR 0002 under a configured
-master key. Three defects in it were weighed together on 2026-09-07, because each of them
-can only be repaired in a release that breaks the stored format, and there is exactly one
-such release planned.
+master key. Three defects in it are weighed together, because each of them can only be
+repaired in a release that breaks the stored format, and such a release is spent once
+(ADR 0017).
 
-**The wrap is unauthenticated.** AES-CTR with no tag is malleable: an adversary who can
-write object metadata — which is the whole premise of ADR 0001 — flips bits of the stored
-wrapped key and gets a *chosen* modification of the data key back, with no error. Today
-that is bounded rather than exploitable, because an AES-256-GCM object fails its own tag
-and an AES-CTR object fails its HMAC. The bound does not hold in the configurations where
-no integrity check runs, and it is the wrong kind of defence: the key layer must not depend
-on the data layer noticing.
+**An unauthenticated wrap.** AES-CTR with no tag is malleable: an adversary who can write
+object metadata — which is the whole premise of ADR 0001 — flips bits of the stored wrapped
+key and gets a *chosen* modification of the data key back, with no error. A data layer that
+authenticates its own bytes bounds that rather than making it exploitable, and every stored
+object is an authenticated segment chain (ADR 0003). That bound is the wrong kind of defence
+all the same: the key layer must not depend on the data layer noticing.
 
-**The published fingerprint is a plain hash of the key.** Every object carries
+**A published fingerprint that is a plain hash of the key.** Every object carries
 `s3ep-kek-fingerprint` in the clear so that a read can select the provider that wrote it.
 Against 256 random bits, publishing a hash of the key leaks nothing. Against a
 human-chosen key it is a free offline verification oracle for a dictionary attack, and
 recovering the master key unwraps every data key and therefore every object.
 
-**A passphrase is accepted as the master key.** `aes_key: "correct-horse-battery-staple-123"`
-starts the proxy today. That is what turns the previous point from theoretical into
-practical: the two defects are each defensible alone and dangerous together.
+**A passphrase accepted as the master key.** A configuration such as
+`aes_key: "correct-horse-battery-staple-123"` is what turns the previous point from theoretical
+into practical: the two defects are each defensible alone and dangerous together.
 
 The obvious framing — "hashing a symmetric key is unsafe, so prefer the asymmetric
 provider" — is wrong about the primitive and right about the hash. No fingerprint
@@ -79,9 +63,10 @@ wrap is the only lever on malleability. The asymmetric provider answers neither.
 That provider was examined on its own merits at the same time. It requires both halves of
 the key pair in the same configuration, so the one property asymmetry could add here — a
 write-only proxy that cannot decrypt what it stored — does not exist and would not serve
-any client that reads back what it writes. It unwraps roughly 2,400 times slower than the
-symmetric provider (sub-microsecond against just under a millisecond per cold unwrap),
-which is the floor for every cache miss on the read path. RSA-2048 sits at a 112-bit
+any client that reads back what it writes. It unwraps more than 4,000 times slower than the
+symmetric provider (roughly 145 nanoseconds against roughly 0.63 milliseconds per cold unwrap
+on the reference machine, ADR 0020), which is the floor for every cache miss on the read
+path. RSA-2048 sits at a 112-bit
 security level under a 256-bit data key and is the one primitive in this design that a
 backend archiving ciphertext forever can plausibly break later. It also carries its own
 fingerprint defect. No shipped chart, compose file or end-to-end configuration uses it;
@@ -129,14 +114,9 @@ object's metadata and not to its body: the client is answered `InvalidObjectStat
 HTTP 403 and *Object key material failed authentication*, **before a single stored byte is
 decrypted or delivered**. It is never reported as a decryption failure of the body.
 
-**D10.** The pass-through provider `none` stays, for testing and end-of-life only. It is
-not a production mode: objects written under it are plaintext at rest and carry no proxy
-metadata at all.
-
-> **Superseded 2026-09-10 by [ADR 0025](0025-leaving-is-a-supported-mode.md).** The end-of-life
-> half became the whole purpose and the provider is now called `exit`: it writes plaintext on
-> every path and keeps decrypting what this proxy encrypted earlier, which `none` did not. `none`
-> is refused by name.
+**D10.** The provider that stores plaintext and still reads what this proxy encrypted is the
+subject of [ADR 0025](0025-leaving-is-a-supported-mode.md); this record holds no pass-through
+rule.
 
 **D11.** Custody of the master key is a separate axis from this decision. A key held in a
 key management service is its own provider type (ADR 0005). Delivering the local key from
@@ -220,8 +200,8 @@ on top of a forced re-upload. Rejected: the version belongs in the stored format
 already carries one.
 
 **KMS only.** The only option that changes what a compromised pod yields. Rejected on
-sequencing — no KMS-backed provider exists yet, it is scheduled after the format change,
-and making the key service a hard dependency turns its availability into read
+sequencing — no KMS-backed provider exists, it ships in an additive release of its own after
+the format change, and making the key service a hard dependency turns its availability into read
 availability. It remains the direction of travel (ADR 0005), not a replacement for this
 decision.
 
@@ -232,13 +212,11 @@ asymmetry. The product refuses passphrases instead of pricing them.
 
 **A deterministic key wrap (AES-KWP, RFC 5649) instead of GCM with a per-wrap salt.**
 Genuinely attractive: 40 stored bytes instead of 76, no nonce and no message bound at all.
-It lost on dependencies — it is not in the standard library, and the only third-party
-library in the product that provides it is itself a candidate for removal for unrelated
-reasons, a decision that is still open. If it goes, the wrap would be about eighty
-self-written lines of a key-wrap primitive plus test vectors to maintain, and a wrap format
-must not depend on a library decision taken after it. The
-salted GCM construction uses the standard library only, and it is the same primitive
-family as the data layer and as what key management services use internally.
+It lost on dependencies — it is not in the standard library and no library in the product
+provides it, so the wrap would be about eighty self-written lines of a key-wrap primitive plus
+test vectors to maintain, and a wrap format must not depend on a library decision. The salted
+GCM construction uses the standard library only, and it is the same primitive family as the
+data layer and as what key management services use internally.
 
 ## Residual risks
 
@@ -268,13 +246,11 @@ family as the data layer and as what key management services use internally.
   that no shipped chart, compose file, example or end-to-end configuration does, which was
   checked; external installations cannot be enumerated. The removal is therefore a
   breaking change for an unknown, believed-empty set of users.
-- **Superseded by a measurement:** the roughly 2,400× unwrap ratio in the Context came from
-  a benchmark that was run and never committed, and the baseline suite has since measured
-  the same comparison while both providers still existed — roughly 145 nanoseconds against
+- **The unwrap ratio in the Context measures a provider that is no longer in the product.**
+  The baseline suite took it while both providers existed — roughly 145 nanoseconds against
   roughly 0.63 milliseconds on the reference machine, a ratio above 4,000×. The order of
-  magnitude decided nothing on its own; the Context's figure is the one that must not be
-  quoted, and any ratio taken after the removal compares the symmetric provider with an
-  asymmetric primitive that is no longer a provider (ADR 0020).
+  magnitude decided nothing on its own, and any ratio taken now compares the symmetric provider
+  with an asymmetric primitive that is not a provider (ADR 0020).
 - **Not measured in isolation:** the HKDF expansion's own share of the wrap and the unwrap;
   the change as a whole is measured, and ADR 0020 governs any claim that attributes it to
   the expansion alone.
