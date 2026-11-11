@@ -21,7 +21,7 @@ runs:
       shell: bash
       env:
         # Tracked by Renovate (renovate.json, custom manager "docker compose").
-        COMPOSE_VERSION: v5.7.0
+        COMPOSE_VERSION: v5.7.1
       run: |
         set -euo pipefail
         case "$(uname -m)" in
