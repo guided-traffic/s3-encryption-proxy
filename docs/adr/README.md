@@ -55,8 +55,8 @@ it, and a rewritten one has its index row rewritten with it.
 
 ## Index
 
-Every record here is **Accepted**. One rule is superseded: D5 of ADR 0035, by ADR 0038. The *State* column is the coarse build
-state as of 2026-09-13, on the unreleased 5.0.0 branch: **Implemented**, **Partly built** (some
+Every record here is **Accepted**. The *State* column is the coarse build state:
+**Implemented**, **Partly built** (some
 rules of the decision hold, the rest are decided and outstanding) or **Not built** (decided,
 nothing of it exists yet). A state that reads *Implemented, except …* names what is still
 outstanding. The record's own `Status` section says which rule is which and is the authority;
@@ -78,7 +78,7 @@ this column is a reading aid.
 | [0004](0004-one-local-key-provider.md) | One local key provider: base64 of 32 random bytes, an authenticated wrap, a derived fingerprint, no passphrases | Implemented |
 | [0005](0005-a-kms-key-is-a-provider.md) | A key held in a KMS is a provider type of its own; delivering a local key from a secret store is not a KMS | Not built |
 | [0009](0009-the-metadata-prefix-is-the-proxys-namespace.md) | The configured metadata prefix is the proxy's exclusive namespace: a client write into it is refused, and it never appears in a response | Implemented |
-| [0023](0023-filename-encryption-encrypts-directory-segments.md) | Filename encryption encrypts every segment of the key deterministically, with a searchable head on the leaf and no mapping index; a mode set `off / drain / mixed / strict` serves both name forms in one bucket (amended 2026-09-17; the file keeps its original name) | Not built |
+| [0023](0023-filename-encryption-encrypts-every-segment-with-a-searchable-leaf-head.md) | Filename encryption encrypts every segment of the key deterministically, with a searchable head on the leaf and no mapping index; a mode set `off / drain / mixed / strict` serves both name forms in one bucket | Not built |
 | [0025](0025-leaving-is-a-supported-mode.md) | Leaving is a supported mode: the exit provider writes plaintext and still decrypts what was encrypted before the switch | Implemented |
 
 ### The S3 surface
@@ -97,7 +97,7 @@ this column is a reading aid.
 
 | ADR | Decision | State |
 |---|---|---|
-| [0013](0013-a-configuration-key-exists-only-if-code-reads-it.md) | A configuration key exists only if code reads it; an unworkable configuration refuses to start | Implemented, except four of D7's zero cases |
+| [0013](0013-a-configuration-key-exists-only-if-code-reads-it.md) | A configuration key exists only if code reads it; an unworkable configuration refuses to start | Implemented, except three of D7's zero cases |
 | [0014](0014-authentication-is-sigv4-no-rate-limiting.md) | SigV4 in both forms against static configured clients; no rate limiting and no per-address blocking | Implemented |
 | [0015](0015-a-transfer-is-bounded-by-the-client-and-by-shutdown.md) | No wall clock on a transfer; only the header phase, the idle connection and shutdown are bounded | Implemented, except D4's "no other fixed shutdown deadline" for the monitoring and profiling listeners |
 | [0016](0016-the-proxy-is-apache-licensed-and-checks-no-license.md) | The proxy is licensed under Apache 2.0 and checks no license; `license_file` is accepted and ignored until the next major release | Implemented |
@@ -122,7 +122,7 @@ this column is a reading aid.
 | [0027](0027-conformance-is-asserted-against-a-backend-that-is-not-minio.md) | One backend-agnostic conformance suite runs free against the local stack and on a schedule against a paid backend; the corpus is seeded once and a byte budget is enforced in code | Implemented |
 | [0028](0028-an-abandoned-upload-is-ended-not-forgotten.md) | A client-driven multipart upload expires on inactivity, not on age, and the sweeper aborts it at the backend before it forgets it | Implemented |
 | [0029](0029-the-shutdown-budget-finishes-work-and-sweeps-what-cannot-be-finished.md) | Graceful shutdown goes readiness-false, stop accepting, finish what is running, then end every upload that can no longer be finished | Implemented |
-| [0035](0035-the-readme-advertises-the-reference-lives-under-docs.md) | The README advertises the product and carries the configuration key reference; operator and client reference lives under `docs/operations/` | Implemented; D5 superseded by ADR 0038 |
+| [0035](0035-the-readme-advertises-the-reference-lives-under-docs.md) | The README advertises the product and carries the configuration key reference; operator and client reference lives under `docs/operations/` | Implemented |
 | [0038](0038-the-security-architecture-is-one-page-per-perspective.md) | The security architecture is a directory of one page per perspective, each ending with what it does not cover; an open gap keeps a stable `H-<n>` beside its mechanism and a closed one becomes prose, nothing there takes the shape of a ticket, and vulnerability reporting is `SECURITY.md` at the root | Implemented |
 | [0039](0039-the-analysis-tools-move-with-the-go-toolchain.md) | The analysis tools that gate a pull request are pinned in a module of their own, built against the newest `golang.org/x/tools`, and move in one pull request with the Go version; a Go release that needs a tool release keeps that pull request red | Implemented |
 | [0040](0040-the-go-module-path-carries-the-major-version.md) | The Go module path ends in the release line's major (`/v5`), so a release can be required by its tag; a major's pull request moves the suffix, and adding it is not itself a break | Implemented; D2 is a manual step, not a check |
