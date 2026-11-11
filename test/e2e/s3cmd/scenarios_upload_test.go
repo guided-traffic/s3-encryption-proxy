@@ -72,8 +72,8 @@ func TestS2_MultipartPut(t *testing.T) {
 
 			r := s.run(t, ctx, "--multipart-chunk-size-mb=5", "put", src, s.uri("big.bin"))
 
-			// Whatever the verdict, the client must not be left holding an upload
-			// it cannot see or abort (S6b). Checked before the assertion so a
+			// Whatever the verdict, the client must not be left holding an open
+			// upload. Checked before the assertion so a
 			// failing case still reports it.
 			open := harness.OpenUploads(t, ctx, s.bucket)
 
