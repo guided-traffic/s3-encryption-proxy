@@ -1020,27 +1020,6 @@ func TestObjGetParseRangeSpec(t *testing.T) {
 	})
 }
 
-// The stored total is what the plaintext length is derived from, so a header the
-// proxy cannot read that number out of is an error rather than a guess.
-func TestObjGetContentRangeTotal(t *testing.T) {
-	total, err := contentRangeTotal("bytes 0-99/1000")
-	require.NoError(t, err)
-	assert.Equal(t, int64(1000), total)
-
-	for name, header := range map[string]string{
-		"wrong_unit":   "octets 0-99/1000",
-		"no_slash":     "bytes 0-99",
-		"not_a_number": "bytes 0-99/many",
-		"empty":        "",
-	} {
-		t.Run(name, func(t *testing.T) {
-			_, err := contentRangeTotal(header)
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), "unexpected Content-Range")
-		})
-	}
-}
-
 // ---------------------------------------------------------------------------
 // The HEAD and the GET have to describe one object.
 // ---------------------------------------------------------------------------

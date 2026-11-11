@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
@@ -89,11 +89,11 @@ func TestRangeRead(t *testing.T) {
 			// ("chunk too big: choose chunk size <= 16MiB"), so the untimed
 			// source upload goes through a multipart uploader. It is setup, not
 			// a measured path.
-			uploader := manager.NewUploader(l.client, func(u *manager.Uploader) {
-				u.PartSize = 16 * 1024 * 1024
+			uploader := transfermanager.New(l.client, func(u *transfermanager.Options) {
+				u.PartSizeBytes = 16 * 1024 * 1024
 				u.Concurrency = 4
 			})
-			if _, err := uploader.Upload(ctx, &s3.PutObjectInput{
+			if _, err := uploader.UploadObject(ctx, &transfermanager.UploadObjectInput{
 				Bucket: aws.String(l.bucket),
 				Key:    aws.String(rangeSourceKey),
 				Body:   bytes.NewReader(payload),

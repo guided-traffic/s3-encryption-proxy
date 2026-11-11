@@ -14,6 +14,7 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/response"
 	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/dataencryption"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/storedobject"
 )
 
 // byteRange is a resolved range over a known plaintext length.
@@ -275,7 +276,7 @@ func (h *Handler) handleGetObjectRange(w http.ResponseWriter, r *http.Request, b
 	}
 	defer func() { closeDrained(output.Body) }()
 
-	storedTotal, err := contentRangeTotal(aws.ToString(output.ContentRange))
+	storedTotal, err := storedobject.TotalFromContentRange(aws.ToString(output.ContentRange))
 	if err != nil {
 		log.WithError(err).Error("Backend returned an unusable Content-Range for a ranged read")
 		h.errorWriter.WriteGenericError(w, http.StatusInternalServerError, "InternalError",
@@ -432,24 +433,6 @@ func (h *Handler) passThroughRange(w http.ResponseWriter, r *http.Request, bucke
 
 	h.writeRangeResponse(w, r, output.Body, aws.ToString(output.ContentRange),
 		aws.ToInt64(output.ContentLength), output)
-}
-
-// contentRangeTotal extracts the total size from a "bytes start-end/total"
-// header.
-func contentRangeTotal(contentRange string) (int64, error) {
-	spec, ok := strings.CutPrefix(strings.TrimSpace(contentRange), "bytes ")
-	if !ok {
-		return 0, fmt.Errorf("unexpected Content-Range %q", contentRange)
-	}
-	_, totalStr, ok := strings.Cut(spec, "/")
-	if !ok {
-		return 0, fmt.Errorf("unexpected Content-Range %q", contentRange)
-	}
-	total, err := strconv.ParseInt(strings.TrimSpace(totalStr), 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("unexpected Content-Range %q: %w", contentRange, err)
-	}
-	return total, nil
 }
 
 func (h *Handler) writeRangeResponse(w http.ResponseWriter, r *http.Request, body io.Reader, contentRange string, length int64, output *s3.GetObjectOutput) {

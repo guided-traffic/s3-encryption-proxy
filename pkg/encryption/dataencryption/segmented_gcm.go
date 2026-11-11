@@ -176,8 +176,21 @@ func (c *Codec) SealTrailer(sum Checksum) ([]byte, error) {
 // OpenTrailer opens a trailer read straight from the backend and returns the
 // length and checksum it authenticates. HEAD and a whole-object GET read it
 // before the body, so both answer with an authenticated plaintext length.
-func (c *Codec) OpenTrailer(sealed []byte) (Checksum, error) {
-	return c.openTrailer(sealed)
+//
+// storedTotal is the object's whole stored length as the backend reports it.
+// The trailer is the authenticated statement of the plaintext length and the
+// stored length is the backend's word, so a disagreement is a truncation or an
+// extension and fails with ErrCorrupt rather than as a body that stops short of
+// a length already announced.
+func (c *Codec) OpenTrailer(sealed []byte, storedTotal int64) (Checksum, error) {
+	sum, err := c.openTrailer(sealed)
+	if err != nil {
+		return Checksum{}, err
+	}
+	if plaintext, err := PlaintextSize(storedTotal); err != nil || plaintext != sum.Length {
+		return Checksum{}, ErrCorrupt
+	}
+	return sum, nil
 }
 
 // openTrailer opens the trailer and returns what it authenticates.

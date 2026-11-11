@@ -14,6 +14,7 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/response"
 	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/dataencryption"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/storedobject"
 )
 
 // An object's end is read before its beginning (ADR 0003 D14).
@@ -93,7 +94,7 @@ func (h *Handler) fetchObjectTail(r *http.Request, bucket, key string, want int6
 	// backend's choice; both are handled.
 	storedTotal := aws.ToInt64(output.ContentLength)
 	if contentRange := aws.ToString(output.ContentRange); contentRange != "" {
-		storedTotal, err = contentRangeTotal(contentRange)
+		storedTotal, err = storedobject.TotalFromContentRange(contentRange)
 		if err != nil {
 			return nil, err
 		}
@@ -120,19 +121,12 @@ func (h *Handler) fetchObjectTail(r *http.Request, bucket, key string, want int6
 		return nil, dataencryption.ErrCorrupt
 	}
 
+	// The trailer is checked against the stored length here, not after the
+	// Content-Length has gone out: a disagreement is a truncation or an extension.
 	sum, err := h.encryptionMgr.OpenSegmentedTrailer(key, output.Metadata,
-		stored[len(stored)-dataencryption.TrailerSize:])
+		stored[len(stored)-dataencryption.TrailerSize:], storedTotal)
 	if err != nil {
 		return nil, err
-	}
-
-	// The trailer is the authenticated statement of how long the plaintext is;
-	// the stored length is the backend's. A disagreement is a truncation or an
-	// extension, and it is caught here rather than as a body that stops short of
-	// the Content-Length already sent.
-	plaintext, err := orchestration.PlaintextSize(storedTotal)
-	if err != nil || plaintext != sum.Length {
-		return nil, dataencryption.ErrCorrupt
 	}
 
 	return &objectTail{output: output, storedTotal: storedTotal, stored: stored, sum: sum}, nil

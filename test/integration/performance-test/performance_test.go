@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/stretchr/testify/require"
@@ -160,17 +160,17 @@ func runPerformanceTest(t *testing.T, ctx context.Context, client *s3.Client, bu
 	require.NoError(t, err, "Failed to generate test data")
 
 	// Create uploader with proper configuration for performance testing
-	uploader := manager.NewUploader(client, func(u *manager.Uploader) {
+	uploader := transfermanager.New(client, func(u *transfermanager.Options) {
 		// Use optimal part size for streaming (same as our proxy configuration)
-		u.PartSize = 5 * 1024 * 1024 // 5 MB
-		u.Concurrency = 3            // Match proxy concurrency
+		u.PartSizeBytes = 5 * 1024 * 1024 // 5 MB
+		u.Concurrency = 3                 // Match proxy concurrency
 	})
 
 	// Measure upload performance
 	t.Logf("Starting upload of %d MB...", fileSize/(1024*1024))
 	uploadStart := time.Now()
 
-	_, err = uploader.Upload(ctx, &s3.PutObjectInput{
+	_, err = uploader.UploadObject(ctx, &transfermanager.UploadObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(testKey),
 		Body:   bytes.NewReader(testData),
@@ -285,8 +285,8 @@ func BenchmarkStreamingUpload(b *testing.B) {
 		b.Fatalf("Failed to generate test data: %v", err)
 	}
 
-	uploader := manager.NewUploader(tc.ProxyClient, func(u *manager.Uploader) {
-		u.PartSize = 5 * 1024 * 1024
+	uploader := transfermanager.New(tc.ProxyClient, func(u *transfermanager.Options) {
+		u.PartSizeBytes = 5 * 1024 * 1024
 		u.Concurrency = 3
 	})
 
@@ -296,7 +296,7 @@ func BenchmarkStreamingUpload(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		testKey := fmt.Sprintf("bench-test-%d", i)
 
-		_, err := uploader.Upload(tc.Ctx, &s3.PutObjectInput{
+		_, err := uploader.UploadObject(tc.Ctx, &transfermanager.UploadObjectInput{
 			Bucket: aws.String(testBucket),
 			Key:    aws.String(testKey),
 			Body:   bytes.NewReader(testData),
@@ -369,8 +369,8 @@ func BenchmarkStreamingDownload(b *testing.B) {
 	}
 
 	testKey := "bench-download-test-file"
-	uploader := manager.NewUploader(tc.ProxyClient)
-	_, err = uploader.Upload(tc.Ctx, &s3.PutObjectInput{
+	uploader := transfermanager.New(tc.ProxyClient)
+	_, err = uploader.UploadObject(tc.Ctx, &transfermanager.UploadObjectInput{
 		Bucket: aws.String(testBucket),
 		Key:    aws.String(testKey),
 		Body:   bytes.NewReader(testData),
@@ -569,12 +569,12 @@ func measureComparisonPerformance(t *testing.T, ctx context.Context, client *s3.
 	// Use multipart upload for files larger than 5MB to avoid chunk size issues
 	if len(data) > 5*1024*1024 {
 		// Use AWS S3 Manager for large files (same as streaming performance test)
-		uploader := manager.NewUploader(client, func(u *manager.Uploader) {
-			u.PartSize = 5 * 1024 * 1024 // 5 MB parts
-			u.Concurrency = 3            // Match proxy concurrency
+		uploader := transfermanager.New(client, func(u *transfermanager.Options) {
+			u.PartSizeBytes = 5 * 1024 * 1024 // 5 MB parts
+			u.Concurrency = 3                 // Match proxy concurrency
 		})
 
-		_, err := uploader.Upload(ctx, &s3.PutObjectInput{
+		_, err := uploader.UploadObject(ctx, &transfermanager.UploadObjectInput{
 			Bucket: aws.String(bucket),
 			Key:    aws.String(key),
 			Body:   bytes.NewReader(data),

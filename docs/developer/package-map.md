@@ -20,6 +20,8 @@ where the file's name does not already say it.
 | `dataencryption/segmented_gcm_range.go` | The window planner and the ranged reader |
 | `keyencryption/aes.go` | The one key provider that encrypts: HKDF-SHA256 derivation, the authenticated DEK wrap, the fingerprint |
 | `keyencryption/exit.go` | The exit provider: holds no key material and refuses both wrap and unwrap, so the pass-through behaviour lives in the handlers, not here |
+| `keyencryption/aes.go` `DecodeAESKey` | The admission rules for a configured master key — base64 of 32 bytes, not a passphrase, not a pattern. The configuration, the factory and the client library call it, so all three refuse the same keys |
+| `storedobject/` | The stored object apart from its bytes: the four `s3ep-*` keys, the default prefix and its pattern, the namespace test, building and reading the metadata, keying a new object (`New`), and the stored total of a ranged answer. The proxy and the client library both go through it, so a rule here cannot drift between them |
 | `factory/` | Builds a key encryptor from configuration, and is the registry that maps a fingerprint back to its provider |
 
 A key encryption key held by a KMS is decided
@@ -27,15 +29,32 @@ A key encryption key held by a KMS is decided
 Nothing in this tree talks to a KMS; configuration admits `aes` and `exit`, and
 refuses `type: tink` and `type: none` by name.
 
+## `pkg/s3enc/` — the client library
+
+An application that writes and reads the stored format directly against S3,
+without the proxy in between, imports this package
+([ADR 0041](../adr/0041-the-project-ships-a-client-library-for-its-stored-format.md)).
+It is the one package under `pkg/` written for importers; what an importer needs
+to know is [docs/operations/client-library.md](../operations/client-library.md).
+
+| Path | Responsibility |
+|---|---|
+| `client.go` | `New`, the options, the key ring by fingerprint, the error sentinels, and `codecFor`: the library's unwrap, which maps the same failures the proxy refuses onto its own errors |
+| `write.go` | `Put`, streamed through `transfermanager` with the opportunistic request checksum off, and `Copy`, which re-encrypts because the object key is authenticated |
+| `read.go` | `Get` (one request, verified at the end), `GetRange` (HEAD plus one ranged GET pinned to the entity tag), `Stat` (the trailer alone) |
+
+It adds the S3 calls and the key ring and nothing else: the codec, the key wrap,
+the key rules and the metadata contract are the proxy's own code. A rule that
+only one of the two would apply belongs in `pkg/encryption/`, not here.
+
 ## `internal/orchestration/` — the encryption facade the handlers call
 
 | Path | Responsibility |
 |---|---|
 | `manager.go` | The public surface. It also holds the two maps of multipart uploads in flight — the client-driven sessions and the proxy's own producer uploads — and runs the goroutine that ends the idle client-driven ones at the backend before forgetting them. Both maps are swept at shutdown |
-| `segmented.go` | Writing and opening one object: the DEK, the codec, the metadata, the range plan, the foreign-object and key-material refusals |
+| `segmented.go` | Writing and opening one object through `storedobject` under the configured prefix and the active provider: the range plan, the foreign-object and key-material refusals |
 | `segmented_session.go` | One client-driven multipart upload: the part table, the held short part, the rules Complete enforces. See [multipart.md](multipart.md) |
-| `providers.go` | Provider registration, fingerprints, DEK wrap and unwrap, the DEK cache (LRU-bounded, no expiry) |
-| `metadata.go` | Building and reading the `s3ep-*` keys. Filtering them back out of a client response belongs to the object handler |
+| `providers.go` | Provider registration, fingerprints, the active provider a new object is wrapped with, DEK unwrap, the DEK cache (LRU-bounded, no expiry) |
 
 A handler talks to this package and, in four files, past it. Two read the format
 constants — `handlers/object/range.go` computes the provisional stored range,

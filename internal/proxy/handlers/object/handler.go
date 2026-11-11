@@ -36,10 +36,7 @@ func NewHandler(
 	config *config.Config,
 	logger *logrus.Entry,
 ) *Handler {
-	metadataPrefix := "s3ep-" // default
-	if config.Encryption.MetadataKeyPrefix != nil {
-		metadataPrefix = *config.Encryption.MetadataKeyPrefix
-	}
+	metadataPrefix := config.MetadataPrefix()
 
 	xmlWriter := response.NewXMLWriter(logger)
 	errorWriter := response.NewErrorWriter(logger)

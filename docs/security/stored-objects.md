@@ -43,8 +43,12 @@ naming it, not dropped silently, which is what ADR 0009 D6 asks for.
 | `s3ep-kek-algorithm` | KEK provider algorithm string | None. It is written and never read back — no read path looks at it, so altering it changes nothing |
 
 All four are written by
-[`BuildSegmentedMetadata`](../../internal/orchestration/metadata.go#L88) and describe
-only **how the data key was wrapped**. Nothing about the data itself is in
+[`storedobject.Metadata`](../../pkg/encryption/storedobject/storedobject.go#L88) and describe
+only **how the data key was wrapped**. The proxy and the client library
+([ADR 0041](../adr/0041-the-project-ships-a-client-library-for-its-stored-format.md))
+both key a new object through
+[`storedobject.New`](../../pkg/encryption/storedobject/storedobject.go#L106) and read
+the four back through the same package, so the two cannot disagree on a key name. Nothing about the data itself is in
 metadata: nonces live in the segments they belong to, and the integrity value is
 the tag on each of them, where the backend cannot edit it without the read
 noticing. `s3ep-aes-iv` and `s3ep-hmac`, which earlier releases wrote, are gone
@@ -58,24 +62,21 @@ provider *alias* (it is a local configuration label only, never stored), and any
 client credential.
 
 **Filtered on the way out, refused on the way in**, so a client never sees the
-proxy internals and never writes into them:
-[`Handler.isEncryptionMetadata`](../../internal/proxy/handlers/object/helpers.go#L122)
-drops every key inside the prefix out of
-[`cleanMetadata`](../../internal/proxy/handlers/object/helpers.go#L97) on `GET`, `HEAD`
-and ranged responses — where it is applied as the response is written, so a read
-path cannot be added without it — and
-[`UserMetadata`](../../internal/proxy/handlers/object/helpers.go#L157) refuses a client
-key inside the prefix on every write.
+proxy internals and never writes into them. The namespace test is one function,
+[`storedobject.IsReserved`](../../pkg/encryption/storedobject/storedobject.go#L64),
+case-insensitive. [`cleanMetadata`](../../internal/proxy/handlers/object/helpers.go#L237)
+drops every key inside the prefix on `GET`, `HEAD` and ranged responses — where it
+is applied as the response is written, so a read path cannot be added without it —
+and [`UserMetadata`](../../internal/proxy/handlers/object/helpers.go#L271) refuses a
+client key inside the prefix on every write.
 All three write paths call that one exported collector, the multipart create
 path included ([create.go:83](../../internal/proxy/handlers/multipart/create.go#L83)),
-rather than each carrying a check it could forget.
-The one filter left in `internal/orchestration/` is inside
-`BuildSegmentedMetadata`, which drops a client key inside the prefix before it
-writes the four ([metadata.go:94-102](../../internal/orchestration/metadata.go#L94)):
-the collector already refused that key, and dropping it here as well means no
-future caller can put one in this namespace that a read would then find beside
-the four. The two response-side filters that lived there had no production caller
-and are gone.
+rather than each carrying a check it could forget. `storedobject.Metadata` drops
+a client key inside the prefix once more before it writes the four: the collector
+already refused that key, and dropping it here as well means no future caller can
+put one in this namespace that a read would then find beside the four. The client
+library refuses such a key before it writes anything, the same answer the proxy
+gives.
 
 ## What the storage format guarantees
 

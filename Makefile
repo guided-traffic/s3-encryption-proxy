@@ -119,11 +119,22 @@ INTEGRATION_PKGS = ./test/integration \
 	./test/integration/360-degree-variants \
 	./test/integration/authentication \
 	./test/integration/encryption-modes \
-	./test/integration/s3-methods
+	./test/integration/s3-methods \
+	./test/integration/s3enc
+
+# With GOCOVER=1 the suites also record the coverage of what runs inside the test
+# binary rather than in the proxy container: the client library (ADR 0041) and
+# the format code it shares with the proxy. It lands in
+# $(COVERAGE_DIR)/integration-library-<transport>, which coverage-report merges
+# with everything else, under $(GO_PIN) for the reason given there.
+integration_cover = $(if $(GOCOVER),-cover -covermode=atomic -coverpkg=./pkg/... -args -test.gocoverdir=$(abspath $(COVERAGE_DIR)/integration-library-$(1)))
+integration_coverdir = $(if $(GOCOVER),rm -rf $(COVERAGE_DIR)/integration-library-$(1) && mkdir -p $(COVERAGE_DIR)/integration-library-$(1),@:)
+integration_pin = $(if $(GOCOVER),$(GO_PIN) )
 
 test-integration:
 	@echo "Running integration tests..."
-	$(GOTEST) -v -tags=integration -count=1 -timeout=60m $(INTEGRATION_PKGS)
+	$(call integration_coverdir,http)
+	$(integration_pin)$(GOTEST) -v -tags=integration -count=1 -timeout=60m $(INTEGRATION_PKGS) $(call integration_cover,http)
 
 # Run the SDK-based integration suites against the TLS proxy endpoint.
 # aws-sdk-go-v2 only emits STREAMING-UNSIGNED-PAYLOAD-TRAILER framing and
@@ -131,7 +142,8 @@ test-integration:
 # code path at all. Both are needed.
 test-integration-tls:
 	@echo "Running integration tests against the TLS proxy endpoint..."
-	S3EP_TEST_PROXY_ENDPOINT=$(PROXY_TLS_ENDPOINT) $(GOTEST) -v -tags=integration -count=1 -timeout=60m $(INTEGRATION_PKGS)
+	$(call integration_coverdir,tls)
+	$(integration_pin)S3EP_TEST_PROXY_ENDPOINT=$(PROXY_TLS_ENDPOINT) $(GOTEST) -v -tags=integration -count=1 -timeout=60m $(INTEGRATION_PKGS) $(call integration_cover,tls)
 
 # Both transports, plus the order-sensitive performance package on its own.
 test-integration-all: test-integration test-integration-tls test-integration-performance
@@ -298,7 +310,9 @@ e2e-s3cmd: e2e-s3cmd-up test-e2e-s3cmd
 #
 #   make test-unit-coverage              -> coverage/unit
 #   GOCOVER=1 ./start-demo.sh            instrumented proxy containers
-#   make test-integration test-integration-tls
+#   GOCOVER=1 make test-integration test-integration-tls
+#                                        -> coverage/integration-library-http, -tls
+#                                           (what runs inside the test binary)
 #   make coverage-integration-collect    -> coverage/integration-http, -tls
 #   make coverage-report                 -> coverage/coverage.txt, coverage.html,
 #                                           merged.out, unit.out, integration.out

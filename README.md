@@ -42,6 +42,7 @@ flowchart LR
 - 🆓 **Free for everyone** — Apache 2.0, no licence key, no feature gate and nothing that expires
 - 📊 **Prometheus metrics, two probes and a status document** — including a counter for reads that failed to authenticate, which is the one series worth an alert
 - 🧪 **Proven against real clients** — Velero, rclone and s3cmd each run an end-to-end suite against a pinned release of the real binary, every release
+- 📚 **A Go library for the same format** — an application that should not take the network hop writes and reads the stored format itself; the proxy reads what it writes and the other way round, proved on every pull request ([client library](./docs/operations/client-library.md))
 
 ## 📛 Naming conventions
 
@@ -58,6 +59,7 @@ Every deterministic name the proxy produces:
 | Entity tag marker | `"<32 hex>-0"` | A change token, never a digest of your content |
 | Request id | 16 uppercase hex in `x-amz-request-id` | The proxy's own, minted per request, echoed in the access log |
 | Binaries | `build/s3-encryption-proxy`, `build/s3ep-keygen` | `make build-all` |
+| Go client library | `github.com/guided-traffic/s3-encryption-proxy/v5/pkg/s3enc` | Required by the proxy's release tag; the `/v5` moves with each major |
 
 ## 📚 Documentation
 
@@ -65,6 +67,7 @@ Every deterministic name the proxy produces:
 |---|---|
 | **[docs/operations/](./docs/operations/)** | Running it: configuration guide, deployment, S3 API behaviour, integrity guarantees, monitoring, upgrading, per-client notes |
 | **[docs/operations/clients/](./docs/operations/clients/)** | [Velero](./docs/operations/clients/velero.md) · [rclone](./docs/operations/clients/rclone.md) · [s3cmd](./docs/operations/clients/s3cmd.md) |
+| **[docs/operations/client-library.md](./docs/operations/client-library.md)** | The Go client library: writing and reading the stored format without the proxy |
 | **[docs/security/](./docs/security/)** | The security architecture, one page per perspective: threat model and trust boundaries, key management, stored objects, request authentication, upload integrity, refusals, tenancy and privilege, operational security — each ending with what it does not cover |
 | **[SECURITY.md](./SECURITY.md)** | How to report a vulnerability, privately |
 | **[docs/adr/](./docs/adr/)** | Every design decision: what was decided, why, what was rejected and what it costs |

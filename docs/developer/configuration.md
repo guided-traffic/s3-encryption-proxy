@@ -117,7 +117,9 @@ unknown key under `encryption.providers[]` — or anything inside its `config:` 
 never reaches it. `createProviderFromProviderMap` then reads `alias`, `type`,
 `description` and `config` and drops the rest. A misspelt provider parameter
 therefore loads in silence: under an `aes` provider it surfaces only as the
-missing `aes_key` that `validateAESKey` refuses, and under `exit` it does not
+missing `aes_key` that `validateAESKey` refuses (through
+`keyencryption.DecodeAESKey`, which the provider factory and the client library
+share), and under `exit` it does not
 surface at all.
 
 ## 3. `${VAR}` references inside a value

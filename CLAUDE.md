@@ -164,6 +164,13 @@ What has to be in your head before anything else:
   it is a storage format change (ADR 0003, ADR 0017)
 - **Encryption happens exactly once**, in the handler's call into
   `orchestration.Manager`. There is no second layer
+- **The format has two callers and one implementation.** The proxy and the Go
+  client library `pkg/s3enc` both key, seal, wrap and read objects through
+  `pkg/encryption/` — the codec, the key wrap, `keyencryption.DecodeAESKey` and
+  `storedobject` (the four keys, the prefix, `New`). The library adds the S3 calls
+  and its key ring and nothing else; a format rule written into it alone is a
+  defect, and `test/integration/s3enc` proves interop in both directions
+  (ADR 0041)
 
 Integrity is not configurable and never was a layer: it is the storage format
 itself. An object with no proxy metadata, or a wrapped data key that does not
@@ -239,7 +246,7 @@ There is no license to generate: the proxy is Apache-2.0 and checks none (ADR 00
 - **Integration tests**: `make test-integration` - Requires MinIO via `./start-demo.sh`
 - Use build tag `//go:build integration` for integration tests. Every file under `test/integration/` carries it except `test/integration/conformance/`, which is tagged `//go:build conformance` because it runs against a backend of its own (ADR 0027); the four untagged `bucket_*_test.go` files that used to be the exception were deleted (they imported no package of this project)
 - Three build tags carry the test tree: `integration`, `conformance`, and `e2e` for everything under `test/e2e/` — the Velero suite, the two client suites and the shared `test/e2e/harness/` package, whose non-test files carry the tag too or they would break the untagged build
-- Integration packages: `test/integration` (helpers + `s3_signing_test.go`), `180-degree-variants`, `360-degree-variants`, `authentication`, `encryption-modes`, `s3-methods` (the bulk of the suite) and `performance-test`, which the Makefile runs on its own because it measures proxy-vs-MinIO throughput and the other packages would compete for the same backend
+- Integration packages: `test/integration` (helpers + `s3_signing_test.go`), `180-degree-variants`, `360-degree-variants`, `authentication`, `encryption-modes`, `s3-methods` (the bulk of the suite), `s3enc` (the client library against MinIO, and interop with the proxy in both directions) and `performance-test`, which the Makefile runs on its own because it measures proxy-vs-MinIO throughput and the other packages would compete for the same backend
 - `test/integration/conformance` is not one of them and is deliberately outside `INTEGRATION_PKGS`: it carries its own `//go:build conformance` tag and asserts what S3 specifies against a proxy pointed at *any* backend — the same binary runs against each, and the difference between two backends is the finding, not a flake (ADR 0027). It is driven by `scripts/conformance-run.sh <backend>` through `make test-conformance` (minio + localstack, free) and `make test-conformance-wasabi` (**billed**), and the `conformance` CI job is a release gate
 - Test helper: `test/integration/minio_test_helper.go` provides `TestContext` with MinIO and proxy clients; `encryption_validation_helper.go` asserts that stored bytes are ciphertext (entropy checks)
 - You are not allowed to disable, skip or remove integration or e2e tests — Velero, rclone or s3cmd — they represent the end-user experience (ADR 0019)
@@ -551,9 +558,11 @@ HEAD — landed with ADR 0003 D14.
   config:
     aes_key: "base64-encoded-256-bit-key"  # base64 of exactly 32 random bytes
 ```
-`validateAESKey` refuses anything that is not base64 of exactly 32 bytes, and
-additionally refuses a decoded value that is all printable ASCII or carries fewer
-than 16 distinct byte values — that is a passphrase, not a key. Generate one with
+`keyencryption.DecodeAESKey` refuses anything that is not base64 of exactly 32
+bytes, and additionally refuses a decoded value that is all printable ASCII or
+carries fewer than 16 distinct byte values — that is a passphrase, not a key.
+`validateAESKey`, the provider factory and the client library all call it, so a
+test fixture that builds a provider directly needs a random key too. Generate one with
 `s3ep-keygen` or `openssl rand -base64 32`. `aes_key` is the only key the block
 may carry: `providerConfigKeys` in `internal/config/config.go` declares what each
 type reads, and `validateProviderConfig` refuses the rest (ADR 0013 D11).
@@ -569,7 +578,7 @@ type reads, and `validateProviderConfig` refuses the rest (ADR 0013 D11).
 
 ### Metadata Conventions
 - Encryption metadata stored with prefix `s3ep-` (configurable via `encryption.metadata_key_prefix`)
-- Written keys are exactly the four listed above, by `MetadataManager.BuildSegmentedMetadata` alone. It is called from `Manager.newSegmentedObject`, which every write path goes through: single-request PUT, the internal multipart producer and client-driven CreateMultipartUpload
+- Written keys are exactly the four listed above, by `storedobject.Metadata` alone, reached through `storedobject.New`. The proxy calls it from `Manager.newSegmentedObject`, which every write path goes through: single-request PUT, the internal multipart producer and client-driven CreateMultipartUpload. The client library's `Put` calls the same function
 - Only the prefixed key is ever read. The unprefixed name lies outside the proxy's namespace, so a client could set it through `x-amz-meta-*` (ADR 0009 D1)
 - The prefix is the proxy's exclusive namespace in both directions: `object.UserMetadata` — the one collector all three write paths use — refuses a client `x-amz-meta-<prefix>*` header with `400 InvalidArgument` naming it (ADR 0009 D6), and `Handler.cleanMetadata` drops every key carrying the prefix on the way out, case-insensitively, on GET, HEAD and ranged responses
 - **Important**: `provider_alias` is NOT stored in metadata - only used for configuration selection and logging
@@ -639,6 +648,8 @@ no proxy code talks to it — it is there for the KMS work that is not built
 - **Encryption entry points**: `internal/orchestration/segmented.go` and `segmented_session.go`
 - **The codec**: `pkg/encryption/dataencryption/segmented_gcm.go` (+ `_io.go`, `_range.go`)
 - **KEK registry**: `pkg/encryption/factory/factory.go`
+- **Metadata contract**: `pkg/encryption/storedobject/storedobject.go`
+- **Client library**: `pkg/s3enc/` (`client.go`, `write.go`, `read.go`); importer guide `docs/operations/client-library.md`
 - **Test helpers**: `test/integration/minio_test_helper.go`; `test/e2e/harness/` for the e2e suites
 - **Security design**: `docs/security/` (one page per perspective; an open gap carries an `H-<n>` in the closing section of the page whose mechanism has it)
 - **Operator and client reference**: `docs/operations/` (configuration guide, deployment, S3 API behaviour, integrity, monitoring, upgrading, `clients/`)

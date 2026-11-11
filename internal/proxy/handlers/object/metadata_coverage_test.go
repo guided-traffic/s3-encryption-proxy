@@ -152,9 +152,6 @@ func TestObjMiscEmptyMetadataPrefixSwallowsAllUserMetadata(t *testing.T) {
 	backend := new(MockS3Backend)
 	h := ObjMiscnewHandlerWithPrefix(t, backend, "")
 
-	assert.True(t, h.isEncryptionMetadata("owner"),
-		"with an empty prefix every key counts as encryption metadata")
-	assert.True(t, h.isEncryptionMetadata(""))
 	assert.Nil(t, h.cleanMetadata(map[string]string{"owner": "hans", "project": "orion"}),
 		"all user metadata is dropped from the response")
 
@@ -164,34 +161,6 @@ func TestObjMiscEmptyMetadataPrefixSwallowsAllUserMetadata(t *testing.T) {
 	got, err := h.userMetadataFromRequest(req)
 	assert.Nil(t, got)
 	assert.Error(t, err)
-}
-
-// isEncryptionMetadata is a case-insensitive prefix test, nothing more. The
-// upper-case spellings are the ones that matter: net/http canonicalises every
-// request header name, so a client sending x-amz-meta-s3ep-encrypted-dek hands
-// the handler the key "S3ep-Encrypted-Dek". Table-driven so the boundary cases
-// are visible next to each other.
-func TestObjMiscIsEncryptionMetadataBoundaries(t *testing.T) {
-	backend := new(MockS3Backend)
-	h := ObjMiscnewHandler(t, backend)
-
-	cases := map[string]bool{
-		"s3ep-encrypted-dek": true,
-		"s3ep-":              true,
-		"s3ep":               false,
-		"s3e":                false,
-		"":                   false,
-		"S3EP-encrypted-dek": true,
-		"S3ep-Encrypted-Dek": true,
-		"as3ep-hmac":         false,
-		" s3ep-hmac":         false,
-	}
-
-	for key, want := range cases {
-		t.Run(strconv.Quote(key), func(t *testing.T) {
-			assert.Equal(t, want, h.isEncryptionMetadata(key))
-		})
-	}
 }
 
 // ---------------------------------------------------------------------------

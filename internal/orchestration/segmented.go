@@ -10,7 +10,7 @@ package orchestration
 
 import (
 	"bytes"
-	"crypto/rand"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +19,7 @@ import (
 
 	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/dataencryption"
 	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/keyencryption"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/storedobject"
 )
 
 // ErrForeignObject marks an object this proxy did not write: no encryption
@@ -32,9 +33,6 @@ var ErrForeignObject = errors.New("object is not encrypted by this proxy")
 // (ADR 0001), and no later attempt can succeed. It is kept apart from a
 // transient failure so the read can be refused rather than retried.
 var ErrKeyMaterialUnreadable = errors.New("the object's wrapped data key does not authenticate")
-
-// dekSize is the data key length: one random AES-256 key per object (ADR 0002).
-const dekSize = 32
 
 // SegmentedWrite is a single-request write: the ciphertext stream, its exact
 // stored length, and the metadata that makes the object readable.
@@ -269,19 +267,21 @@ func (m *Manager) OpenSegmentedRange(
 
 // OpenSegmentedTrailer opens the record that closes an object and returns what
 // it authenticates: the plaintext length and the CRC32C of the whole plaintext.
+// storedTotal is the object's stored length as the backend reports it, and a
+// trailer that contradicts it fails as corrupt.
 //
 // The read paths take the trailer from one ranged backend read of the object's
 // last bytes, so a HEAD and a whole-object GET answer with an **authenticated**
 // length and with the client's checksum, rather than with the length the backend
 // reports about itself (ADR 0003 D14, ADR 0001).
 func (m *Manager) OpenSegmentedTrailer(
-	objectKey string, metadata map[string]string, trailer []byte,
+	objectKey string, metadata map[string]string, trailer []byte, storedTotal int64,
 ) (dataencryption.Checksum, error) {
 	codec, err := m.codecFor(objectKey, metadata)
 	if err != nil {
 		return dataencryption.Checksum{}, err
 	}
-	return codec.OpenTrailer(trailer)
+	return codec.OpenTrailer(trailer, storedTotal)
 }
 
 // IsSegmentedObject reports whether the metadata describes an object this proxy
@@ -291,7 +291,7 @@ func (m *Manager) IsSegmentedObject(metadata map[string]string) bool {
 	if !m.ClaimsSegmentedFormat(metadata) {
 		return false
 	}
-	_, err := m.metadataManager.GetEncryptedDEK(metadata)
+	_, err := storedobject.WrappedDEK(m.metadataPrefix, metadata)
 	return err == nil
 }
 
@@ -304,36 +304,20 @@ func (m *Manager) IsSegmentedObject(metadata map[string]string) bool {
 // prefix is the proxy's exclusive namespace in both directions (ADR 0009) — so it
 // is a missing key, not a foreign object (ADR 0025).
 func (m *Manager) ClaimsSegmentedFormat(metadata map[string]string) bool {
-	algorithm, err := m.metadataManager.GetAlgorithm(metadata)
-	return err == nil && algorithm == dataencryption.FormatID
+	return storedobject.ClaimsFormat(m.metadataPrefix, metadata)
 }
 
-// newSegmentedObject draws a data key, wraps it, and builds the object metadata.
+// newSegmentedObject draws a data key, wraps it with the active provider, and
+// builds the object metadata — the one way every write path keys an object,
+// shared with the client library.
 func (m *Manager) newSegmentedObject(
 	objectKey string, userMetadata map[string]string,
 ) (*dataencryption.Codec, map[string]string, error) {
-	dek := make([]byte, dekSize)
-	if _, err := rand.Read(dek); err != nil {
-		return nil, nil, fmt.Errorf("failed to generate data key: %w", err)
-	}
-
-	codec, err := dataencryption.NewCodec(dek, objectKey)
+	kek, err := m.providerManager.ActiveKeyEncryptor()
 	if err != nil {
 		return nil, nil, err
 	}
-
-	wrappedDEK, err := m.providerManager.EncryptDEK(dek, objectKey)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to wrap data key: %w", err)
-	}
-
-	metadata := m.metadataManager.BuildSegmentedMetadata(
-		wrappedDEK,
-		m.providerManager.GetActiveFingerprint(),
-		m.providerManager.GetActiveProviderAlgorithm(),
-		userMetadata,
-	)
-	return codec, metadata, nil
+	return storedobject.New(context.Background(), kek, m.metadataPrefix, objectKey, userMetadata)
 }
 
 // codecFor unwraps the object's data key and binds it to the key the client
@@ -344,11 +328,11 @@ func (m *Manager) codecFor(objectKey string, metadata map[string]string) (*datae
 		return nil, ErrForeignObject
 	}
 
-	encryptedDEK, err := m.metadataManager.GetEncryptedDEK(metadata)
+	encryptedDEK, err := storedobject.WrappedDEK(m.metadataPrefix, metadata)
 	if err != nil {
 		return nil, ErrForeignObject
 	}
-	fingerprint, err := m.metadataManager.GetFingerprint(metadata)
+	fingerprint, err := storedobject.Fingerprint(m.metadataPrefix, metadata)
 	if err != nil {
 		return nil, ErrForeignObject
 	}
@@ -373,7 +357,7 @@ func (m *Manager) codecFor(objectKey string, metadata map[string]string) (*datae
 			m.logger.WithFields(logrus.Fields{
 				"object_key":    objectKey,
 				"fingerprint":   fingerprint,
-				"kek_algorithm": m.metadataManager.GetKEKAlgorithm(metadata),
+				"kek_algorithm": storedobject.KEKAlgorithm(m.metadataPrefix, metadata),
 			}).Warn("The object is wrapped with an algorithm and fingerprint no configured provider carries")
 			return nil, ErrKeyMaterialUnreadable
 		}

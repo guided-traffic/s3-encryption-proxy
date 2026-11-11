@@ -56,7 +56,7 @@ func TestNewProviderManager(t *testing.T) {
 							Alias: "aes-provider",
 							Type:  "aes",
 							Config: map[string]interface{}{
-								"aes_key": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=", // base64 encoded 32-byte key
+								"aes_key": "2Q3OVp7/MAeBf8tRv2n5j/ScRf3DeOxaKGPXAGJZ5a4=", // base64 encoded 32-byte key
 							},
 						},
 					},
@@ -89,7 +89,7 @@ func TestNewProviderManager(t *testing.T) {
 							Alias: "other-provider",
 							Type:  "aes",
 							Config: map[string]interface{}{
-								"aes_key": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+								"aes_key": "2Q3OVp7/MAeBf8tRv2n5j/ScRf3DeOxaKGPXAGJZ5a4=",
 							},
 						},
 					},
@@ -196,7 +196,7 @@ func TestProviderManager_NewProviderManager(t *testing.T) {
 							Alias: "backup-aes",
 							Type:  "aes",
 							Config: map[string]interface{}{
-								"aes_key": "ZGJjYWVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+								"aes_key": "S0oGP7MqUdIE3wqt8tJwDS/vbmH76AFUySSeaaHWBjg=",
 							},
 						},
 					},
@@ -293,30 +293,16 @@ func TestProviderManager_EncryptDecryptDEK(t *testing.T) {
 	require.Len(t, testDEK, 32)                           // AES-256 requires 32-byte key
 
 	t.Run("encrypt DEK with active provider", func(t *testing.T) {
-		encryptedDEK, err := pm.EncryptDEK(testDEK, "test-object-key")
+		encryptedDEK, err := wrapDEK(pm, testDEK)
 		assert.NoError(t, err)
 		assert.NotNil(t, encryptedDEK)
 		assert.NotEqual(t, testDEK, encryptedDEK)
 		assert.Greater(t, len(encryptedDEK), 0)
 	})
 
-	t.Run("encrypt DEK with nonexistent provider", func(t *testing.T) {
-		// This test needs to be adjusted since EncryptDEK now uses the active provider
-		// Let's test with invalid DEK instead
-		_, err := pm.EncryptDEK([]byte{}, "test-object-key")
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "DEK cannot be empty")
-	})
-
-	t.Run("encrypt empty DEK", func(t *testing.T) {
-		_, err := pm.EncryptDEK([]byte{}, "test-object-key")
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "DEK cannot be empty")
-	})
-
 	t.Run("encrypt and decrypt DEK round trip", func(t *testing.T) {
 		// Encrypt with active provider
-		encryptedDEK, err := pm.EncryptDEK(testDEK, "test-object-key")
+		encryptedDEK, err := wrapDEK(pm, testDEK)
 		require.NoError(t, err)
 
 		// Decrypt with fingerprint
@@ -327,7 +313,7 @@ func TestProviderManager_EncryptDecryptDEK(t *testing.T) {
 	})
 
 	t.Run("decrypt with invalid fingerprint", func(t *testing.T) {
-		encryptedDEK, err := pm.EncryptDEK(testDEK, "test-object-key")
+		encryptedDEK, err := wrapDEK(pm, testDEK)
 		require.NoError(t, err)
 
 		_, err = pm.DecryptDEK(encryptedDEK, "invalid-fingerprint", "test-object-key")
@@ -371,7 +357,7 @@ func TestProviderManager_ExitProvider(t *testing.T) {
 	})
 
 	t.Run("exit provider refuses to wrap a DEK", func(t *testing.T) {
-		encryptedDEK, err := pm.EncryptDEK(testDEK, "test-object-key")
+		encryptedDEK, err := wrapDEK(pm, testDEK)
 		assert.ErrorIs(t, err, keyencryption.ErrExitProviderKeyUse)
 		assert.Nil(t, encryptedDEK)
 	})
@@ -409,7 +395,7 @@ func TestProviderManager_Cache(t *testing.T) {
 	fingerprint := pm.GetActiveFingerprint()
 
 	// Encrypt DEK first
-	encryptedDEK, err := pm.EncryptDEK(testDEK, "test-object-key")
+	encryptedDEK, err := wrapDEK(pm, testDEK)
 	require.NoError(t, err)
 
 	t.Run("cache DEK after first decryption", func(t *testing.T) {
@@ -437,9 +423,9 @@ func TestProviderManager_Cache(t *testing.T) {
 		secondDEK := []byte("second-dek-32-bytes-bbbbbbbbbbbb") // 32 B
 		require.Len(t, secondDEK, 32)
 
-		firstEncrypted, err := pm.EncryptDEK(firstDEK, objectKey)
+		firstEncrypted, err := wrapDEK(pm, firstDEK)
 		require.NoError(t, err)
-		secondEncrypted, err := pm.EncryptDEK(secondDEK, objectKey)
+		secondEncrypted, err := wrapDEK(pm, secondDEK)
 		require.NoError(t, err)
 		require.NotEqual(t, firstEncrypted, secondEncrypted,
 			"AES KEK encryption must produce distinct blobs for distinct DEKs")
@@ -558,4 +544,14 @@ func TestProviderManager_GetProviderInfo(t *testing.T) {
 		assert.Equal(t, "exit-provider-fingerprint", backupProvider.Fingerprint)
 		assert.NotNil(t, backupProvider.Encryptor)
 	})
+}
+
+// wrapDEK wraps a data key with the active provider, the way every write path
+// does through storedobject.New.
+func wrapDEK(pm *ProviderManager, dek []byte) ([]byte, error) {
+	kek, err := pm.ActiveKeyEncryptor()
+	if err != nil {
+		return nil, err
+	}
+	return kek.EncryptDEK(context.Background(), dek)
 }

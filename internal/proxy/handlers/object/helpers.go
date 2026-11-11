@@ -17,6 +17,7 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/request"
 	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/proxy/response"
 	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/dataencryption"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/storedobject"
 	"github.com/sirupsen/logrus"
 )
 
@@ -231,33 +232,10 @@ func copyWithPooledBuffer(dst io.Writer, src io.Reader) (int64, error) {
 	return io.CopyBuffer(writerOnly{dst}, src, *bufp)
 }
 
+// cleanMetadata drops the proxy's namespace from metadata on its way to the
+// client, whatever the case of the key (ADR 0009 D6).
 func (h *Handler) cleanMetadata(metadata map[string]string) map[string]string {
-	if metadata == nil {
-		return nil
-	}
-
-	cleaned := make(map[string]string)
-	for key, value := range metadata {
-		if !h.isEncryptionMetadata(key) {
-			cleaned[key] = value
-		}
-	}
-
-	if len(cleaned) == 0 {
-		return nil
-	}
-	return cleaned
-}
-
-// isEncryptionMetadata reports whether a metadata key sits inside the proxy
-// namespace. The comparison is case insensitive: net/http canonicalises request
-// header names, so a client header x-amz-meta-s3ep-encrypted-dek arrives as
-// X-Amz-Meta-S3ep-Encrypted-Dek and a case-sensitive check against the lowercase
-// configured prefix never matched it. The configured prefix is validated as
-// lowercase at startup (ADR 0009 D2), so lowering the key is enough to compare
-// the two.
-func (h *Handler) isEncryptionMetadata(key string) bool {
-	return strings.HasPrefix(strings.ToLower(key), h.metadataPrefix)
+	return storedobject.UserMetadata(h.metadataPrefix, metadata)
 }
 
 // getMultipartPartSize returns the configured optimizations.multipart_part_size.
@@ -297,7 +275,7 @@ func UserMetadata(r *http.Request, metadataPrefix string) (map[string]string, er
 			continue
 		}
 		metaKey := strings.ToLower(headerName[11:])
-		if strings.HasPrefix(metaKey, metadataPrefix) {
+		if storedobject.IsReserved(metadataPrefix, metaKey) {
 			return nil, fmt.Errorf(
 				"the user metadata key x-amz-meta-%s lies inside the metadata namespace this proxy reserves for itself",
 				metaKey)

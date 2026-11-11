@@ -216,6 +216,7 @@ Under `test/integration/<package>/`.
 | `180-degree-variants` | One 500 MB client-driven multipart round trip through the proxy alone, checked by SHA-256 |
 | `encryption-modes` | The `aes` and `exit` providers, each against a proxy the test starts in process |
 | `authentication` | Header SigV4: credentials, malformed and oversized headers, clock skew |
+| `s3enc` | The client library ([ADR 0041](../adr/0041-the-project-ships-a-client-library-for-its-stored-format.md)) against MinIO directly — round trips at every segment boundary, ranges, tampering by the backend, key rotation, a corrupt copy source — and against the proxy in both directions: the proxy reads what the library wrote and the library reads what the proxy wrote. It is how a format change that breaks one side fails the pull request that makes it |
 | `performance-test` | Proxy against MinIO throughput. `make test-integration-performance`, on its own, because the others would compete for the backend |
 | `shutdown` | One test, and the only one that proves the shutdown end to end: it opens a multipart upload through the proxy, `SIGTERM`s the proxy *container*, and asserts at MinIO directly that the sweep ended the upload ([ADR 0028](../adr/0028-an-abandoned-upload-is-ended-not-forgotten.md), [ADR 0029](../adr/0029-the-shutdown-budget-finishes-work-and-sweeps-what-cannot-be-finished.md)). `make test-integration-shutdown`, on its own for a stronger reason than `performance-test`: that one competes for the backend, this one destroys the proxy every other package is talking to. It restarts the container in `t.Cleanup`, so a failed or panicking run still leaves the stack usable |
 
@@ -329,14 +330,16 @@ check names the defects on the pull request itself.
 
 ## Coverage
 
-Coverage has two sources in two processes — the unit tests, and the proxy binary
-the integration suite talks to over HTTP. Both write Go's binary coverage format
-into `coverage/`, and `coverage-report` merges every directory it finds there:
+Coverage has three sources — the unit tests, the proxy binary the integration
+suite talks to over HTTP, and what runs inside the integration test binaries
+themselves, which is where the client library executes. All three write Go's
+binary coverage format into `coverage/`, and `coverage-report` merges every
+directory it finds there:
 
 ```bash
 make test-unit-coverage                        # -> coverage/unit
 GOCOVER=1 ./start-demo.sh                      # instrumented proxy containers
-make test-integration test-integration-tls
+GOCOVER=1 make test-integration test-integration-tls   # -> coverage/integration-library-http, -tls
 make coverage-integration-collect              # -> coverage/integration-http, -tls
 make coverage-report                           # -> coverage/coverage.txt, .html, merged.out
 ```

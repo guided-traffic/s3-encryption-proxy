@@ -27,10 +27,10 @@ type Manager struct {
 	// shortPartMu guards the process-wide short-part budget of ADR 0011 D5.
 	// It is a leaf: SealPart reaches it holding the session lock, and the session
 	// drop paths reach it holding segmentedMu, so it may take neither.
-	shortPartMu     sync.Mutex
-	shortPartHeld   int64
-	metadataManager *MetadataManager
-	logger          *logrus.Entry // Public for testing
+	shortPartMu    sync.Mutex
+	shortPartHeld  int64
+	metadataPrefix string
+	logger         *logrus.Entry // Public for testing
 
 	// abandon tells the backend an upload is over. It is supplied by the layer
 	// that owns the backend client; this package knows no S3 SDK. A nil error
@@ -78,16 +78,13 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 		return nil, fmt.Errorf("failed to create provider manager: %w", err)
 	}
 
-	// Create metadata manager
-	metadataManager := NewMetadataManager(cfg, "")
-
 	// Create background cleanup context
 	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
 
 	manager := &Manager{
 		config:          cfg,
 		providerManager: providerManager,
-		metadataManager: metadataManager,
+		metadataPrefix:  cfg.MetadataPrefix(),
 		logger:          logger,
 		cleanupCtx:      cleanupCtx,
 		cleanupCancel:   cleanupCancel,
@@ -101,7 +98,7 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 	logger.WithFields(logrus.Fields{
 		"provider_count":  len(providerManager.GetProviderAliases()),
 		"active_provider": providerManager.GetActiveProviderAlias(),
-		"metadata_prefix": metadataManager.GetMetadataPrefix(),
+		"metadata_prefix": manager.metadataPrefix,
 	}).Info("Successfully initialized Manager")
 
 	return manager, nil
@@ -125,7 +122,7 @@ func (m *Manager) GetLoadedProviders() []ProviderSummary {
 
 // GetMetadataKeyPrefix returns the configured metadata key prefix
 func (m *Manager) GetMetadataKeyPrefix() string {
-	return m.metadataManager.GetMetadataPrefix()
+	return m.metadataPrefix
 }
 
 // ===== BACKGROUND CLEANUP =====

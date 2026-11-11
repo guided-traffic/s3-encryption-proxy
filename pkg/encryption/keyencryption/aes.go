@@ -19,6 +19,10 @@ const (
 	// KEKSize is the only accepted length of the master key: 32 random bytes.
 	KEKSize = 32
 
+	// MinDistinctKeyBytes is the entropy floor DecodeAESKey applies to a master
+	// key.
+	MinDistinctKeyBytes = 16
+
 	// wrapSaltSize is the per-wrap salt that separates two wraps of the same DEK.
 	wrapSaltSize = 16
 
@@ -80,12 +84,49 @@ func NewAESProvider(config map[string]interface{}) (encryption.KeyEncryptor, err
 		return nil, fmt.Errorf("aes_key must be a string")
 	}
 
-	kek, err := base64.StdEncoding.DecodeString(keyStr)
-	if err != nil || len(kek) != KEKSize {
-		return nil, fmt.Errorf("aes_key: must be base64 of exactly %d bytes", KEKSize)
+	kek, err := DecodeAESKey(keyStr)
+	if err != nil {
+		return nil, fmt.Errorf("aes_key: %w", err)
 	}
+	defer clear(kek)
 
 	return NewAESKeyEncryptor(kek)
+}
+
+// DecodeAESKey decodes a configured AES master key and applies the admission
+// rules every place that takes one shares: the proxy's configuration, the
+// provider factory and the client library. The key is base64 of exactly 32
+// bytes, and it must look random: a value that decodes to printable characters
+// only is a passphrase, and one with fewer than MinDistinctKeyBytes distinct
+// byte values is a pattern. A random key clears both with overwhelming
+// probability; a typed one does not.
+//
+// The caller owns the returned bytes and should clear them once a key encryptor
+// has been built from them.
+func DecodeAESKey(b64 string) ([]byte, error) {
+	kek, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil || len(kek) != KEKSize {
+		clear(kek)
+		return nil, fmt.Errorf("must be base64 of exactly %d bytes", KEKSize)
+	}
+
+	printable := true
+	distinct := make(map[byte]struct{}, KEKSize)
+	for _, b := range kek {
+		if b < 0x20 || b > 0x7e {
+			printable = false
+		}
+		distinct[b] = struct{}{}
+	}
+	if printable {
+		clear(kek)
+		return nil, errors.New("decodes to printable characters only, which is a passphrase and not a key")
+	}
+	if len(distinct) < MinDistinctKeyBytes {
+		clear(kek)
+		return nil, fmt.Errorf("decodes to only %d distinct byte values", len(distinct))
+	}
+	return kek, nil
 }
 
 // EncryptDEK wraps a Data Encryption Key: a fresh salt, a wrapping key derived

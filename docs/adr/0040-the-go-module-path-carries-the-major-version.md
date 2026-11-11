@@ -6,9 +6,9 @@
 
 Implemented with this decision: the module path is
 `github.com/guided-traffic/s3-encryption-proxy/v5`, and every import inside the tree uses it.
-An importer can require a release by its tag from the first release cut after this change;
-5.0.0 to 5.2.1 stay unrequirable (see *Consequences*). D2 is a step of the pull request that
-declares a major, and no check enforces it (see *Residual risks*).
+An importer can require a release by its tag from 5.3.0 on; 5.0.0 to 5.2.1 stay unrequirable
+(see *Consequences*). D2 is a step of the pull request that declares a major, and no check
+enforces it (see *Residual risks*).
 
 ## Context
 
@@ -51,8 +51,7 @@ client-visible answer, and the module path is none of these.
 
 ## Consequences
 
-- An importer requires a release by its tag, under the `/v5` path, from the first 5.x release
-  cut after this change.
+- An importer requires a release by its tag, under the `/v5` path, from 5.3.0 on.
 - Releases 5.0.0 to 5.2.1 stay unrequirable by tag. Their module declarations lack the suffix,
   and a published tag is not moved (ADR 0018).
 - Every major release rewrites every import line inside the tree. The pull request of a major
@@ -92,14 +91,14 @@ them.
   no importer can require, and the next release corrects it. A check could compare the suffix
   with the major that the release dry run computes on every pull request (ADR 0018 D6). None
   exists.
-- **Not decided: whether the Go interface of the importable packages is a compatibility
-  promise.** Today it is not (see *Consequences*).
-- **Verified 2026-11-07, locally only.** A file-based module proxy served the changed tree under
-  the `/v5` path as a test version. An importing module resolved it, compiled under every build
-  tag, and passed its unit tests. The same proxy also served the 5.2.1 tag under the `/v5` path,
-  and the Go tool refused it with the message quoted in *Context*. Not verified: the public module
-  proxy and checksum database against a real tag. That check happens at the first release cut
-  after this change.
+- **The Go interface of the importable packages is not a compatibility promise** (see
+  *Consequences*). ADR 0041 D8 applies the same rule to the client library, the one package
+  written for importers.
+- **Verified with the 5.3.0 tag.** The public module proxy and the checksum database resolve
+  `github.com/guided-traffic/s3-encryption-proxy/v5@v5.3.0`, and an importing module builds
+  against it. Before the tag existed, a file-based module proxy had shown the same for the
+  changed tree, and had shown the Go tool refusing the 5.2.1 tag under the `/v5` path with the
+  message quoted in *Context*.
 
 ## References
 
@@ -107,4 +106,5 @@ them.
   dry run)
 - ADR 0017 — Stored data compatibility is not owed
 - ADR 0003 — Objects are an authenticated segment chain; one stored format
+- ADR 0041 — The project ships a client library for its stored format
 - [DEVELOPER.md](../../DEVELOPER.md) — the steps that move the suffix in a major's pull request

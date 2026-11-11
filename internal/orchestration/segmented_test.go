@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/dataencryption"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/storedobject"
 )
 
 func segManager(t *testing.T) *Manager {
@@ -286,7 +287,7 @@ func TestSegmentedTrailerAnswersHead(t *testing.T) {
 
 	// The 40 bytes HEAD asks for, and nothing else.
 	trailer := stored[len(stored)-dataencryption.TrailerSize:]
-	sum, err := m.OpenSegmentedTrailer("bucket/object", write.Metadata, trailer)
+	sum, err := m.OpenSegmentedTrailer("bucket/object", write.Metadata, trailer, int64(len(stored)))
 	require.NoError(t, err, "the object's own trailer must open under its metadata")
 	assert.Equal(t, int64(len(plaintext)), sum.Length,
 		"the length HEAD reports is the authenticated one")
@@ -306,7 +307,7 @@ func TestSegmentedTrailerAnswersHead(t *testing.T) {
 	otherStored, err := io.ReadAll(other.Body)
 	require.NoError(t, err)
 	_, err = m.OpenSegmentedTrailer("bucket/object", write.Metadata,
-		otherStored[len(otherStored)-dataencryption.TrailerSize:])
+		otherStored[len(otherStored)-dataencryption.TrailerSize:], int64(len(otherStored)))
 	assert.ErrorIs(t, err, dataencryption.ErrCorrupt)
 }
 
@@ -329,14 +330,14 @@ func TestSegmentedWriteDrawsAFreshDataKeyPerObject(t *testing.T) {
 		_, err = io.ReadAll(write.Body)
 		require.NoError(t, err)
 
-		wrapped, err := m.metadataManager.GetEncryptedDEK(write.Metadata)
+		wrapped, err := storedobject.WrappedDEK(m.metadataPrefix, write.Metadata)
 		require.NoError(t, err)
-		fingerprint, err := m.metadataManager.GetFingerprint(write.Metadata)
+		fingerprint, err := storedobject.Fingerprint(m.metadataPrefix, write.Metadata)
 		require.NoError(t, err)
 
 		dek, err := m.providerManager.DecryptDEK(wrapped, fingerprint, objectKey)
 		require.NoError(t, err)
-		require.Len(t, dek, dekSize)
+		require.Len(t, dek, 32, "one random AES-256 key per object")
 
 		fresh := base64.StdEncoding.EncodeToString(dek)
 		if previous, ok := seen[fresh]; ok {

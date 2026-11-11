@@ -45,7 +45,7 @@ const (
 	MpuKey      = "cov/key.bin"
 	MpuUploadID = "cov-upload-id"
 	// MpuAESKey is a base64 256-bit key; the value only has to be stable.
-	MpuAESKey = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY="
+	MpuAESKey = "uLEh61upXWGmbHzJ9s7l+szvHo9hjpCmo4rVM97GIgY="
 	// MpuSegment is the plaintext one stored segment carries. A client part that is
 	// not a whole number of segments cannot be stored where it lies, which is the
 	// single fact that shapes every upload case below.
@@ -869,7 +869,7 @@ func TestMpuUploadVerifiesClientChecksumsAndDropsThem(t *testing.T) {
 	req.Header.Set("Content-MD5", base64.StdEncoding.EncodeToString(partMD5[:]))
 	req.Header.Set("x-amz-checksum-sha256", base64.StdEncoding.EncodeToString(partSHA[:]))
 	req.Header.Set("x-amz-server-side-encryption-customer-algorithm", "AES256")
-	req.Header.Set("x-amz-server-side-encryption-customer-key", "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=")
+	req.Header.Set("x-amz-server-side-encryption-customer-key", "AJFZSlsgB9mLEsCMxIgGMfW5FX8hMem3qLQVc72Cvf0=")
 	req.Header.Set("x-amz-server-side-encryption-customer-key-MD5", "u7mBnA4KHdb3wXPBEbxzRA==")
 
 	w := httptest.NewRecorder()
@@ -898,7 +898,7 @@ func TestMpuUploadRefusesAStreamedPartThatDoesNotMatchItsDigest(t *testing.T) {
 		"content_md5":    {"Content-MD5", "1B2M2Y8AsgTpgAmY7PhCfg=="},
 		"checksum_crc32": {"x-amz-checksum-crc32", "AAAAAA=="},
 		"checksum_sha256": {"x-amz-checksum-sha256",
-			"3q2+796tvu/erb7v3q2+796tvu/erb7v3q2+796tvu8="},
+			"a4cOQjy51N9YjqVG023ifTKN2IDlzbR7FimH9E/V2Mo="},
 	} {
 		t.Run(name, func(t *testing.T) {
 			env := MpuNewEnv(t)
