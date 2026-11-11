@@ -2,57 +2,19 @@
 
 ## Status
 
-**Accepted.** Date: 2026-09-07.
+**Accepted.** Date: 2026-09-15.
 
-Implemented today: both SigV4 forms, static client credentials with their length minimums,
-constant-time signature comparison, a fixed failure message per error code, two unauthenticated
-probe paths, an unauthenticated monitoring listener, and profiling endpoints on their own loopback
-listener that refuses a non-loopback address at startup.
-
-**Amended 2026-09-15: the probe paths are `/livez` and `/readyz`.** D11 and D14 named `/health`
-and `/version`, which were removed by [ADR 0034](0034-a-probe-reports-the-process-never-its-dependencies.md).
-Neither rule changes — the exemption still covers the probe and not the name, and it still costs
-exactly two legal bucket names — only the two names it costs. What each probe may report is
-ADR 0034's, not this record's.
-
-**Amended 2026-09-10: the deletions have landed, the two additions have not.** `s3_security`
-carries `max_clock_skew_seconds` and nothing else — the six keys no code read are gone from the
-configuration, from every shipped example and from the production chart values. The per-address
-failure map went with them, and with it the unbounded key space, the hardcoded threshold and the
-log line about a potential brute-force attack; nothing in the proxy counts, keys on, or decides
-anything from a client address any more. A security event logs `remote_addr` and
-`x_forwarded_for` as two raw fields and interprets neither, which is D8 in full, and no shipped
-configuration key suggests a limiter that does not exist, which is D7 in full. Both
-understatements this block used to carry are closed.
-
-**Implemented 2026-09-11:** `s3_security.max_presign_expiry_seconds` with its 3600-second
-default and the S3 seven-day maximum as a hard cap (D5), and `s3_security.max_clock_skew_seconds`
-governing the `Authorization`-header form as well as the pre-signed one (D4). D9's "exactly two
-keys" is now true in the tree: every key that read nothing is removed, and both remaining keys
-are enforced wherever they can apply — `max_clock_skew_seconds` on both authentication forms,
-`max_presign_expiry_seconds` on the pre-signed form, which is the only one that declares a
-lifetime.
-
-**Implemented 2026-09-13: D13 and D14.** The blanket `403 InvalidRequest` every authentication
-failure used to answer is replaced by the status and code each failure actually warrants, and the
-probe pair is matched as a probe rather than as a path. Both were open questions this ADR left to
-the owner; both are now decided below and true in the tree.
-
-**Corrected 2026-09-13, and it is worth recording because the shape recurs.** The canonical query
-string of D3 was sorted by the joined `name=value` string instead of by the parameter name. The two
-orders agree until one name is a prefix of another and the character after the prefix sorts below
-`=`, and then they invert: `?select=&select-type=2` was signed as `select-type=2&select=`, so every
-`SelectObjectContent` was answered `403 SignatureDoesNotMatch` while the backend verified the same
-signature. It failed closed — a wrong canonical request can only refuse a good signature, never
-accept a bad one — which is why it survived: the verb is refused by decision anyway, and the test
-that covered it swallowed the error. The rule is now pinned on its own rather than through a verb
-that happens to exercise it.
-
-**Added while implementing D4, and it is a refusal this ADR did not specify:** a configured
-`max_clock_skew_seconds` of `0` is refused at startup. It used to be read silently as the
-900-second default on both paths — so the value an operator picks to mean "no tolerance" quietly
-widened the window to the maximum. There is no value that switches the check off, and ADR 0017 D8
-forbids the silent fixup that hid it.
+Built in full: both SigV4 forms with the checks of D3; static client credentials with their
+length minimums (D2); `s3_security.max_clock_skew_seconds` enforced on both forms and refused at
+`0` (D4); `s3_security.max_presign_expiry_seconds` with its 3600-second default and the S3
+seven-day maximum as a hard cap (D5); exactly the three `s3_security` keys of D9, each enforced;
+a fixed failure message per error code (D10) under the status and code each failure warrants
+(D13); the two unauthenticated probe paths `/livez` and `/readyz`, matched as a probe rather than
+as a path (D11, D14); an unauthenticated monitoring listener; and profiling endpoints on their own
+loopback listener that refuses a non-loopback address at startup. Nothing in the proxy counts,
+keys on or decides anything from a client address, and no shipped configuration key suggests a
+limiter (D7, D8). D6 and D12 build nothing: per-chunk signatures are not verified, and no
+throttling exists.
 
 ## Context
 
@@ -85,17 +47,15 @@ implementation was a per-address failed-attempt map:
   **failure** path, so two parallel requests with a bad signature and no credentials at all
   were a remote kill switch.
 
-The crash was fixed by serialising the counters. The structure around it could not be fixed the
-same way: the question was whether to complete it or delete it, and it was answered twice. On
-2026-09-06 the call was to delete the knobs and the map. On 2026-09-07 that was briefly reversed
-— keep the map, add a trusted-proxy CIDR allowlist and eviction — and reverted the same day,
-because keeping the map only earns that machinery if something reads it, and the only reading
-that would justify it is live per-address blocking. Per-address blocking is the wrong instrument
-for the clients this proxy serves: one legitimate client is one authenticated identity that
-bursts thousands of requests from one address, and any client behind a NAT or an ingress looks
-the same. A signing secret of the required minimum length is not guessable, so brute-force
-protection at this door is a fiction. Denial-of-service defence belongs in the ingress, which
-can actually do it.
+The crash could be fixed by serialising the counters. The structure around it could not be fixed the
+same way: the question was whether to complete it or delete it. Completing it means keeping the map
+and adding a trusted-proxy CIDR allowlist and eviction, and keeping the map only earns that
+machinery if something reads it; the only reading that would justify it is live per-address
+blocking. Per-address blocking is the wrong instrument for the clients this proxy serves: one
+legitimate client is one authenticated identity that bursts thousands of requests from one address,
+and any client behind a NAT or an ingress looks the same. A signing secret of the required minimum
+length is not guessable, so brute-force protection at this door is a fiction. Denial-of-service
+defence belongs in the ingress, which can actually do it.
 
 Two smaller instances of the same class sat in the same struct. `strict_signature_validation`
 and `enable_security_logging` were read by nothing — both fail safe, so nothing was exposed,
@@ -133,7 +93,9 @@ skew, and the URL is refused once its own declared lifetime plus that skew has p
 
 **D4** `s3_security.max_clock_skew_seconds` (default 900) governs both authentication forms. One
 key, one configured tolerance, enforced on every path it names; D3 states how each form applies
-it.
+it. A configured `0` refuses the start: there is no value that switches the check off, and
+reading `0` as the default would silently widen the window an operator meant to close
+(ADR 0017 D8).
 
 **D5** `s3_security.max_presign_expiry_seconds` bounds the lifetime a pre-signed URL may claim.
 Default 3600 seconds; hard cap 604800 seconds, the S3 maximum, enforced both at configuration
@@ -155,27 +117,23 @@ keys a counter, or decides anything in the proxy, so there is no trusted-proxy l
 
 **D9** `s3_security` carries exactly three keys — `max_clock_skew_seconds`,
 `max_presign_expiry_seconds` and `verify_payload_hash` — and every one of them is enforced. Every
-other key in that block is removed rather than documented as unimplemented (ADR 0013).
-
-**Amended 2026-09-13, and the amendment is the point of D9 rather than an exception to it.**
-`verify_payload_hash` was added by ADR 0012 D15: it decides whether the SigV4 payload hash is
-verified against the body, which is a control on the client leg and belongs in this block. It is
-admitted here because it meets the bar D12 sets — the key landed in the same change as the code
-that reads it and the tests that prove both of its positions — and D9's rule was never "two keys",
-it was "no key that reads nothing".
+other key in that block is removed rather than documented as unimplemented (ADR 0013). The rule
+is not a count of keys, it is "no key that reads nothing". `verify_payload_hash` is ADR 0012
+D15's: it decides whether the SigV4 payload hash is verified against the body, which is a control
+on the client leg and belongs in this block, and it meets the bar D12 sets — the key landed in the
+same change as the code that reads it and the tests that prove both of its positions.
 
 **D10** An authentication failure answers a fixed message per S3 error code. The attempted access
 key id, the signed header names and the clock offset are logged and never echoed into the
 response (ADR 0008).
 
-**D11** The probe endpoints are unauthenticated by design and are served ahead of the
-authentication middleware; D14 says which requests to those paths are the probe and which are S3
-requests. *Amended 2026-09-15 (ADR 0034): the paths are `/livez` and `/readyz`, where they were
-`/health` and `/version` until then. The rule is unchanged and the count is: two unsigned paths on
-the serving listener, no more.* The monitoring listener carries no authentication at all and is to be
-fenced by the network, not by the proxy. Profiling endpoints run on their own listener bound to
-loopback; a non-loopback address for them is a startup error, because a heap profile of this
-process contains key material and plaintext.
+**D11** The probe endpoints `/livez` and `/readyz` are unauthenticated by design and are served
+ahead of the authentication middleware; D14 says which requests to those paths are the probe and
+which are S3 requests. That is two unsigned paths on the serving listener, no more; what each of
+them may report is [ADR 0034](0034-a-probe-reports-the-process-never-its-dependencies.md)'s. The
+monitoring listener carries no authentication at all and is to be fenced by the network, not by the
+proxy. Profiling endpoints run on their own listener bound to loopback; a non-loopback address for
+them is a startup error, because a heap profile of this process contains key material and plaintext.
 
 **D12** If throttling is ever wanted in the proxy itself, it arrives as a new configuration key
 that lands in the same change as the code reading it and a test that proves it throttles. That
@@ -201,8 +159,6 @@ which S3 allows and this proxy does not forbid — and is routed, authenticated 
 Reserving the names for the probe would make two legal bucket names unreachable through the proxy
 without saying so anywhere; the probe keeps its exemption, the name does not get one. Both paths
 keep answering while the proxy drains (ADR 0029 D1), and what each of them may say is ADR 0034.
-*Amended 2026-09-15 (ADR 0034): the paths are `/livez` and `/readyz`, where they were `/health`
-and `/version` until then.*
 
 ## Consequences
 
@@ -214,38 +170,35 @@ and `/version` until then.*
 - A flood of failing requests carrying a varying forged `X-Forwarded-For` no longer grows proxy
   memory, because there is no map left to grow. It costs CPU and one warning line per attempt,
   which is what the log pipeline has to absorb instead.
-- Deployments that set the removed keys do not start. **Updated 2026-09-12:** an unknown key
-  refuses the start and the error names it (ADR 0013), so a configuration carrying
-  `enable_rate_limiting` or any of the other five has to be edited before the proxy runs. The
-  removal is a breaking configuration change with no compatibility shim, and the release carrying
-  it is declared major by its label (ADR 0018).
+- Deployments that set the removed keys do not start. An unknown key refuses the start and the error
+  names it (ADR 0013), so a configuration carrying `enable_rate_limiting` or any of the other five
+  has to be edited before the proxy runs. The removal is a breaking configuration change with no
+  compatibility shim, and the release carrying it is declared major by its label (ADR 0018).
 - There is no per-client visibility into failed authentications beyond the log stream: no counter,
   no metric. A Prometheus counter was considered and rejected below, so an operator who wants that
   view builds it from logs.
 - An attacker-chosen `X-Forwarded-For` string still reaches the log line. Accepted: being a field
   is now its only role — it is not a key and not a decision input — and the log encoder quotes it.
   It must not be read as the client's identity.
-- Lowering the pre-signed ceiling from seven days to one hour breaks any client that relies on
-  multi-day URLs until the operator raises the knob. **Landed 2026-09-11:** the break has
-  happened. The default is 3600 seconds, the S3 maximum of seven days is only the hard cap a
-  configured value may not exceed, and a URL declaring more than the configured ceiling is
-  refused.
-- Making `max_clock_skew_seconds` apply to the header form tightens behaviour for anyone who
-  configured a value below 900. A client whose clock is off by more than the configured window
-  stops authenticating, with a clear timestamp error. It is the one change in this family that can
-  break a working deployment, and **as of 2026-09-11 it is behind rather than ahead**: a value
-  below 900 now applies to the path that carries the traffic.
+- A pre-signed ceiling of one hour rather than seven days breaks any client that relies on
+  multi-day URLs until the operator raises the knob. The default is 3600 seconds, the S3 maximum
+  of seven days is only the hard cap a configured value may not exceed, and a URL declaring more
+  than the configured ceiling is refused.
+- `max_clock_skew_seconds` applies to the header form, which is what every AWS SDK client sends,
+  so a value below 900 tightens the path that carries the traffic. A client whose clock is off by
+  more than the configured window does not authenticate, with a clear timestamp error. Every
+  shipped example configuration and the production deployment values set 300, so anyone who took
+  one of those as a starting point has a 300-second window on both forms.
 - A client that signs chunks over plain HTTP and expects the proxy to detect a man in the middle
   gets nothing. The answer is TLS on the client leg.
 
 ## Alternatives Considered
 
 - **Implement the two blocking knobs for real: live per-address blocking, a trusted-proxy CIDR
-  allowlist, and eviction.** Held for one day and rejected. It puts new security behaviour on the
-  authentication hot path, needs its own tests, and is the wrong instrument regardless: legitimate
-  S3 clients burst from a single address, and a publicly exposed proxy still needs the ingress to
-  limit properly. The kept map would have been infrastructure justified by a control nobody needs
-  from this component.
+  allowlist, and eviction.** Rejected. It puts new security behaviour on the authentication hot
+  path, needs its own tests, and is the wrong instrument regardless: legitimate S3 clients burst
+  from a single address, and a publicly exposed proxy still needs the ingress to limit properly. The
+  kept map would have been infrastructure justified by a control nobody needs from this component.
 - **Keep the failure map as a counter and only bound it (eviction plus a size cap).** Rejected: it
   is a trusted-proxy question, an eviction policy and a memory bound in service of one log line,
   and it leaves the two knobs dead.
@@ -277,21 +230,21 @@ and `/version` until then.*
   non-empty body is treated as `UNSIGNED-PAYLOAD`, and the pre-signed form defaults to it, so the
   signature authenticates the request line and headers only. Verifying what the client sent about
   its own bytes is ADR 0012's subject.
-- **Whether any deployment outside this repository sets the removed keys is not verified.**
-  **Updated 2026-09-12:** such a configuration no longer keeps loading — an unknown key refuses the
-  start and the error names it (ADR 0013). The deployment stops until the keys are removed,
-  instead of loading while its operator believes a control was lost that never existed.
+- **Whether any deployment outside this repository sets the removed keys is not verified.** Such
+  a configuration does not load — an unknown key refuses the start and the error names it
+  (ADR 0013). The deployment stops until the keys are removed, instead of loading while its
+  operator believes in a control that does not exist.
 - **No mechanism prevents the next dead key.** The guard is the rule in D12, not a check; a field
   that is defined and never read passes every decoder.
 - **The client address in the logs remains attacker-chosen** wherever the proxy is reachable
   without a sanitising hop. It is not an identity and must not be used as one in any downstream
   alerting.
-- **Closed 2026-09-11: the deletions and the two additions they were scoped with are all in the
-  tree.** `max_clock_skew_seconds` is now read on both paths. This is the one behaviour
-  change in this family that can break a working deployment: a client whose clock is
-  between the configured window and 900 seconds off used to authenticate on the header path and
-  now does not. Every shipped example configuration and the production deployment values set 300,
-  so the window narrows from 900 to 300 for anyone who took one of those as their starting point.
+- **A defect in the canonical request fails closed, and that is what lets it hide.** A wrong
+  canonical request can only refuse a good signature, never accept a bad one, so it looks like a
+  client error rather than a hole. The canonical query string is sorted by parameter name, not by
+  the joined `name=value` string; the two orders disagree once one name is a prefix of another and
+  the next character sorts below `=` (`select` and `select-type`), and the rule is tested on its
+  own rather than through a verb that happens to exercise it.
 - **A probe that starts signing its requests stops being a probe.** D14 tells the two apart by the
   absence of a signature and of a query string, so a readiness check that is given credentials, or
   a health URL that acquires a cache-busting parameter, is routed to the bucket of that name and
