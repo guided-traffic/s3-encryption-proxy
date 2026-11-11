@@ -1042,7 +1042,7 @@ Two further breaking items resolve themselves and need no decision:
   purely additive: `501` becomes `200`. It stays out, and the reason is now
   recorded rather than assumed.
 - [017](017-filename-encryption.md) contains no breaking item at all: the feature
-  is opt-in and ships disabled ([ADR 0023](../adr/0023-filename-encryption-encrypts-directory-segments.md) D1).
+  is opt-in and ships disabled ([ADR 0023](../adr/0023-filename-encryption-encrypts-every-segment-with-a-searchable-leaf-head.md) D1).
   It stays out on its own merits.
 
 ### What the release still owes, verified against the tree
