@@ -2,19 +2,12 @@
 
 ## Status
 
-**Accepted.** Date: 2026-09-11. Owner decision the same day: it ships in 5.0.0.
+**Accepted.** Date: 2026-09-14.
 
-**Amended 2026-09-14: D9 and D10 write down the two refusals the chart has been shipping since
-2026-09-11** — an enabled Ingress that does not terminate TLS for every host it serves, and a
-cert-manager `Certificate` nothing consumes. Both are breaking: a configuration that rendered
-before 5.0.0 now fails before anything is applied. They were built in the same chart round as this
-decision and stated only in the chart's own documentation, and D7 named the second one in passing
-as though it were already decided somewhere. It was not.
-
-**Implemented on the 5.0.0 branch**, in the chart round that closed
-[ADR 0013](0013-a-configuration-key-exists-only-if-code-reads-it.md)'s deployment half. The chart
-issues or accepts a certificate for the in-cluster Service names, mounts it, and turns the proxy's
-own listener on; the end-to-end suite runs on the bring-your-own arm of it.
+**Implemented, and shipped in 5.0.0.** The chart issues or accepts a certificate for the
+in-cluster Service names, mounts it, and turns the proxy's own listener on; the end-to-end suite
+runs on the bring-your-own arm of it. The render refusals of D3, D5, D9 and D10 are built. D9 and
+D10 are breaking: a configuration that rendered before 5.0.0 fails before anything is applied.
 
 **Not covered by a run:** the cert-manager arm. The end-to-end cluster has no cert-manager, so
 that arm is exercised by rendering only. It is a real gap and is named here rather than left to be
@@ -37,8 +30,8 @@ The proxy has been able to serve TLS since before this decision: `tls.enabled`, 
 and `tls.key_file` in its own configuration. **The chart could not.** It had no `tls` value of any
 kind. The only way to turn the listener on was to write the certificate paths into the raw
 `config` string by hand and mount the secret through the chart's generic `volumes` and
-`volumeMounts` — which is exactly what the end-to-end suite does, and has done for as long as it
-has existed. A workaround that has been in the tree that long is not a workaround; it is the
+`volumeMounts` — which is exactly what the end-to-end suite did, for as long as it existed before
+this decision. A workaround that had been in the tree that long was not a workaround; it was the
 missing feature, being paid for over and over.
 
 The reason it stayed missing was one technical objection, recorded when the chart round was
@@ -60,8 +53,9 @@ failure the operator only sees when a client refuses the connection.
 
 **D3. The chart adds the `tls:` block to the rendered configuration; it never edits what the
 operator wrote.** `tls:` is the only key the chart adds to the rendered configuration. The one
-hazard is a duplicate key, and it is closed by refusing rather than by merging: **if `serviceTLS` is enabled and the operator's own `config` already carries a `tls`
-key, the render fails and says so.** Two sources for one setting is how the trap gets rebuilt; the
+hazard is a duplicate key, and it is closed by refusing rather than by merging: **if `serviceTLS`
+is enabled and the operator's own `config` already carries a `tls` key, the render fails and says
+so.** Two sources for one setting is how the trap gets rebuilt; the
 chart takes the setting or the operator does, never both.
 
 **D4. Bringing your own certificate is a first-class arm, not a fallback.** `existingSecret` names
@@ -81,8 +75,8 @@ probe a TLS listener in plaintext, and the pod would never become Ready — the 
 project already fixed once, reintroduced through the new door.
 
 **D7. A pod that mounts the certificate is a consumer of it.** The chart refuses a cert-manager
-`Certificate` that nothing consumes; with this decision the pod becomes the second thing that can
-consume one, beside an `ingress.tls` entry.
+`Certificate` that nothing consumes (D10); the pod is the second thing that can consume one,
+beside an `ingress.tls` entry.
 
 **D8. The Ingress is not replaced and not deprecated.** Terminating TLS at an Ingress stays
 supported and keeps its own values. The two are independent: a deployment may do both, and one
@@ -116,9 +110,8 @@ The `clusterDomain` value is new and is `cluster.local`. A cluster built on anot
 set it; the chart cannot discover it, and guessing would produce a certificate that fails
 verification for the one name most clients use.
 
-The end-to-end suite stops carrying its hand-rolled TLS and uses the feature, which is what puts
-the bring-your-own arm under test on every run. Its CA mount stays manual and moves to a path of
-its own: that mount is for the **backend** leg — `SSL_CERT_FILE`, so the proxy verifies MinIO for
+The end-to-end suite carries no hand-rolled TLS and uses the feature, which is what puts the
+bring-your-own arm under test on every run. Its CA mount stays manual, on a path of its own: that mount is for the **backend** leg — `SSL_CERT_FILE`, so the proxy verifies MinIO for
 real — and has nothing to do with the listener.
 
 The cert-manager arm ships with a render test and no run. Two ways to close that later, neither
@@ -129,9 +122,8 @@ D9 and D10 break deployments that rendered before 5.0.0. An Ingress that served 
 in plaintext has to state TLS for all of them or be turned off, and a `Certificate` rendered here
 for a consumer this chart cannot see — another workload's Ingress in the same namespace — has to be
 moved out of this release or given `certificate.enabled: false`. The chart's own development
-profile shipped the first case and lost its Ingress rather than gaining a certificate no
-development cluster would issue, which is also how the proxy is actually deployed: beside its
-client, as an in-cluster Service.
+profile enables no Ingress rather than carrying a certificate no development cluster would issue,
+which is also how the proxy is actually deployed: beside its client, as an in-cluster Service.
 
 D9 matches a host by literal name. A `tls` entry that covers a host by wildcard does not count as
 covering it, and the operator has to list the exact name alongside the wildcard. That false refusal
@@ -139,8 +131,8 @@ costs one line in the values file; the hop it is there to catch costs the creden
 
 ## Alternatives rejected
 
-- **Leave it to `volumes`, `volumeMounts` and the raw `config` string.** This is the status quo,
-  and the end-to-end suite is the evidence against it: the same eight lines, in every deployment
+- **Leave it to `volumes`, `volumeMounts` and the raw `config` string.** This was the state before
+  this decision, and the end-to-end suite was the evidence against it: the same eight lines, in every deployment
   that wants TLS, with three paths that have to agree and nothing checking that they do.
 - **A second values key for the scheme instead of deriving it.** Rejected for the same reason the
   probe derivation was written in the first place: two sources of truth for "is this listener TLS"
