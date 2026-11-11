@@ -2,54 +2,48 @@
 
 ## Status
 
-**Accepted.** Date: 2026-09-13. Both halves were decided with the owner on **2026-09-12**: the
-monitoring half in the 5.0.0 review of the unauthenticated metrics listener, the chart half in the
-decision list of the documentation audit. The monitoring decision was taken and never written up,
-so the repository has been holding both positions at once — a decision that no network policy
-ships, and a chart that still ships one. This record is where the decision is written down.
+**Accepted.** Date: 2026-10-29.
 
-**Amended 2026-09-14: D4 added.** The same review of 2026-09-12 also decided what the scrape may
-carry, and that half was likewise never written up — it lived only in the release's work list,
-where a rule does not belong (ADR 0022), while the code was held to it by a unit test nobody could
-trace to a decision. It is the premise D2 rests on, so it is recorded here beside it. Built: the
-scrape carries no identifying label.
+**Built, and shipped in 5.0.0.** The chart renders no NetworkPolicy under any values: it has no
+template for one and no `networkPolicy` values in `values.yaml` or in any profile. The chart
+README carries the upgrade note D3 asks for: Helm ignores a value key a chart no longer declares,
+so an operator who had set `networkPolicy.enabled: true` loses the policy on upgrade with no error
+of its own. The two statements outside the chart — `README.md` and the security design — say
+that no policy ships.
 
-**Built 2026-09-13.** The template is deleted, the `networkPolicy` values are gone from
-`values.yaml` and from both profiles, and the chart README carries the upgrade note D3 asks for:
-Helm ignores a value key a chart no longer declares, so an operator who had set
-`networkPolicy.enabled: true` loses the policy on upgrade with no error of its own. The chart
-renders no NetworkPolicy under any values, and the two statements outside the chart — `README.md`
-and the security design — say so.
+**Built: D4.** The scrape carries no label that identifies the deployment or its operator and no
+series that describes a license, and a unit test holds the scrape to the second half.
 
 ## Context
 
-The chart ships an optional network policy: `networkPolicy.enabled`, off by default,
-`policyTypes: [Ingress, Egress]`, one ingress rule admitting TCP 8080 and one egress rule allowing
-443 and 53. The production values profile the chart ships turns it on and adds a second ingress
-rule for the metrics port.
+Before 5.0.0 the chart shipped an optional network policy: `networkPolicy.enabled`, off by
+default, `policyTypes: [Ingress, Egress]`, one ingress rule admitting TCP 8080 and one egress rule
+allowing 443 and 53. The production values profile the chart shipped turned it on and added a
+second ingress rule for the metrics port.
 
-None of these rules names a peer. An empty `from` is **allow from anywhere**, not a selector, and
-an empty `to` is the same in the other direction. What ships is therefore not a restriction on
-*who* may talk to the proxy; it is port filtering with the peer set left wide open — a blanket
+None of these rules named a peer. An empty `from` is **allow from anywhere**, not a selector, and
+an empty `to` is the same in the other direction. What shipped was therefore not a restriction on
+*who* may talk to the proxy; it was port filtering with the peer set left wide open — a blanket
 grant wearing the name of a security control. An operator reading a values file that offers
 `networkPolicy` has every reason to believe the box is ticked once they set it to `true`.
 
-The chart cannot write these rules correctly for anyone, and that is the reason the feature cannot
-be fixed in place. Which namespaces may reach the proxy, which addresses the S3 backend answers on,
-which port it listens on, whether DNS is in the cluster or outside it — none of that is knowable
+The chart cannot write these rules correctly for anyone, and that is the reason the feature could
+not be fixed in place. Which namespaces may reach the proxy, which addresses the S3 backend
+answers on, which port it listens on, whether DNS is in the cluster or outside it — none of that is knowable
 from a chart. A default that is correct for one topology is wrong for the next one, and there is no
 value the chart could ship that is right by default.
 
-The default also contradicts the chart itself. It admits the proxy's own port and nothing else,
-so enabling it with stock values cuts the metrics port — `monitoring.bind_address` is `:9090`. The
-Service's own TLS listener escapes only because it shares that same port (ADR 0026). The one
-control the chart offers breaks a feature the same chart ships, at the moment it is switched on.
+The default also contradicted the chart itself. It admitted the proxy's own port and nothing
+else, so enabling it with stock values cut the metrics port — `monitoring.bind_address` is
+`:9090`. The Service's own TLS listener escaped only because it shares that same port (ADR 0026).
+The one control the chart offered broke a feature the same chart ships, at the moment it was
+switched on.
 
 Beside that sits the monitoring listener. It carries no authentication at all and is **to be fenced
 by the network, not by the proxy** (ADR 0014 D11). That sentence names a fence without naming who
-builds it, and the shipped policy answers it in two contradictory ways depending on which values
-profile is used: at stock values it closes the metrics port to everything, Prometheus included,
-while the production profile adds a metrics-port rule with an empty peer set and so opens that
+builds it, and the shipped policy answered it in two contradictory ways depending on which values
+profile was used: at stock values it closed the metrics port to everything, Prometheus included,
+while the production profile added a metrics-port rule with an empty peer set and so opened that
 port to everything that can route to the pod.
 
 ## Decision
@@ -71,8 +65,8 @@ note names the key, says the policy is gone, and says it is now theirs to write 
 release is a major, which is where a removal like this belongs (ADR 0018) — the note is not
 optional on top of that, it is the only signal that reaches the operator at all.
 
-**D4, added 2026-09-14. What the scrape may carry is the other half of D2, and it is a decision
-rather than a detail.** The listener stays unauthenticated because there is nothing on it worth
+**D4. What the scrape may carry is the other half of D2, and it is a decision rather than a
+detail.** The listener stays unauthenticated because there is nothing on it worth
 authenticating, and that is a property somebody has to keep true. The scrape carries no label that
 identifies the deployment or its operator, and no series that describes a license (ADR 0016).
 Adding a label that identifies the deployment or its operator is a change to this decision and
@@ -87,12 +81,12 @@ not a metrics change, because it removes the reason the listener may be left ope
 * **The project will ship no network-level control for this proxy.** Not a weak one, not a
   default-off one: none. Everything on that axis is documentation — the security architecture
   carries the exposure as a residual risk, and the chart's documentation says whose job it is.
-* **The chart stops contradicting itself.** No shipped value can cut the metrics port, because no
+* **The chart does not contradict itself.** No shipped value can cut the metrics port, because no
   shipped value touches the network at all.
 * **A deployment that never enabled the policy sees no change**, which is every deployment using
   stock values, since the key defaults to `false`.
-* Nothing in the chart's tests asserts the policy's shape, so its removal breaks no test — and
-  equally, nothing catches the wrong-port default before an operator does.
+* Nothing in the chart's tests asserted the policy's shape, so its removal broke no test; and
+  nothing in them asserts that no policy is rendered either.
 
 ## Alternatives Considered
 
