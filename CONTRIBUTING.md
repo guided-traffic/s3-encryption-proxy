@@ -6,8 +6,9 @@ We welcome contributions to the S3 Encryption Proxy project! Please read this gu
 
 ### Prerequisites
 
-- Go 1.27.1 — the version is spelled out in [go.mod](go.mod) and in the
-  [Containerfile](Containerfile), and the two must always agree. The go command
+- Go, at the version spelled out in [go.mod](go.mod) and in the
+  [Containerfile](Containerfile) — the two must always agree, and no other file
+  repeats the number. The go command
   downloads that toolchain for you if your local Go is older
 - Docker and Docker Compose — for the demo stack the integration suites run
   against, and for the throwaway MinIO and LocalStack containers the conformance
