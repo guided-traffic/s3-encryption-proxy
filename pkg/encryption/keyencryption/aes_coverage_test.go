@@ -1,6 +1,7 @@
 package keyencryption
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -74,8 +75,20 @@ func TestKekAESNewProviderFromConfigMap(t *testing.T) {
 	}{
 		{
 			name:    "base64 encoded 32 byte key is decoded",
+			config:  map[string]interface{}{"aes_key": base64.StdEncoding.EncodeToString(KekBytePattern(32))},
+			wantKEK: KekBytePattern(32),
+		},
+		{
+			// The configuration, the factory and the client library apply the
+			// same admission rules, so a passphrase is refused here too.
+			name:    "base64 of a passphrase is refused",
 			config:  map[string]interface{}{"aes_key": base64.StdEncoding.EncodeToString(KekAESKeyB)},
-			wantKEK: KekAESKeyB,
+			wantErr: "which is a passphrase and not a key",
+		},
+		{
+			name:    "base64 of a low entropy pattern is refused",
+			config:  map[string]interface{}{"aes_key": base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x00, 0x01}, 16))},
+			wantErr: "decodes to only 2 distinct byte values",
 		},
 		{
 			name:    "raw 32 byte ascii key is refused",

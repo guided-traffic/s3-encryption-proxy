@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
@@ -206,11 +206,11 @@ func putTimed(ctx context.Context, l leg, key string, body []byte) (time.Duratio
 		// PutObject of a large body produces. Both legs therefore switch to the
 		// uploader at the same size, so the comparison stays a comparison — and
 		// it is what an SDK client does with a large object anyway.
-		uploader := manager.NewUploader(l.client, func(u *manager.Uploader) {
-			u.PartSize = singlePutLimit
+		uploader := transfermanager.New(l.client, func(u *transfermanager.Options) {
+			u.PartSizeBytes = singlePutLimit
 			u.Concurrency = 4
 		})
-		_, err := uploader.Upload(opCtx, &s3.PutObjectInput{
+		_, err := uploader.UploadObject(opCtx, &transfermanager.UploadObjectInput{
 			Bucket: aws.String(l.bucket),
 			Key:    aws.String(key),
 			Body:   bytes.NewReader(body),

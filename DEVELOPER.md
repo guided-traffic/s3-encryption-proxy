@@ -53,7 +53,7 @@ cmd/
 internal/
   config/                Viper loading, defaults, and every startup refusal
   monitoring/            Prometheus registry and listener, pprof on its own loopback listener
-  orchestration/         the facade the handlers call: providers, metadata, segmented read/write,
+  orchestration/         the facade the handlers call: providers, segmented read/write,
                          the client-driven multipart session table
   proxy/
     handlers/            root, bucket, object, multipart, health
@@ -64,8 +64,10 @@ internal/
     utils/               the detached context an abort needs
 pkg/encryption/
   dataencryption/        the codec: segments, trailer, range planner. No business logic
-  keyencryption/         the KEK providers, one file each
+  keyencryption/         the KEK providers, one file each, and the admission rules for a key
+  storedobject/          the metadata contract: the four s3ep-* keys, the prefix, keying a new object
   factory/               the KEK registry, keyed by fingerprint
+pkg/s3enc/               the client library: the stored format straight against S3 (ADR 0041)
 deploy/helm/s3-encryption-proxy/   the supported way to run it in Kubernetes
 config/
   default.yaml           what the image starts from; the seven settings it asks for are

@@ -17,6 +17,7 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/v5/internal/config"
 	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption"
 	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/keyencryption"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/storedobject"
 )
 
 // ===== Fixtures and helpers (all prefixed with the OrcMeta token) =====
@@ -142,7 +143,7 @@ func TestOrcMetaProviderRegistrationExit(t *testing.T) {
 	// creates no data key, so reaching either key operation means a write path
 	// failed to pass through or a fingerprint was accepted that names no key.
 	dek := []byte("orcmeta-plain-dek")
-	encryptedDEK, err := pm.EncryptDEK(dek, "objects/exit")
+	encryptedDEK, err := wrapDEK(pm, dek)
 	require.ErrorIs(t, err, keyencryption.ErrExitProviderKeyUse)
 	assert.Nil(t, encryptedDEK)
 
@@ -213,7 +214,7 @@ func TestOrcMetaDecryptionSelectsProviderByFingerprint(t *testing.T) {
 	require.Len(t, dek, 32)
 
 	oldFingerprint := before.GetActiveFingerprint()
-	encryptedUnderOld, err := before.EncryptDEK(dek, "objects/rotated")
+	encryptedUnderOld, err := wrapDEK(before, dek)
 	require.NoError(t, err)
 
 	// Rotate: the same key set, but "current" is now the active provider.
@@ -227,7 +228,7 @@ func TestOrcMetaDecryptionSelectsProviderByFingerprint(t *testing.T) {
 	assert.Equal(t, dek, decrypted, "an object written under the retired KEK must stay readable")
 
 	// New writes go to the rotated-in key.
-	encryptedUnderNew, err := after.EncryptDEK(dek, "objects/rotated")
+	encryptedUnderNew, err := wrapDEK(after, dek)
 	require.NoError(t, err)
 	assert.NotEqual(t, encryptedUnderOld, encryptedUnderNew)
 
@@ -248,21 +249,16 @@ func TestOrcMetaDecryptDEKUnknownFingerprint(t *testing.T) {
 	assert.Contains(t, err.Error(), "no provider is loaded for this fingerprint")
 }
 
-func TestOrcMetaEncryptDEKRejectsEmptyAndUnknownActiveProvider(t *testing.T) {
+func TestOrcMetaRejectsEmptyDEKAndUnknownActiveProvider(t *testing.T) {
 	pm := OrcMetaNewProviderManager(t)
 
-	_, err := pm.EncryptDEK(nil, "objects/x")
-	assert.EqualError(t, err, "DEK cannot be empty")
-	_, err = pm.EncryptDEK([]byte{}, "objects/x")
-	assert.EqualError(t, err, "DEK cannot be empty")
-
-	_, err = pm.DecryptDEK(nil, pm.GetActiveFingerprint(), "objects/x")
+	_, err := pm.DecryptDEK(nil, pm.GetActiveFingerprint(), "objects/x")
 	assert.EqualError(t, err, "encrypted DEK cannot be empty")
 
 	// An active fingerprint that no longer resolves must fail loudly rather
 	// than storing an unprotected DEK.
 	pm.activeFingerprint = "gone"
-	_, err = pm.EncryptDEK([]byte("dek"), "objects/x")
+	_, err = wrapDEK(pm, []byte("dek"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to get active key encryptor")
 	assert.Equal(t, "", pm.GetActiveProviderAlgorithm(), "an unresolvable provider reports no algorithm")
@@ -275,10 +271,13 @@ func TestOrcMetaEncryptDEKSurfacesKEKFailure(t *testing.T) {
 	kek.encryptErr = errors.New("hsm offline")
 	pm.activeFingerprint = kek.fingerprint
 
-	encrypted, err := pm.EncryptDEK([]byte("orcmeta-dek-32-bytes-eeeeeeeeeee"), "objects/x")
-	assert.Nil(t, encrypted)
+	active, err := pm.ActiveKeyEncryptor()
+	require.NoError(t, err)
+	codec, metadata, err := storedobject.New(context.Background(), active, "s3ep-", "objects/x", nil)
+	assert.Nil(t, codec)
+	assert.Nil(t, metadata)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to encrypt DEK")
+	assert.Contains(t, err.Error(), "failed to wrap data key")
 	assert.Contains(t, err.Error(), "hsm offline")
 }
 
@@ -580,7 +579,7 @@ func TestOrcMetaExitProviderStillUnwrapsWhatTheAESProviderWrapped(t *testing.T) 
 	require.NoError(t, err)
 
 	dek := bytes.Repeat([]byte{0x11}, 32)
-	wrapped, err := sealing.EncryptDEK(dek, "old/object.txt")
+	wrapped, err := wrapDEK(sealing, dek)
 	require.NoError(t, err)
 	aesFingerprint := sealing.GetActiveFingerprint()
 

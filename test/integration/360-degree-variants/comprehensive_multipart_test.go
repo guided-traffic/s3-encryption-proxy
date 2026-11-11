@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -348,8 +348,8 @@ func uploadLargeFileMultipart(t *testing.T, ctx context.Context, client *s3.Clie
 	t.Helper()
 
 	// Create multipart uploader
-	uploader := manager.NewUploader(client, func(u *manager.Uploader) {
-		u.PartSize = DefaultPartSize
+	uploader := transfermanager.New(client, func(u *transfermanager.Options) {
+		u.PartSizeBytes = DefaultPartSize
 		u.Concurrency = 3 // Reduce concurrency to avoid overwhelming the proxy
 	})
 
@@ -357,7 +357,7 @@ func uploadLargeFileMultipart(t *testing.T, ctx context.Context, client *s3.Clie
 	reader := bytes.NewReader(data)
 	startTime := time.Now()
 
-	result, err := uploader.Upload(ctx, &s3.PutObjectInput{
+	result, err := uploader.UploadObject(ctx, &transfermanager.UploadObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 		Body:   reader,
@@ -369,7 +369,7 @@ func uploadLargeFileMultipart(t *testing.T, ctx context.Context, client *s3.Clie
 	// Log upload details
 	expectedSize := int64(len(data))
 	t.Logf("Upload completed: Location=%s, Duration=%v, ExpectedSize=%d bytes",
-		aws.ToString(&result.Location), uploadDuration, expectedSize)
+		aws.ToString(result.Location), uploadDuration, expectedSize)
 
 	// Get object info to verify actual uploaded size
 	headResult, err := client.HeadObject(ctx, &s3.HeadObjectInput{
@@ -454,16 +454,15 @@ func uploadLargeFileStreaming(t *testing.T, ctx context.Context, client *s3.Clie
 	streamingReader := NewStreamingReader(size, 64*1024) // 64KB chunks like typical browsers
 
 	// Create multipart uploader with streaming-friendly settings
-	uploader := manager.NewUploader(client, func(u *manager.Uploader) {
-		u.PartSize = DefaultPartSize // 5MB parts
-		u.Concurrency = 1            // Single-threaded to better simulate browser behavior
-		u.LeavePartsOnError = false  // Clean up failed uploads
+	uploader := transfermanager.New(client, func(u *transfermanager.Options) {
+		u.PartSizeBytes = DefaultPartSize // 5MB parts
+		u.Concurrency = 1                 // Single-threaded to better simulate browser behavior
 	})
 
 	startTime := time.Now()
 	t.Logf("Starting streaming upload of %d bytes (simulating s3-explorer behavior)...", size)
 
-	result, err := uploader.Upload(ctx, &s3.PutObjectInput{
+	result, err := uploader.UploadObject(ctx, &transfermanager.UploadObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 		Body:   streamingReader,
@@ -478,7 +477,7 @@ func uploadLargeFileStreaming(t *testing.T, ctx context.Context, client *s3.Clie
 
 	// Log upload details
 	t.Logf("Streaming upload completed: Location=%s, Duration=%v, ExpectedSize=%d bytes",
-		aws.ToString(&result.Location), uploadDuration, size)
+		aws.ToString(result.Location), uploadDuration, size)
 
 	// Get object info to verify actual uploaded size
 	headResult, err := client.HeadObject(ctx, &s3.HeadObjectInput{

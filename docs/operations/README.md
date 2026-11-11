@@ -13,6 +13,7 @@ start it, which clients are supported. Everything it links to for detail is here
 | [monitoring.md](monitoring.md) | You are wiring up Prometheus, probes or the `/status` document |
 | [upgrading.md](upgrading.md) | You are coming from 3.x or 4.x — **read it before you upgrade**, stored objects and configuration files both break — or from a 5.x release that still checked a licence, which leaves settings to delete |
 | [clients/](clients/) | You run Velero, rclone or s3cmd against the proxy |
+| [client-library.md](client-library.md) | A Go application should write and read the stored format itself, with no proxy in between |
 
 ## Supported clients
 

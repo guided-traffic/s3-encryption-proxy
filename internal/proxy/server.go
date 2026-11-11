@@ -84,20 +84,13 @@ func NewServer(cfg *proxyconfig.Config) (*Server, error) {
 		}
 	}
 
-	// Get metadata prefix from encryption config
-	metadataPrefix := "s3ep-" // default when not set
-	var metadataSource string
+	// An empty prefix is refused by the configuration (ADR 0009 D2), so a set
+	// key is always a real one.
+	metadataSource := "default (not set in config)"
 	if cfg.Encryption.MetadataKeyPrefix != nil {
-		// Key is explicitly set in config - use its value (even if empty)
-		metadataPrefix = *cfg.Encryption.MetadataKeyPrefix
-		if metadataPrefix == "" {
-			metadataSource = "config (explicit empty)"
-		} else {
-			metadataSource = "config (explicit value)"
-		}
-	} else {
-		metadataSource = "default (not set in config)"
+		metadataSource = "config"
 	}
+	metadataPrefix := cfg.MetadataPrefix()
 
 	// Log metadata prefix information
 	logger.WithFields(logrus.Fields{

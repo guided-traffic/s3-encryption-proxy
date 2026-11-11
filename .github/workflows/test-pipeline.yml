@@ -354,10 +354,14 @@ jobs:
             sleep 2
           done
 
+      # GOCOVER=1 here records what runs inside the test binary - the client
+      # library and the format code it shares with the proxy - next to what the
+      # instrumented proxy records (make test-integration).
       - name: Run integration tests
         run: make test-integration
         env:
           INTEGRATION_TESTS: true
+          GOCOVER: "1"
           S3_ENDPOINT: https://localhost:9000
           PROXY_ENDPOINT: http://localhost:8080
 
@@ -369,6 +373,7 @@ jobs:
         run: make test-integration-tls
         env:
           INTEGRATION_TESTS: true
+          GOCOVER: "1"
 
 
       # Stops both proxies (clean exit flushes the counters) and copies the data
@@ -383,6 +388,8 @@ jobs:
           path: |
             coverage/integration-http/
             coverage/integration-tls/
+            coverage/integration-library-http/
+            coverage/integration-library-tls/
           retention-days: 7
 
       # Uninstrumented proxy for the performance comparison. Only the compile

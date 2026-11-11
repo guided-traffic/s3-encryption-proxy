@@ -105,50 +105,6 @@ func TestCleanMetadata(t *testing.T) {
 	}
 }
 
-func TestIsEncryptionMetadata(t *testing.T) {
-	logger := logrus.New()
-	logger.SetLevel(logrus.FatalLevel)
-
-	handler := &Handler{
-		logger:         logger.WithField("component", "object-handler"),
-		metadataPrefix: "s3ep-",
-	}
-
-	tests := []struct {
-		name     string
-		key      string
-		expected bool
-	}{
-		{
-			name:     "Encryption metadata",
-			key:      "s3ep-encrypted-dek",
-			expected: true,
-		},
-		{
-			name:     "Another encryption metadata",
-			key:      "s3ep-dek-algorithm",
-			expected: true,
-		},
-		{
-			name:     "User metadata",
-			key:      "user-key",
-			expected: false,
-		},
-		{
-			name:     "Similar but not encryption metadata",
-			key:      "s3ep",
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := handler.isEncryptionMetadata(tt.key)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 func TestGetMultipartPartSize(t *testing.T) {
 	logger := logrus.New()
 	logger.SetLevel(logrus.FatalLevel)

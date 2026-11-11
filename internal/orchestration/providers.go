@@ -165,42 +165,14 @@ func NewProviderManager(cfg *config.Config) (*ProviderManager, error) {
 	return pm, nil
 }
 
-// EncryptDEK encrypts a Data Encryption Key using the active provider
-func (pm *ProviderManager) EncryptDEK(dek []byte, objectKey string) ([]byte, error) {
-	// Validate input
-	if len(dek) == 0 {
-		return nil, fmt.Errorf("DEK cannot be empty")
-	}
-
-	// Get active provider from factory
+// ActiveKeyEncryptor returns the provider that wraps the data key of every new
+// object.
+func (pm *ProviderManager) ActiveKeyEncryptor() (encryption.KeyEncryptor, error) {
 	keyEncryptor, err := pm.factory.GetKeyEncryptor(pm.activeFingerprint)
 	if err != nil {
-		pm.logger.WithFields(logrus.Fields{
-			"fingerprint": pm.activeFingerprint,
-			"object_key":  objectKey,
-			"error":       err,
-		}).Error("Failed to get active key encryptor")
 		return nil, fmt.Errorf("failed to get active key encryptor: %w", err)
 	}
-
-	// Encrypt the DEK
-	encryptedDEK, err := keyEncryptor.EncryptDEK(context.Background(), dek)
-	if err != nil {
-		pm.logger.WithFields(logrus.Fields{
-			"fingerprint": pm.activeFingerprint,
-			"object_key":  objectKey,
-			"error":       err,
-		}).Error("Failed to encrypt DEK")
-		return nil, fmt.Errorf("failed to encrypt DEK: %w", err)
-	}
-
-	pm.logger.WithFields(logrus.Fields{
-		"fingerprint": pm.activeFingerprint,
-		"object_key":  objectKey,
-		"dek_size":    len(dek),
-	}).Debug("Successfully encrypted DEK")
-
-	return encryptedDEK, nil
+	return keyEncryptor, nil
 }
 
 // DecryptDEK decrypts a Data Encryption Key using the provider identified by fingerprint.

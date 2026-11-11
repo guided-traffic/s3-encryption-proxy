@@ -102,156 +102,49 @@ func OrcMetaAssertOnlyAllowedKeys(t *testing.T, metadata map[string]string, pref
 	}
 }
 
-// ===== BuildSegmentedMetadata =====
-
-func TestOrcMetaBuildMetadataUserKeyCollidingWithPrefixIsOverwritten(t *testing.T) {
-	mm := NewMetadataManager(OrcMetaConfig(OrcMetaPrefixPtr("s3ep-")), "")
-
-	// A client that sends x-amz-meta-s3ep-encrypted-dek must not be able to
-	// dictate the stored DEK: the proxy's own value wins. The three keys below
-	// are the ones that collide; the fourth is inside the namespace and collides
-	// with nothing, which is what makes the namespace assertion able to fail at
-	// all - overwriting the collisions alone would leave it stored (ADR 0009 D6).
-	metadata := mm.BuildSegmentedMetadata(
-		[]byte("real-dek"),
-		"real-fp",
-		"aes",
-		map[string]string{
-			"s3ep-encrypted-dek":   base64.StdEncoding.EncodeToString([]byte("attacker-dek")),
-			"s3ep-kek-fingerprint": "attacker-fp",
-			"s3ep-dek-algorithm":   "attacker-format",
-			"s3ep-not-a-field":     "smuggled",
-			"S3EP-Not-A-Field":     "smuggled in another case",
-			"keep-me":              "client metadata outside the namespace",
-		},
-	)
-
-	assert.Equal(t, base64.StdEncoding.EncodeToString([]byte("real-dek")), metadata["s3ep-encrypted-dek"])
-	assert.Equal(t, "real-fp", metadata["s3ep-kek-fingerprint"])
-	assert.Equal(t, dataencryption.FormatID, metadata["s3ep-dek-algorithm"])
-	assert.Equal(t, "aes", metadata["s3ep-kek-algorithm"])
-	assert.Equal(t, "client metadata outside the namespace", metadata["keep-me"],
-		"metadata outside the namespace is the client's and is kept")
-	assert.Len(t, metadata, 5, "the four the proxy writes, and the one the client may keep")
-	OrcMetaAssertOnlyAllowedKeys(t, metadata, "s3ep-")
-}
-
 // ===== Prefix configuration =====
 
-func TestOrcMetaPrefixResolutionOrder(t *testing.T) {
+// The metadata rules themselves live in pkg/encryption/storedobject and are
+// tested there; what is left here is that the Manager hands them the configured
+// prefix, and that an object whose format keys sit outside it is not one the
+// Manager opens.
+
+func TestOrcMetaPrefixComesFromTheConfiguration(t *testing.T) {
 	tests := []struct {
-		name     string
-		cfg      *config.Config
-		explicit string
-		want     string
+		name string
+		cfg  *config.Config
+		want string
 	}{
-		{"explicit prefix wins over config", OrcMetaConfig(OrcMetaPrefixPtr("cfg-")), "explicit-", "explicit-"},
-		{"config prefix used when explicit empty", OrcMetaConfig(OrcMetaPrefixPtr("cfg-")), "", "cfg-"},
-		{"default s3ep- when config prefix unset", OrcMetaConfig(nil), "", "s3ep-"},
-		// Pins current behaviour: an explicitly configured empty prefix stays
-		// empty rather than falling back to the default.
-		{"configured empty prefix stays empty", OrcMetaConfig(OrcMetaPrefixPtr("")), "", ""},
+		{"configured prefix", OrcMetaConfig(OrcMetaPrefixPtr("cfg-")), "cfg-"},
+		{"default s3ep- when config prefix unset", OrcMetaConfig(nil), "s3ep-"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mm := NewMetadataManager(tt.cfg, tt.explicit)
-			require.NotNil(t, mm)
-			assert.Equal(t, tt.want, mm.GetMetadataPrefix())
+			m := OrcMetaNewManager(t, tt.cfg)
+			assert.Equal(t, tt.want, m.GetMetadataKeyPrefix())
 
-			metadata := mm.BuildSegmentedMetadata([]byte("dek"), "fp", "aes", nil)
-			assert.Contains(t, metadata, tt.want+"encrypted-dek")
+			write, err := m.NewSegmentedWrite("objects/prefix", bytes.NewReader(nil), 0, nil)
+			require.NoError(t, err)
+			assert.Contains(t, write.Metadata, tt.want+"encrypted-dek")
+			assert.True(t, m.IsSegmentedObject(write.Metadata))
 		})
 	}
 }
 
-// ===== Typed getters: happy path, fallback, error path =====
-
-func TestOrcMetaGettersReportMissingFields(t *testing.T) {
-	mm := NewMetadataManager(OrcMetaConfig(OrcMetaPrefixPtr("s3ep-")), "")
-	empty := map[string]string{}
-
-	_, err := mm.GetEncryptedDEK(empty)
-	assert.EqualError(t, err, "encrypted DEK not found in metadata")
-
-	_, err = mm.GetAlgorithm(empty)
-	assert.EqualError(t, err, "algorithm not found in metadata")
-
-	_, err = mm.GetFingerprint(empty)
-	assert.EqualError(t, err, "KEK fingerprint not found in metadata")
-
-	// The lookups are case-sensitive, while S3 user metadata keys are not: a
-	// case-different key is invisible to the read path, so such an object is
-	// refused rather than half-read.
-	_, err = mm.GetEncryptedDEK(map[string]string{"S3EP-encrypted-dek": "dek"})
-	assert.EqualError(t, err, "encrypted DEK not found in metadata")
-	_, err = mm.GetAlgorithm(map[string]string{"S3EP-dek-algorithm": dataencryption.FormatID})
-	assert.EqualError(t, err, "algorithm not found in metadata")
-	_, err = mm.GetFingerprint(map[string]string{"S3EP-kek-fingerprint": "fp"})
-	assert.EqualError(t, err, "KEK fingerprint not found in metadata")
-}
-
-func TestOrcMetaGettersRejectMalformedBase64(t *testing.T) {
-	mm := NewMetadataManager(OrcMetaConfig(OrcMetaPrefixPtr("s3ep-")), "")
-
-	_, err := mm.GetEncryptedDEK(map[string]string{"s3ep-encrypted-dek": "not!base64"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to decode encrypted DEK")
-}
-
-// TestOrcMetaGettersRefuseUnprefixedKeys: the prefix is the proxy's namespace,
-// and a key outside it is a client's. The getters used to fall back to the
-// unprefixed names for objects written before the prefix existed - but those
-// names are not filtered out of a client's own metadata, so the fallback let a
-// client hand the read path values it chose (ADR 0009 D1). No object this proxy
-// can read is written that way any more.
-func TestOrcMetaGettersRefuseUnprefixedKeys(t *testing.T) {
-	mm := NewMetadataManager(OrcMetaConfig(OrcMetaPrefixPtr("s3ep-")), "")
-
+// TestOrcMetaUnprefixedObjectIsRefused: a key outside the prefix is a client's,
+// so an object that carries the format keys only there was not written by this
+// proxy and is refused rather than half-read (ADR 0009 D1).
+func TestOrcMetaUnprefixedObjectIsRefused(t *testing.T) {
 	unprefixed := map[string]string{
 		"encrypted-dek":   base64.StdEncoding.EncodeToString([]byte("dek")),
 		"dek-algorithm":   dataencryption.FormatID,
 		"kek-fingerprint": "someone-elses-fp",
 		"kek-algorithm":   "aes",
 	}
-
-	_, err := mm.GetEncryptedDEK(unprefixed)
-	assert.ErrorContains(t, err, "encrypted DEK not found")
-
-	_, err = mm.GetAlgorithm(unprefixed)
-	assert.ErrorContains(t, err, "algorithm not found")
-
-	_, err = mm.GetFingerprint(unprefixed)
-	assert.ErrorContains(t, err, "fingerprint not found")
-
-	// And so the object as a whole is not one this proxy wrote: it is refused
-	// rather than half-read.
-	assert.False(t, segManager(t).IsSegmentedObject(unprefixed))
-}
-
-func TestOrcMetaPrefixedValueWinsOverUnprefixed(t *testing.T) {
-	mm := NewMetadataManager(OrcMetaConfig(OrcMetaPrefixPtr("s3ep-")), "")
-
-	metadata := map[string]string{
-		"s3ep-dek-algorithm":   dataencryption.FormatID,
-		"dek-algorithm":        "aes-ctr",
-		"s3ep-kek-fingerprint": "current",
-		"kek-fingerprint":      "legacy",
-		"s3ep-encrypted-dek":   base64.StdEncoding.EncodeToString([]byte("current-dek")),
-		"encrypted-dek":        base64.StdEncoding.EncodeToString([]byte("legacy-dek")),
-	}
-
-	algorithm, err := mm.GetAlgorithm(metadata)
-	require.NoError(t, err)
-	assert.Equal(t, dataencryption.FormatID, algorithm)
-
-	fingerprint, err := mm.GetFingerprint(metadata)
-	require.NoError(t, err)
-	assert.Equal(t, "current", fingerprint)
-
-	dek, err := mm.GetEncryptedDEK(metadata)
-	require.NoError(t, err)
-	assert.Equal(t, []byte("current-dek"), dek)
+	m := segManager(t)
+	assert.False(t, m.ClaimsSegmentedFormat(unprefixed))
+	assert.False(t, m.IsSegmentedObject(unprefixed))
 }
 
 // ===== End-to-end: what actually lands next to the ciphertext =====

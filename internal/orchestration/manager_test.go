@@ -70,7 +70,7 @@ func TestNewManager(t *testing.T) {
 							Alias: "backup-aes",
 							Type:  "aes",
 							Config: map[string]interface{}{
-								"aes_key": "ZGJjYWVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+								"aes_key": "S0oGP7MqUdIE3wqt8tJwDS/vbmH76AFUySSeaaHWBjg=",
 							},
 						},
 					},

@@ -183,11 +183,11 @@ func TestSegSealTrailerMatchesSequentialWriter(t *testing.T) {
 
 	parted := sealInParts(t, c, plaintext, SegmentSize)
 
-	sumSequential, err := c.OpenTrailer(sequential.Bytes()[sequential.Len()-TrailerSize:])
+	sumSequential, err := c.OpenTrailer(sequential.Bytes()[sequential.Len()-TrailerSize:], int64(sequential.Len()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	sumParted, err := c.OpenTrailer(parted[len(parted)-TrailerSize:])
+	sumParted, err := c.OpenTrailer(parted[len(parted)-TrailerSize:], int64(len(parted)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,11 +202,18 @@ func TestSegOpenTrailerRejectsTampering(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	stored, err := CiphertextSize(12345)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.OpenTrailer(trailer, stored); err != nil {
+		t.Fatalf("untampered: %v", err)
+	}
 
 	for i := range trailer {
 		tampered := append([]byte(nil), trailer...)
 		tampered[i] ^= 0x01
-		if _, err := c.OpenTrailer(tampered); !errors.Is(err, ErrCorrupt) {
+		if _, err := c.OpenTrailer(tampered, stored); !errors.Is(err, ErrCorrupt) {
 			t.Fatalf("byte %d: %v", i, err)
 		}
 	}
@@ -214,7 +221,15 @@ func TestSegOpenTrailerRejectsTampering(t *testing.T) {
 	// A trailer of another object does not open either: the object key is in the
 	// associated data.
 	other := partCodec(t, "another-object")
-	if _, err := other.OpenTrailer(trailer); !errors.Is(err, ErrCorrupt) {
+	if _, err := other.OpenTrailer(trailer, stored); !errors.Is(err, ErrCorrupt) {
 		t.Fatalf("foreign trailer: %v", err)
+	}
+
+	// A stored length the trailer contradicts is a truncation or an extension:
+	// one segment fewer, one segment more, or a length no chain can have.
+	for _, total := range []int64{stored - SegmentSize - SegmentOverhead, stored + SegmentSize + SegmentOverhead, stored - 1} {
+		if _, err := c.OpenTrailer(trailer, total); !errors.Is(err, ErrCorrupt) {
+			t.Fatalf("stored total %d: %v", total, err)
+		}
 	}
 }

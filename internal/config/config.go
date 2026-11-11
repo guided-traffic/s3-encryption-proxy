@@ -1,19 +1,19 @@
 package config
 
 import (
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
 	"net/url"
 	"os"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
 
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/dataencryption"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/keyencryption"
+	"github.com/guided-traffic/s3-encryption-proxy/v5/pkg/encryption/storedobject"
 	"github.com/spf13/viper"
 )
 
@@ -49,10 +49,9 @@ type EncryptionConfig struct {
 	// Active encryption method alias (used for writing/encrypting new files)
 	EncryptionMethodAlias string `mapstructure:"encryption_method_alias"`
 
-	// Metadata key prefix for encryption metadata fields
-	// - nil (not set): use default "s3ep-"
-	// - empty string "": use no prefix
-	// - any value: use that value as prefix
+	// Metadata key prefix for encryption metadata fields. Unset means
+	// storedobject.DefaultPrefix; a set value must match
+	// storedobject.PrefixPattern. Read it through MetadataPrefix.
 	MetadataKeyPrefix *string `mapstructure:"metadata_key_prefix"`
 
 	// List of available encryption providers (used for reading/decrypting files)
@@ -396,7 +395,7 @@ func setDefaults() {
 	viper.SetDefault("optimizations.max_request_document_size", DefaultMaxRequestDocumentSize)
 
 	// New encryption defaults
-	viper.SetDefault("encryption.metadata_key_prefix", "s3ep-")
+	viper.SetDefault("encryption.metadata_key_prefix", storedobject.DefaultPrefix)
 
 	// S3 Security defaults
 	viper.SetDefault("s3_security.max_clock_skew_seconds", 900)
@@ -730,22 +729,9 @@ func createProviderFromProviderMap(providerMap map[string]interface{}) (Encrypti
 	return provider, nil
 }
 
-// metadataKeyPrefixPattern is what encryption.metadata_key_prefix must match.
-//
-// Lowercase, because S3 lower-cases metadata keys in transit while the proxy's
-// own comparisons do not: a prefix with a capital in it never matches on the way
-// back, which silently disables decryption and leaks the encryption metadata to
-// the client. Non-empty, because an empty prefix makes the writer store
-// "encrypted-dek" unprefixed while the read path still looks for "s3ep-", so
-// every GET decides the object is not one this proxy wrote. Neither is
-// repairable by normalisation - a configuration that would have turned the proxy
-// into a shredder has to fail loudly.
-// The shape is ADR 0009 D2: at least four characters, starting with a lowercase
-// alphanumeric, ending in a dash. The trailing dash is what keeps the namespace
-// separable — without it a prefix "s3ep" also claims every client key beginning
-// "s3ep", and four characters is short enough for any real name while long
-// enough that a prefix cannot collide with a common metadata key by accident.
-var metadataKeyPrefixPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,}-$`)
+// The shape a metadata_key_prefix must have, and why, is
+// storedobject.PrefixPattern: the client library applies the same rule, so a
+// prefix one of them accepts the other cannot refuse (ADR 0009 D2).
 
 // DefaultMaxRequestDocumentSize is the ceiling on a buffered request document
 // when the configuration names none. It is set so the proxy refuses nothing S3
@@ -761,24 +747,16 @@ const (
 	maxRequestDocumentSize int64 = 64 * 1024 * 1024
 )
 
-const (
-	// aesKeyBytes is the only accepted master key length.
-	aesKeyBytes = 32
-	// aesKeyMinDistinct is the entropy floor a random 32-byte key clears with
-	// overwhelming probability; a typed key does not.
-	aesKeyMinDistinct = 16
-)
-
 // validateEncryption validates the encryption configuration
 func validateEncryption(cfg *Config) error {
 	// First, because the provider branch below returns early for every
 	// configuration that actually has providers.
-	if p := cfg.Encryption.MetadataKeyPrefix; p != nil && !metadataKeyPrefixPattern.MatchString(*p) {
+	if p := cfg.Encryption.MetadataKeyPrefix; p != nil && !storedobject.PrefixPattern.MatchString(*p) {
 		return fmt.Errorf(
 			"encryption.metadata_key_prefix: lowercase letters, digits and dashes only, "+
 				"starting with a letter or a digit, at least four characters, ending in \"-\" "+
 				"(%s), got: %q",
-			metadataKeyPrefixPattern, *p)
+			storedobject.PrefixPattern, *p)
 	}
 
 	// If using new encryption config format
@@ -918,26 +896,13 @@ func validateAESKey(providerConfig map[string]interface{}, index int) error {
 		return fmt.Errorf("encryption.providers[%d]: aes_key is required when using aes encryption", index)
 	}
 
-	key, err := base64.StdEncoding.DecodeString(keyStr)
-	if err != nil || len(key) != aesKeyBytes {
-		return aesKeyError(index, fmt.Sprintf("must be base64 of exactly %d bytes", aesKeyBytes))
+	// The admission rules live with the provider, so the configuration, the
+	// provider factory and the client library refuse the same keys.
+	key, err := keyencryption.DecodeAESKey(keyStr)
+	if err != nil {
+		return aesKeyError(index, err.Error())
 	}
-
-	printable := true
-	distinct := make(map[byte]struct{}, aesKeyBytes)
-	for _, b := range key {
-		if b < 0x20 || b > 0x7e {
-			printable = false
-		}
-		distinct[b] = struct{}{}
-	}
-
-	if printable {
-		return aesKeyError(index, "decodes to printable characters only, which is a passphrase and not a key")
-	}
-	if len(distinct) < aesKeyMinDistinct {
-		return aesKeyError(index, fmt.Sprintf("decodes to only %d distinct byte values", len(distinct)))
-	}
+	clear(key)
 
 	return nil
 }
@@ -1141,6 +1106,14 @@ func isValidProviderType(providerType string) bool {
 // GetAllProviders returns all encryption providers (used for decrypting)
 func (cfg *Config) GetAllProviders() []EncryptionProvider {
 	return cfg.Encryption.Providers
+}
+
+// MetadataPrefix returns encryption.metadata_key_prefix, or the default.
+func (cfg *Config) MetadataPrefix() string {
+	if cfg.Encryption.MetadataKeyPrefix != nil {
+		return *cfg.Encryption.MetadataKeyPrefix
+	}
+	return storedobject.DefaultPrefix
 }
 
 // GetMultipartPartSize returns optimizations.multipart_part_size, or the default.

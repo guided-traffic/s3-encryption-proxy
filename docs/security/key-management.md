@@ -165,6 +165,7 @@ left lying about, and `EncryptDEK` returns an error rather than a key.
 | DEK of a multipart upload in flight | — | In the session for that upload id, together with whatever short last part is buffered for it, until `Complete`, `Abort`, the expiry sweep, or process exit ([segmented_session.go:21-47](../../internal/orchestration/segmented_session.go#L21)) | **Never in plaintext** |
 | Backend credential (`s3_backends[0].access_key_id` / `secret_key`) | Config or `${VAR}` | For the process lifetime | Yes, as SigV4 to the backend — that is its purpose |
 | Client credentials (`s3_clients[].secret_key`) | Config or `${VAR}`, minimum 16 characters | In a lookup map built at startup ([s3auth_robust.go:74-79](../../internal/proxy/middleware/s3auth_robust.go#L74)) | **Never** |
+| KEK in an application that uses the client library | Wherever that application keeps it; the library takes it as `Options.ActiveKey` and `Options.RetiredKeys` | For the client's lifetime, as derived key material; the decoded bytes are cleared once the key encryptor is built ([client.go](../../pkg/s3enc/client.go)) | **Never** |
 
 An expansion failure is fatal at load: a `${VAR}` that is unset or empty makes
 `expandEnvVars` return an error ([envexpand.go:30-32](../../internal/config/envexpand.go#L30)),
@@ -266,6 +267,14 @@ restart again. The lookup map is built once at startup; there is no reload.
 - **No key isolation from the process.** The KEK, every unwrapped DEK in the
   cache and every data key of an upload in flight live in the proxy's memory.
   There is no HSM path and no signing identity that survives a proxy compromise.
+- **The client library puts the KEK in the application.** An application that
+  writes through [the client library](../operations/client-library.md)
+  ([ADR 0041](../adr/0041-the-project-ships-a-client-library-for-its-stored-format.md))
+  holds the same master key the proxy does, so its process sits inside the trust
+  boundary with the proxy's. It can read and write every object under that key
+  and is subject to none of the proxy's controls — no SigV4 client
+  authentication, no `s3_clients` list. Handing the key to an application is
+  handing it every object the key wraps.
 - **No re-encryption job.** Rotation changes what new writes use; existing
   objects stay under the old KEK until they are written again through the proxy.
   Removing the old provider makes them permanently unreadable, and the proxy
