@@ -2,7 +2,7 @@
 
 ## Status
 
-**Accepted.** Date: 2026-09-12. **Implemented on the 5.0.0 branch the same day.**
+**Accepted.** Date: 2026-09-12. **Built**, D1 to D7 in full.
 
 A client-driven multipart upload that has received no part for
 `optimizations.multipart_session_idle_timeout` seconds is aborted at the backend and then
@@ -58,13 +58,9 @@ five attempts with an error naming the upload. Retrying for ever would keep an a
 data key and short part resident for the life of the process, which is the thing the sweeper
 exists to prevent.
 
-**D5** ~~Nothing is aborted at shutdown.~~ **Superseded 2026-09-12 by
-[ADR 0029](0029-the-shutdown-budget-finishes-work-and-sweeps-what-cannot-be-finished.md).** This
-decision reasoned that a rollout must not destroy uploads in flight and that the client can abort
-or restart. The second half is where it went wrong: the session holds the object's data key and
-the part table, both process-local, so once this process exits *nobody* can finish the upload —
-not the client, not another replica. There is no work left to protect, only storage nobody can
-reach. The shutdown budget now ends those uploads.
+**D5** What happens at shutdown to the uploads this process holds is the subject of
+[ADR 0029](0029-the-shutdown-budget-finishes-work-and-sweeps-what-cannot-be-finished.md), not of
+this record.
 
 **D6** The criterion gets a new configuration key, `optimizations.multipart_session_idle_timeout`,
 and `optimizations.multipart_session_max_age` refuses the start naming it. The number an operator
@@ -80,13 +76,24 @@ built without one — every unit test, and any future embedding — forgets as i
 * An abandoned upload costs one backend request per sweep instead of none. At the default interval
   of five minutes that is one request per abandoned upload, once.
 * The proxy now issues a destructive backend call on its own initiative, for an upload a client
-  began. That is new, it is what D2 is for, and an operator has to be able to reason about when:
-  after the configured idle timeout, and — since the same day, under
-  [ADR 0029](0029-the-shutdown-budget-finishes-work-and-sweeps-what-cannot-be-finished.md) — at a
-  signalled shutdown. Never for an upload this process does not itself hold.
+  began. It is what D2 is for, and an operator has to be able to reason about when: after the
+  configured idle timeout, and at a signalled shutdown
+  ([ADR 0029](0029-the-shutdown-budget-finishes-work-and-sweeps-what-cannot-be-finished.md)).
+  Never for an upload this process does not itself hold.
+* The idle clock moves with the bytes of a part, on both upload paths, not only when a part is
+  complete. A single part that takes longer than `optimizations.multipart_session_idle_timeout`
+  to arrive is not idle, so D1 holds within a part as well as between parts, and the timeout
+  sizes a pause rather than a transfer.
+* Every upload the sweeper ends is logged at Info with its upload id, bucket, key and how long it
+  had been idle, and the line names `optimizations.multipart_session_idle_timeout`: it is the only
+  thing the client's unexplained `NoSuchUpload` can be correlated with.
+* Neither `optimizations.multipart_session_idle_timeout` nor
+  `optimizations.multipart_session_cleanup_interval` accepts a written value below one second;
+  each refuses the start by name (ADR 0017 D8). At 0 the first would make every upload idle the
+  moment the sweeper runs, and the second would switch the sweeper off.
 * An upload lost to a crash or an OOM kill is **not** covered by any of this. A signalled
-  shutdown is, since 2026-09-12 (ADR 0029); a process killed outright has no budget to spend, the
-  session dies with it and nothing remains to abort the upload. A bucket lifecycle rule
+  shutdown is (ADR 0029); a process killed outright has no budget to spend, the session dies
+  with it and nothing remains to abort the upload. A bucket lifecycle rule
   `AbortIncompleteMultipartUpload` is the answer to those, it works in days rather than minutes,
   and the proxy does not own the bucket configuration — so it belongs in the operator
   documentation, not here.
@@ -99,11 +106,6 @@ built without one — every unit test, and any future embedding — forgets as i
 cases, including the crash. It was rejected as the *only* answer because it works in days, the
 proxy cannot set it, and an operator who does not set one gets no cleanup at all from a product
 that knows exactly which uploads it has abandoned and when.
-
-**Abort at shutdown as well.** Rejected here on the day and **taken the same day** by
-[ADR 0029](0029-the-shutdown-budget-finishes-work-and-sweeps-what-cannot-be-finished.md). The
-rejection rested on calling it a data loss for anyone uploading at the time; it is not, because
-nothing can finish those uploads once the process exits.
 
 **Keep the age clock and simply raise the default.** Rejected: any finite age is a server wall
 clock on a transfer, and there is no value that is right for both a 100 MiB upload and a 78 GiB
@@ -120,23 +122,6 @@ change and it is exactly the silent behaviour change ADR 0013 exists to prevent.
   caps them across all sessions at `optimizations.multipart_short_part_buffer_size`, a short part
   that does not fit beside what other uploads hold answers `SlowDown` and one larger than the whole
   budget `EntityTooLarge` — but the session count is not, and this decision does not change that.
-* ~~**The idle clock moves when a part arrives, never while one is arriving.**~~ Recorded
-  2026-09-12, **closed 2026-09-15**. A single part that took longer than
-  `optimizations.multipart_session_idle_timeout` to transfer looked idle, and the sweeper ended its
-  upload at the backend while the body was still being written; D1 held between parts and not
-  within one. The part body is now wrapped on both upload paths and the clock moves with the bytes,
-  so D1 holds within a part as well and the timeout sizes a pause rather than a transfer. Every
-  upload the sweeper ends is still logged at Info with its upload id, bucket, key and how long it
-  had been idle, and the line names `optimizations.multipart_session_idle_timeout`: it is the only
-  thing the client's unexplained `NoSuchUpload` can be correlated with.
-* **The cleanup interval is not range-checked.** `multipart_session_cleanup_interval` takes any
-  value, and 0 disables the sweeper altogether: for as long as the process runs, an idle upload is
-  then neither ended nor forgotten (ADR 0013 records the same gap for other keys). A signalled
-  shutdown still ends what the process is holding, whatever the interval says
-  ([ADR 0029](0029-the-shutdown-budget-finishes-work-and-sweeps-what-cannot-be-finished.md)).
-  `multipart_session_idle_timeout` is no longer one of them: since 2026-09-12 a value below one
-  second refuses the start by name, because 0 there means every upload is already idle rather than
-  no timeout at all (ADR 0017 D8).
 * **A backend that accepts an abort and keeps the parts** defeats D2 entirely. Verified against
   MinIO, which does not; not verified against anything else.
 
@@ -149,3 +134,5 @@ change and it is exactly the silent behaviour change ADR 0013 exists to prevent.
   on a transfer, which D1 extends from one request to one object
 * [ADR 0024](0024-an-upload-forwards-while-it-receives.md) — the client-driven part path this
   session serves
+* [ADR 0029](0029-the-shutdown-budget-finishes-work-and-sweeps-what-cannot-be-finished.md) — the
+  same cleanup at a signalled shutdown
