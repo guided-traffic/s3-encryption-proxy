@@ -2,119 +2,68 @@
 
 ## Status
 
-**Accepted.** Date: 2026-09-07.
+**Accepted.** Date: 2026-09-13.
 
-Built today: the integration suite runs against a real MinIO backend over both the plain-HTTP
-and the TLS proxy endpoint (`make test-integration`, `make test-integration-tls`); the
-end-to-end suite runs thirteen tests in a disposable kind cluster (`make test-e2e-velero`) —
-a preflight and twelve Velero backup and restore scenarios — with the encryption-at-rest
-assertions read straight from the backend; the end-to-end environment is created and destroyed
-by the same scripts on a workstation and on a CI runner (`make e2e-up`, `make e2e-down`), while
-the integration stack is started from the same compose file in both places but not by the same
-script; the end-to-end job blocks the release job; test doubles have been moved out of the production build
-and the resulting coverage jump was reported as a denominator correction rather than as new
-testing; tests that pin behaviour the next storage format replaces carry an in-source marker
-saying so.
+Built: the integration suite runs against a real MinIO backend over both the plain-HTTP and the
+TLS proxy endpoint (`make test-integration`, `make test-integration-tls`), and continuous
+integration runs both (D5). Three end-to-end suites exist, one per client: Velero runs thirteen
+tests in a disposable kind cluster (`make test-e2e-velero`) — a preflight and twelve backup and
+restore scenarios — and rclone and s3cmd (`make test-e2e-rclone`, `make test-e2e-s3cmd`) each
+drive the real pinned client binary against the demo stack over both proxy endpoints. All three
+prove encryption at rest by reading the stored object straight from the backend through one
+shared assertion, which checks all four metadata keys of ADR 0009; each suite passes its own
+backend client and its own spelling of the stored contract, so a fix to the assertion reaches
+every suite while the contract stays each suite's own black-box claim (D6).
 
-**Superseded 2026-09-12.** In its last form this paragraph said the performance comparison in
-continuous integration still asserted a minimum ratio and that the pipeline still set the switch
-that disarmed it. Both are gone — see the D4 block below and ADR 0020 D11: removing the
-assertion is what removed the switch.
+The end-to-end environments are created and destroyed by the same scripts on a workstation and on
+a CI runner (`make e2e-up` / `make e2e-down` for the cluster, `make e2e-rclone-up` and
+`make e2e-s3cmd-up` for the client suites), while the integration stack is started from the same
+compose file in both places but not by the same script (D7). Each client suite's run writes a
+verdict table naming what is still broken, and its job puts the same list in its step summary, so
+a red check says which defects are open without anyone opening an artifact or reading the test
+tree. Each end-to-end suite is a job of its own, and all three block the release job and are on
+the required-check list (D9).
 
-**Corrected 2026-09-12.** Two items that stood in that paragraph as unbuilt are built. The
-end-to-end environment no longer runs the client's own published default repository password:
-the bring-up generates one, and the preflight fails the whole suite if the repository was
-created under the published default. And every version pinned in the environment's own
-version file now has an automated update path, the four storage-driver sidecars that had none
-included; those move as the single reviewed group D8 requires. Two pins sit outside that file and
-outside that group: the object-store image, which is watched but is pinned to its last community
-release and no further one is expected, so the path exists and will produce nothing; and the
-workload image every scenario's pods run, pinned in the suite's own source, which nothing watches
-at all. D8 asks for every pin the environment consumes, so it is not met yet.
-
-**Corrected 2026-09-10.** Two items above were wrong. Handler-level unit coverage is no longer
-deferred: it was written and has since been migrated to the segment chain, which also makes the
-Consequences bullet about a regression surfacing only in a ten-minute suite false. And the
-end-to-end health check *does* now fetch the client's own backup and restore logs; what it does
-not do is run them through the forbidden-pattern scan it applies to the container logs, which is
-the narrower gap that remains.
-
-**Closed 2026-09-12 against D12.** That narrower gap is gone. The client's own backup and
-restore logs are scanned with the same forbidden patterns as the container logs, nothing is
+The end-to-end environment runs the documented configuration rather than the client's defaults:
+the bring-up generates the backup repository password, and the preflight fails the whole suite if
+the repository was created under the client's published default (D10). The client's own backup
+and restore logs are scanned with the same forbidden patterns as the container logs, nothing is
 allowlisted, and an empty or unreadable log is reported as a failed fetch rather than passing as
-a clean scan.
+a clean scan (D12).
 
-**Closed 2026-09-12 against D4.** All three places the re-enumeration of that day found are
-gone: the authentication subtest that skipped whenever the metrics endpoint could not be reached
-now fails on it, and both performance environment switches are deleted along with the throughput
-assertion one of them disarmed (ADR 0020 D11 — there is no assertion left for a switch to hide).
-Seven subtests in the same authentication suite that ended in a log line instead of an assertion
-were given the assertions their names claim, four of them security boundaries: an unsigned
-request is refused, and an access key no configuration declares, a signature that does not verify
-and a request 20 minutes out of the skew window are each refused under the error code that says
-which check failed.
+No environment switch disarms an assertion (D4): the performance comparison carries no throughput
+assertion and no switch (ADR 0020 D11). The authentication suite fails when the metrics endpoint
+cannot be reached instead of skipping, and its subtests carry the assertions their names claim,
+four of them security boundaries: an unsigned request is refused, and an access key no
+configuration declares, a signature that does not verify and a request 20 minutes out of the skew
+window are each refused under the error code that says which check failed.
 
 The test that loads the configuration the image ships with runs everywhere without a condition,
 and no unit, integration, conformance or end-to-end run needs a secret the repository does not
 generate itself: the proxy checks no license (ADR 0016).
 
-**Closed 2026-09-12:** three of the six items that stood here went with the code they were in —
-the integration subtest whose body was a bare skip with no condition, the unit-test file that was
-a single always-skipping placeholder, and the three configuration tests skipped for a provider
-type that is refused at startup.
+Everything that skips in the integration and end-to-end suites is legitimate under D4 or asserts
+nothing: the availability checks in the integration helpers and in the three benchmark entry
+points that reuse them; two short-mode guards that no target can reach — the files carrying them
+are built only under the integration tag, and no integration target passes `-short`; one subtest
+that skips when the backend refuses a CORS configuration; one that skips unless the endpoint is
+HTTPS, because the framing it needs is what the TLS run supplies (D5); and the conformance suite's
+two opt-in entry points, a corpus-seeding run and a sweep of dangling uploads, neither of which is
+a test of the product. The local baseline suite gates nothing (ADR 0020): it skips when the stack
+it measures is not up, and twice more on an environment value — one that narrows the measurement
+to nothing, one that does not name the second endpoint a comparison needs.
 
-Everything else that skips in the integration and end-to-end suites is legitimate under D4 or
-asserts nothing: the availability checks in the integration helpers and in the three benchmark
-entry points that reuse them; two short-mode guards that no target can reach — the files
-carrying them are built only under the integration tag, and no integration target passes
-`-short`; one subtest that skips when the backend refuses a CORS configuration; one that skips
-unless the endpoint is HTTPS, because the framing it needs is what the TLS run supplies (D5);
-and the conformance suite's two opt-in entry points, a corpus-seeding run and a sweep of
-dangling uploads, neither of which is a test of the product. The local baseline suite gates
-nothing (ADR 0020): it skips when the stack it measures is not up, and twice more on an
-environment value — one that narrows the measurement to nothing, one that does not name the
-second endpoint a comparison needs.
+Test doubles live outside the production build, and the coverage jump that caused was reported as
+a denominator correction rather than as new testing (D13, D15). Handler-level unit coverage exists
+and runs against the segment chain. No in-source marker of D16 points at a change that has already
+happened: the markers went with the code they pinned when the previous storage format was deleted.
 
-**Closed 2026-09-10 against D16:** the in-source markers saying a test pins behaviour the next
-storage format replaces went with the code they pinned, in the round that deleted the previous
-format. No marker in the tree points at a change that has already happened.
-
-**Extended 2026-09-13.** Two client end-to-end suites joined the Velero one:
-`test/e2e/rclone/` and `test/e2e/s3cmd/`, same `e2e` tag, each driving the real
-pinned client binary against the demo compose stack over both proxy endpoints,
-with the encryption-at-rest assertions read straight from the backend as D6
-requires. Their environment is created by the same `e2e-up.sh` / `e2e-down.sh`
-pair on a workstation and on a CI runner, which is D7; their version pins live in
-a `versions.env` each and move as one reviewed group that is never automerged,
-which is D8. What they share lives in `test/e2e/harness/` rather than being
-copied, and the Velero suite was migrated onto the same assertion in the same
-change: all three suites now prove encryption at rest through one function, each
-passing its own backend client and its own spelling of the stored contract, so a
-fix to the assertion reaches every suite while the contract stays each suite's
-own black-box claim. The migration immediately paid for itself — the shared
-assertion checks all four metadata keys of ADR 0009, and the Velero copy had been
-checking three.
-
-**Amended 2026-09-13, and the amendment is a correction.** These suites first
-shipped with every open defect recorded as an *expected* refusal: a case stated
-the answer the product gives today, so the suite was green while the product was
-broken, and the release gate reported the product ready to merge while an
-object written by a single request could, through a client configured the
-documented way, be neither uploaded nor fetched back. That is the opposite of
-what D1 and D4 are for. The rule that came out of it — a test states the
-behaviour the product is **supposed** to have, is committed red until the product
-meets it, and a behaviour an ADR decides is itself the target — binds every
-layer, not only the suites this record governs, and is **ADR 0031**.
-
-Each run writes a verdict table naming what is still broken, and the job puts the
-same list in its step summary, so a red check says which defects are open without
-anyone opening an artifact or reading the test tree.
-
-**Both suites gate the release** (decision of 2026-09-13, same terms as the
-Velero gate): `e2e-rclone` and `e2e-s3cmd` are on `semantic-release`'s `needs:`
-list and both job names are on the required-check list. **One tool, one job**:
-they are never bundled, and a third client would be a third job — a red gate has
-to name the client, and one client's trouble must not withhold another's verdict.
+Not met: D8. Every pin in the Velero environment's version file has an automated update path and
+moves as one reviewed group held off automatic merging, and the two client suites' pins move as
+one reviewed group that is never automerged. Two pins the environment consumes sit outside those
+groups: the object-store image, which is watched by a rule of its own and therefore falls under
+the repository's default of automatic merging, and the workload image every Velero scenario's pods
+run, pinned in the suite's own source and watched by nothing.
 
 ## Context
 
@@ -124,7 +73,7 @@ thing this product exists to do: that what was written to the backend actually d
 a real S3 SDK accepts the response the proxy composed, and that a backup tool can restore what
 it backed up through the proxy.
 
-Three concrete failures made that gap expensive rather than theoretical.
+Four concrete failures made that gap expensive rather than theoretical.
 
 *A framing path nobody ran.* The AWS SDK emits `STREAMING-UNSIGNED-PAYLOAD-TRAILER` upload
 framing only over HTTPS. For as long as the integration suite ran against the plain-HTTP
@@ -144,6 +93,14 @@ checks had never been built, and the suite ran past two data-loss defects — a 
 an ordinary CLI call, and an upload committed short after a client hang-up — because nothing
 was reading for them.
 
+*A green gate over a broken product.* A client suite that records an open defect as the
+*expected* answer is green while the product is broken: the release gate reported the product
+ready to merge while an object written by a single request could, through a client configured the
+documented way, be neither uploaded nor fetched back. That is the opposite of what D1 and D4 are
+for. A test states the behaviour the product is **supposed** to have, is committed red until the
+product meets it, and a behaviour an ADR decides is itself the target; that rule binds every test
+layer and is ADR 0031.
+
 Against those, coverage percentages proved actively misleading. A quarter of every uncovered
 statement in the repository was test-double code counted as production code; moving it out
 raised one package from 13.1 % to 81.0 % without a single line being tested, and lowered
@@ -158,19 +115,19 @@ price of the only evidence that counts.
 
 ## Decision
 
-**D1** The integration suite and the end-to-end suite are part of the product, not developer
-convenience. The integration suite runs against a real backend; the end-to-end suite runs one
-real S3 client through backup and restore in a disposable cluster.
+**D1** The integration suite and the end-to-end suites are part of the product, not developer
+convenience. The integration suite runs against a real backend; each end-to-end suite runs one
+real S3 client against a real backend — Velero through backup and restore in a disposable
+cluster, rclone and s3cmd against the demo stack.
 
 **D2** Neither suite is disabled, skipped, weakened or deleted to make a change pass. A test
 may be folded into another test that keeps every assertion it carried, and that fold needs the
 repository owner's explicit approval, stated as such.
 
 **D3** Work is not finished until both suites tell the truth about the change, and the report on
-a change names which suites ran and against which stack. *(Amended 2026-09-13 by ADR 0031: "until
-both suites are green" was the original wording and is superseded. A suite that is red because it
-states a target the product does not yet meet is finished work — ADR 0031 D2 and D3. What is not
-finished is a suite red for a reason the change introduced.)*
+a change names which suites ran and against which stack. A suite that is red because it states a
+target the product does not yet meet is finished work (ADR 0031 D2 and D3); a suite red for a
+reason the change introduced is not.
 
 **D4** No environment switch, flag or configuration value disarms an assertion. The only
 legitimate skip is a suite skipping itself when the backend or the proxy it needs is
@@ -194,12 +151,15 @@ existing cluster; the cluster is not recreated for each attempt.
 change, reviewed by a person. Automatic merging stays off for that group against a repository
 default of automatic merges, and is reconsidered only once the group has been green across
 several update cycles: a backup client and the chart that installs it are versioned separately,
-and upgrading one without the other produces an environment that is not the supported one. Every pin the environment consumes has an automated
-update path; a pin nothing watches is an unmanaged network dependency of every run.
+and upgrading one without the other produces an environment that is not the supported one. Every
+pin the environment consumes has an automated update path; a pin nothing watches is an unmanaged
+network dependency of every run.
 
-**D9** The end-to-end suite gates the release. A release is not cut while it is red. Taking it
-off the gate is a deliberate, temporary, recorded act, never a way past a failure (release
-mechanics: ADR 0018).
+**D9** Every end-to-end suite gates the release. A release is not cut while one is red. Taking
+one off the gate is a deliberate, temporary, recorded act, never a way past a failure (release
+mechanics: ADR 0018). One client, one suite, one job: suites are never bundled, and a further
+client is a further job, because a red gate has to name the client and one client's trouble must
+not withhold another's verdict.
 
 **D10** The end-to-end environment runs the configuration the documentation tells operators to
 use, not the client's insecure defaults. A suite that exercises a configuration nobody is told
@@ -228,11 +188,10 @@ a change to that interface breaks the build, and exist once rather than once per
 **D16** A test that pins behaviour a decided change will replace carries an in-source marker
 naming that change, so the churn is localised and greppable and the change and its tests move
 together. Tests are not written against code a decided change deletes; that work is sequenced
-after the change — today that is the storage format change of ADR 0003. *(Clarified 2026-09-13
-against ADR 0031 D4, which forbids pinning the current answer: the two do not collide. What this D
-sanctions is a test asserting behaviour that is **correct today** and that a decided change will
-replace — the marker says when it moves. It is not licence to assert an answer the product is not
-supposed to give.)*
+after the change. This does not collide with ADR 0031 D4, which forbids pinning the current
+answer: what this D sanctions is a test asserting behaviour that is **correct today** and that a
+decided change will replace — the marker says when it moves. It is not licence to assert an answer
+the product is not supposed to give.
 
 ## Consequences
 
@@ -242,11 +201,6 @@ supposed to give.)*
   budget on a runner that is shared with everything else.
 - A contributor without Docker and a kind cluster cannot reach the "done" bar in D3 on their
   own machine. That is accepted: the alternative is a bar that means nothing.
-- **Superseded 2026-09-10.** This bullet said that because handler-level unit coverage is
-  deferred until the storage format change lands, a regression in header handling or request
-  routing surfaces in a ten-minute suite whose failure mode is "a backup did not complete", not
-  in a one-second assertion naming the header. That coverage was written and migrated to the
-  segment chain, so the cost is not paid.
 - Coverage numbers move for reasons that are not testing, and every jump therefore has to be
   explained in the change that causes it. That is extra reporting work on every coverage change,
   and it is the only thing that keeps the number worth quoting.
@@ -285,9 +239,9 @@ twice, once from a freshly created cluster.
 workstation and the runner drift, and the resulting "green in CI, red on my machine" is
 unfixable by the person who has to fix it. One script, both places, for the cluster.
 
-**Write handler unit tests now to raise the number.** Rejected: they would pin behaviour the
-storage format change deletes, would be rewritten line for line, and — worse — would make that
-change look like a regression, because the tests would encode today's behaviour as the contract.
+**Write unit tests against code a decided change deletes, to raise the number.** Rejected (D16):
+they pin behaviour the change deletes, are rewritten line for line, and — worse — make that change
+look like a regression, because the tests encode today's behaviour as the contract.
 
 **Chase a repository coverage percentage as the goal.** Rejected: the number is gameable in at
 least four ways that test nothing, and it was demonstrably wrong before the denominator was
@@ -299,38 +253,38 @@ chart must move together.
 
 ## Residual risks
 
-- **One client, end to end.** The end-to-end suite exercises Velero and the uploader it uses.
-  Other named supported clients — CloudNativePG Barman among them — have no end-to-end suite,
-  and the proxy's scope is any S3 client (ADR 0006).
-  Accepted; the integration suite is the broader net and it drives one SDK.
-- **Narrowed 2026-09-12: whether the published performance run must also cover the TLS
-  endpoint.** The local baseline suite measures both transports, so the question is no longer
-  whether the number exists — it is whether the run continuous integration publishes has to
-  carry it. That run measures the plain-HTTP listener only, so a regression confined to the
-  trailer-framed upload path would not move the published figure. There is no threshold table to
-  fill any more (ADR 0020), which removes the reason this was being held; it stays undecided.
-- **Closed 2026-09-12: what an end-to-end log scan is allowed to excuse.** Nothing. The client's
-  own backup and restore logs are scanned with the same patterns as the container logs and there
-  is no allowlist, which is the stated preference — fix a hit rather than excuse it. The risk
-  that returns with the first recoverable error-level line the client emits is that somebody
-  adds the first entry; there is nowhere for one to hide, because there is no list.
+- **Three clients, end to end.** The end-to-end suites exercise Velero and the uploader it uses,
+  rclone and s3cmd. Other named supported clients — CloudNativePG Barman among them — have no
+  end-to-end suite, and the proxy's scope is any S3 client (ADR 0006). Accepted; the integration
+  suite is the broader net and it drives one SDK.
+- **Undecided: whether the published performance run must also cover the TLS endpoint.** The
+  local baseline suite measures both transports, so the number exists; the question is whether
+  the run continuous integration publishes has to carry it. That run measures the plain-HTTP
+  listener only, so a regression confined to the trailer-framed upload path would not move the
+  published figure. There is no threshold table to fill (ADR 0020), so nothing forces the
+  question.
+- **An end-to-end log scan excuses nothing.** The client's own backup and restore logs are
+  scanned with the same patterns as the container logs and there is no allowlist — fix a hit
+  rather than excuse it. The risk that comes with the first recoverable error-level line the
+  client emits is that somebody adds the first entry; there is nowhere for one to hide, because
+  there is no list.
 - **Open: whether one duplicate one-leg performance test is folded or kept.** It measures a
   duration it never asserts on and its round trip is a subset of another test. Folding it needs
   explicit approval under D2; keeping it costs about a minute of runtime and a name that must
   stop claiming a comparison it does not make.
 - **Not verified: that the two forbidden log patterns added for goroutine dumps are silent on a
-  healthy run.** They are in force, and they are now applied to the client's own logs as well as
+  healthy run.** They are in force, and they are applied to the client's own logs as well as
   to the container logs. No recorded green run has been checked against them; a pattern that
   fires on healthy output has to be narrowed, not dropped.
 - **Not verified: that the automated update path actually produces change requests** for the
-  environment pins. Every pin in the environment's version file now has one configured, the four
-  storage-driver sidecars that had none included, and they are grouped and held off automatic
-  merging as D8 requires. Two pins are outside that: the object-store image, watched from outside
+  environment pins. Every pin in the environment's version file has one configured, the four
+  storage-driver sidecars included, and they are grouped and held off automatic merging as D8
+  requires. Two pins are outside that: the object-store image, watched from outside
   the group and therefore on the repository's default of automatic merging, and the workload image
   the scenarios' pods run, watched by nothing. The updater runs on a schedule, so whether a change
   request actually appears is only observable later; it is an open loop, not a green one.
-- **Narrowed 2026-09-12: which S3 clients use conditional writes against this proxy** is still
-  unverified, but the failure mode that made it urgent is gone. `If-Match` and `If-None-Match`
+- **Not verified: which S3 clients use conditional writes against this proxy.** The failure mode
+  that made it urgent is gone. `If-Match` and `If-None-Match`
   are carried on the write paths and covered by an integration case, so a conditional write is no
   longer answered by a silent overwrite.
 - **A thirteen-of-thirteen record twice is not a long track record.** The judgement that the
