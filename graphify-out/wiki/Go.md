@@ -4,7 +4,7 @@
 
 ## Key Concepts
 
-- **github.com/guided-traffic/s3-encryption-proxy** (0 connections) — `go.mod`
+- **github.com/guided-traffic/s3-encryption-proxy/v5** (0 connections) — `go.mod`
 
 ## Relationships
 

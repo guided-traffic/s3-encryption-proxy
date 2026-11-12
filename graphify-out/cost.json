@@ -39,8 +39,20 @@
       "subagent_tokens": 1210782,
       "note": "incremental --update --wiki with graphify 0.9.79; 8 extraction subagents over 68 changed docs, combined in+out tokens measured by the harness; 9 changed code files re-extracted by AST; 2 deleted docs pruned; communities relabelled",
       "files": 77
+    },
+    {
+      "date": "2026-11-11T11:50:31.270390+00:00",
+      "input_tokens": 1022683,
+      "output_tokens": 0,
+      "files": 464
+    },
+    {
+      "date": "2026-11-12T14:55:51.438340+00:00",
+      "input_tokens": 1066887,
+      "output_tokens": 0,
+      "files": 44
     }
   ],
-  "total_input_tokens": 3768399,
+  "total_input_tokens": 5857969,
   "total_output_tokens": 0
 }

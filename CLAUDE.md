@@ -88,17 +88,20 @@ This project has a graphify knowledge graph at `graphify-out/` (`graph.json`,
 `GRAPH_REPORT.md`, `wiki/`). It is the fastest way to see how the pieces hang
 together before touching code, and it is committed, so it is always available.
 
-**The committed graph was built on 2026-09-10 and predates the 5.0.0 removal**
-that deleted the pre-segment-chain code. A large share of its articles name
-packages, files and symbols that no longer exist — `internal/validation`,
-`pkg/encryption/envelope`, the AES-CTR and AES-GCM data encryptors, every HMAC
-article, the old orchestration `singlepart`/`multipart`/`streaming_io` split.
-Use it for shape, never for facts, until it is rebuilt.
+**The committed graph was rebuilt from scratch on 2026-11-11** (graphify 0.9.106,
+release 5.4.1): every code file re-extracted by AST, every document re-extracted
+or replayed from an unchanged cache entry, and the old graph replaced rather than
+merged into, so no node for deleted code survives. The extraction read the
+longest work lists under `docs/tickets/` only in part. It was updated
+incrementally on 2026-11-12 (release 5.4.2): the rewritten ADRs, the pages and
+the code files changed since were re-extracted in full and replaced their old
+nodes.
 
 **Use it first, especially at the start of a ticket and for any code research:**
 - Read `graphify-out/wiki/index.md`, then the community articles that name the
-  packages the task touches (e.g. *Bucket Sub-Resource Handlers*, *Metadata
-  Manager*, *SigV4 Header Authentication*, *Pre-Signed URL Authentication*).
+  packages the task touches (e.g. *Bucket Sub-Resource Handlers*, *Segment
+  Codec and Range Planner*, *Client Library and Storage Format*, *SigV4
+  Authentication Rules*).
   One article is a map of one subsystem; read two or three before opening raw
   files.
 - `graphify query "<question>"` gives BFS context around a question,
@@ -111,10 +114,7 @@ Use it for shape, never for facts, until it is rebuilt.
   `NewErrorWriter()`, `MockS3Backend` twice over), which are call-resolution
   artifacts, not architectural hubs.
 - Treat a graph hit as a pointer, not a fact. Wiki articles built from a document
-  inherit that document's staleness, and several were built from documents that
-  have since been deleted (`internal/orchestration/README.md`,
-  `docs/architecture/`, `test/integration/README.md`). Verify in the code before
-  citing anything.
+  inherit that document's staleness. Verify in the code before citing anything.
 - The graph lags the code. The build date is in the first line of
   `GRAPH_REPORT.md`; `git log -1 --format=%ad -- graphify-out` shows when it was
   last committed.
