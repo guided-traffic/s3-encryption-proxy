@@ -51,8 +51,7 @@ the outcome is about the format and nothing else. The unchanged 4.0.3 configurat
 build at startup and names both offending keys — the configuration refuses the upgrade before the
 data does; with the configuration migrated, all three objects answer `403 InvalidObjectState` on
 `GET`; the same content uploaded again through the new proxy matches its source by SHA-256.
-**Not done:** the other half of D6 — the result is recorded in this record, not in the release
-notes of 5.0.0.
+The result is recorded in the release notes of 5.0.0.
 
 Nothing of a migration is built, by decision (D3): the operator uploads the data again from its
 source, and the rehearsal proves the refusal and a fresh upload, not a migration.
