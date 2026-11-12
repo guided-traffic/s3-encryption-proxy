@@ -85,7 +85,7 @@ key on write and unwrapping it on read are remote operations. The proxy keeps no
 the key and has no path that could serve a request while the KMS is unreachable.
 
 **D4.** **HashiCorp Vault Transit is the first backend** and the one this decision is about. It
-is addressed directly with a widely used client, exercised against the Vault the demo stack runs,
+is exercised against the Vault the demo stack runs, whatever it is built on (open question 1),
 and its key rotation is supported in full (D9). AWS KMS and GCP KMS are named candidates behind the
 same provider shape and ship no earlier.
 

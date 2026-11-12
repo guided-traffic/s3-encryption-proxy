@@ -245,8 +245,8 @@ of one directory share a first character, and nothing across directories, becaus
 chain is under the tag. For the backup layouts this product is aimed at that is the blob type,
 which the object's size discloses anyway, or the fact that the files of one backup share the
 backup's name, which their common directory discloses anyway. Directory segments carry no tag: a
-partial directory name is the rarer listing shape and is answered by decrypting the parent's
-listing, and a tag on directory names would cluster the tenant inventory by first letter. The
+partial directory name is the rarer listing shape, what the proxy answers for it is the open
+question of D9, and a tag on directory names would cluster the tenant inventory by first letter. The
 tag's width and the one-character head are constants of the stored format, not configuration;
 changing either is a rename.
 
