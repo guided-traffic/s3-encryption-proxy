@@ -10,7 +10,7 @@
 
 ## Relationships
 
-- [Monitoring: Backend Test](Monitoring-_Backend_Test.md) (1 shared connections)
+- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (1 shared connections)
 
 ## Source Files
 

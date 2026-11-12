@@ -1,6 +1,6 @@
 # Multipart Checksum Answers
 
-> 112 nodes · cohesion 0.05
+> 101 nodes · cohesion 0.06
 
 ## Key Concepts
 
@@ -9,9 +9,8 @@
 - **MpuPayload()** (50 connections) — `internal/proxy/handlers/multipart/multipart_coverage_test.go`
 - **MpuVars()** (40 connections) — `internal/proxy/handlers/multipart/multipart_coverage_test.go`
 - **MpuParseError()** (27 connections) — `internal/proxy/handlers/multipart/multipart_coverage_test.go`
-- **MpuEnv** (24 connections) — `internal/proxy/handlers/multipart/multipart_coverage_test.go`
 - **MpuNewExitEnv()** (15 connections) — `internal/proxy/handlers/multipart/multipart_coverage_test.go`
-- **MpuNewEnvWithProvider()** (10 connections) — `internal/proxy/handlers/multipart/multipart_coverage_test.go`
+- **MpuNewEnvWithProvider()** (9 connections) — `internal/proxy/handlers/multipart/multipart_coverage_test.go`
 - **writeXMLDocument()** (9 connections) — `internal/proxy/handlers/multipart/xml.go`
 - **MpuDigest()** (8 connections) — `internal/proxy/handlers/multipart/multipart_coverage_test.go`
 - **MpuCrcwant()** (7 connections) — `internal/proxy/handlers/multipart/checksum_echo_test.go`
@@ -29,22 +28,23 @@
 - **TestMpuUploadBackendErrorsMapToS3Codes()** (6 connections) — `internal/proxy/handlers/multipart/multipart_coverage_test.go`
 - **TestMpuUploadOutOfOrderPartIsStoredImmediately()** (6 connections) — `internal/proxy/handlers/multipart/multipart_coverage_test.go`
 - **TestMpuUploadPartCopyRefusesEveryVariant()** (6 connections) — `internal/proxy/handlers/multipart/multipart_coverage_test.go`
-- *... and 87 more nodes in this community*
+- **TestMpuUploadStoresCiphertextNotPlaintext()** (6 connections) — `internal/proxy/handlers/multipart/multipart_coverage_test.go`
+- *... and 76 more nodes in this community*
 
 ## Relationships
 
-- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (90 shared connections)
-- [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (89 shared connections)
-- [Multipart Handlers and Manager](Multipart_Handlers_and_Manager.md) (15 shared connections)
+- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (91 shared connections)
+- [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (83 shared connections)
+- [Misc (19)](Misc_19.md) (10 shared connections)
 - [Bucket XML Documents](Bucket_XML_Documents.md) (5 shared connections)
-- [Keygen and Encrypt Readers](Keygen_and_Encrypt_Readers.md) (3 shared connections)
 - [Sub-Resource Handler Tests](Sub-Resource_Handler_Tests.md) (3 shared connections)
-- [Request Documents and Owner Guard](Request_Documents_and_Owner_Guard.md) (3 shared connections)
-- [DeleteObjects Handling](DeleteObjects_Handling.md) (3 shared connections)
-- [Segment Codec and Range Planner](Segment_Codec_and_Range_Planner.md) (2 shared connections)
+- [Multipart Handlers and Manager](Multipart_Handlers_and_Manager.md) (3 shared connections)
+- [Dataencryption: Segmented Gcm Range](Dataencryption-_Segmented_Gcm_Range.md) (2 shared connections)
 - [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (2 shared connections)
+- [Request Documents and Owner Guard](Request_Documents_and_Owner_Guard.md) (2 shared connections)
 - [Configuration Loading](Configuration_Loading.md) (1 shared connections)
-- [Segmented Session Tests](Segmented_Session_Tests.md) (1 shared connections)
+- [Segment Codec and Range Planner](Segment_Codec_and_Range_Planner.md) (1 shared connections)
+- [Request Middleware Plumbing](Request_Middleware_Plumbing.md) (1 shared connections)
 
 ## Source Files
 
@@ -55,8 +55,8 @@
 
 ## Audit Trail
 
-- EXTRACTED: 515 (93%)
-- INFERRED: 40 (7%)
+- EXTRACTED: 483 (94%)
+- INFERRED: 33 (6%)
 - AMBIGUOUS: 0 (0%)
 
 ---

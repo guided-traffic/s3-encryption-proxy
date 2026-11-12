@@ -26,9 +26,9 @@
 
 - [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (17 shared connections)
 - [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (15 shared connections)
-- [Keygen and Encrypt Readers](Keygen_and_Encrypt_Readers.md) (2 shared connections)
-- [Segment Codec and Range Planner](Segment_Codec_and_Range_Planner.md) (1 shared connections)
-- [Storedobject: Storedobject](Storedobject-_Storedobject.md) (1 shared connections)
+- [Storedobject: Storedobject](Storedobject-_Storedobject.md) (2 shared connections)
+- [GET Response Writing](GET_Response_Writing.md) (1 shared connections)
+- [Orchestration: Providers Coverage Test (2)](Orchestration-_Providers_Coverage_Test_2.md) (1 shared connections)
 - [Checksum Verifier](Checksum_Verifier.md) (1 shared connections)
 - [Delete and Checksum Integration](Delete_and_Checksum_Integration.md) (1 shared connections)
 

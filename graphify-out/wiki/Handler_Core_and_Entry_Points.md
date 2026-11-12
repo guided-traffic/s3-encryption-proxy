@@ -1,6 +1,6 @@
 # Handler Core and Entry Points
 
-> 387 nodes · cohesion 0.06
+> 402 nodes · cohesion 0.06
 
 ## Key Concepts
 
@@ -12,39 +12,39 @@
 - **go_pkg_strings** (123 connections)
 - **go_pkg_github_com_aws_aws_sdk_go_v2_aws** (120 connections)
 - **go_pkg_github_com_aws_aws_sdk_go_v2_service_s3** (120 connections)
-- **config.go** (115 connections) — `internal/config/config.go`
 - **checksum_test.go** (114 connections) — `internal/proxy/request/checksum_test.go`
 - **object_test.go** (113 connections) — `internal/proxy/handlers/object/object_test.go`
 - **go_pkg_fmt** (111 connections)
 - **go_pkg_context** (110 connections)
 - **go_pkg_time** (104 connections)
 - **multipart_test.go** (102 connections) — `internal/proxy/handlers/multipart/multipart_test.go`
+- **config.go** (100 connections) — `internal/config/config.go`
 - **go_pkg_github_com_sirupsen_logrus** (97 connections)
 - **go_pkg_io** (97 connections)
 - **operations_coverage_test.go** (96 connections) — `internal/proxy/handlers/bucket/operations_coverage_test.go`
-- **complete.go** (93 connections) — `internal/proxy/handlers/multipart/complete.go`
+- **complete.go** (94 connections) — `internal/proxy/handlers/multipart/complete.go`
 - **go_pkg_bytes** (92 connections)
-- **minio_test_helper.go** (92 connections) — `test/integration/minio_test_helper.go`
 - **helpers.go** (86 connections) — `internal/proxy/handlers/object/helpers.go`
 - **parser_test.go** (84 connections) — `internal/proxy/request/parser_test.go`
 - **providers_coverage_test.go** (82 connections) — `internal/orchestration/providers_coverage_test.go`
 - **errors_coverage_test.go** (79 connections) — `internal/proxy/response/errors_coverage_test.go`
-- *... and 362 more nodes in this community*
+- **go_pkg_errors** (75 connections)
+- *... and 377 more nodes in this community*
 
 ## Relationships
 
-- [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (163 shared connections)
-- [Object Checksum and Tagging Tests](Object_Checksum_and_Tagging_Tests.md) (120 shared connections)
-- [Multipart Checksum Answers](Multipart_Checksum_Answers.md) (90 shared connections)
-- [Bucket Handler Tests](Bucket_Handler_Tests.md) (84 shared connections)
-- [Sub-Resource Handler Tests](Sub-Resource_Handler_Tests.md) (82 shared connections)
-- [Configuration Loading](Configuration_Loading.md) (79 shared connections)
-- [Segment Codec and Range Planner](Segment_Codec_and_Range_Planner.md) (74 shared connections)
-- [Streaming Integration Helpers](Streaming_Integration_Helpers.md) (71 shared connections)
-- [Object Checksum Agreement Tests](Object_Checksum_Agreement_Tests.md) (68 shared connections)
-- [Velero E2E Suite](Velero_E2E_Suite.md) (67 shared connections)
-- [Perf Harness and Report](Perf_Harness_and_Report.md) (56 shared connections)
-- [Multipart Handlers and Manager](Multipart_Handlers_and_Manager.md) (53 shared connections)
+- [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (172 shared connections)
+- [Object Checksum and Tagging Tests](Object_Checksum_and_Tagging_Tests.md) (130 shared connections)
+- [Streaming Integration Helpers](Streaming_Integration_Helpers.md) (97 shared connections)
+- [Multipart Checksum Answers](Multipart_Checksum_Answers.md) (91 shared connections)
+- [Bucket Handler Tests](Bucket_Handler_Tests.md) (86 shared connections)
+- [Sub-Resource Handler Tests](Sub-Resource_Handler_Tests.md) (79 shared connections)
+- [Object Checksum Agreement Tests](Object_Checksum_Agreement_Tests.md) (69 shared connections)
+- [Velero E2E Suite](Velero_E2E_Suite.md) (68 shared connections)
+- [Segment Codec and Range Planner](Segment_Codec_and_Range_Planner.md) (62 shared connections)
+- [Configuration Loading](Configuration_Loading.md) (58 shared connections)
+- [DeleteObjects Handling](DeleteObjects_Handling.md) (57 shared connections)
+- [Checksum Verifier](Checksum_Verifier.md) (54 shared connections)
 
 ## Source Files
 
@@ -58,7 +58,7 @@
 - `docs/security/refusals.md`
 - `docs/security/tenancy-and-privilege.md`
 - `docs/security/threat-model.md`
-- `docs/tickets/017-filename-encryption.md`
+- `docs/tickets/036-high-availability.md`
 - `internal/config/accessors_coverage_test.go`
 - `internal/config/config.go`
 - `internal/config/config_test.go`
@@ -71,8 +71,8 @@
 
 ## Audit Trail
 
-- EXTRACTED: 7007 (100%)
-- INFERRED: 5 (0%)
+- EXTRACTED: 6986 (100%)
+- INFERRED: 8 (0%)
 - AMBIGUOUS: 0 (0%)
 
 ---

@@ -2,7 +2,7 @@
 
 > God node · 93 connections · `test/integration/minio_test_helper.go`
 
-**Community:** [Multipart Conformance](Multipart_Conformance.md)
+**Community:** [Chunked Encoding Tests](Chunked_Encoding_Tests.md)
 
 ## Connections by Relation
 

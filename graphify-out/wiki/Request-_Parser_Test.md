@@ -35,12 +35,11 @@
 
 - [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (26 shared connections)
 - [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (24 shared connections)
-- [Request: Streaming Decoder Coverage Test](Request-_Streaming_Decoder_Coverage_Test.md) (3 shared connections)
+- [Checksum Verifier](Checksum_Verifier.md) (3 shared connections)
 - [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (2 shared connections)
-- [Keygen and Encrypt Readers](Keygen_and_Encrypt_Readers.md) (1 shared connections)
-- [Multipart Handlers and Manager](Multipart_Handlers_and_Manager.md) (1 shared connections)
+- [Request Documents and Owner Guard](Request_Documents_and_Owner_Guard.md) (2 shared connections)
+- [Dataencryption: Segmented Gcm Range](Dataencryption-_Segmented_Gcm_Range.md) (1 shared connections)
 - [Sub-Resource Handler Tests](Sub-Resource_Handler_Tests.md) (1 shared connections)
-- [Request Documents and Owner Guard](Request_Documents_and_Owner_Guard.md) (1 shared connections)
 
 ## Source Files
 

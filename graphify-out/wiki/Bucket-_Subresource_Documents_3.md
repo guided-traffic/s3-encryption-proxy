@@ -23,7 +23,7 @@
 - [Bucket Sub-Resource Documents](Bucket_Sub-Resource_Documents.md) (11 shared connections)
 - [Bucket XML Documents](Bucket_XML_Documents.md) (1 shared connections)
 - [Misc (21)](Misc_21.md) (1 shared connections)
-- [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (1 shared connections)
+- [Object: Metadata Coverage Test](Object-_Metadata_Coverage_Test.md) (1 shared connections)
 
 ## Source Files
 

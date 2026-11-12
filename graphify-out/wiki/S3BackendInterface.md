@@ -43,9 +43,9 @@
 - UploadHandler `EXTRACTED`
 - NewUploadHandler() `EXTRACTED`
 - Handler `EXTRACTED`
-- NewHandler() `EXTRACTED`
-- NewHandler() `EXTRACTED`
 - NewCompleteHandler() `EXTRACTED`
+- NewHandler() `EXTRACTED`
+- NewHandler() `EXTRACTED`
 - ListHandler `EXTRACTED`
 - AbortHandler `EXTRACTED`
 - CompleteHandler `EXTRACTED`

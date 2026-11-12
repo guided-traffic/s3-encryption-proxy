@@ -15,7 +15,7 @@
 
 - [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (1 shared connections)
 - [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (1 shared connections)
-- [Multipart Conformance](Multipart_Conformance.md) (1 shared connections)
+- [Chunked Encoding Tests](Chunked_Encoding_Tests.md) (1 shared connections)
 - [Streaming Integration Helpers](Streaming_Integration_Helpers.md) (1 shared connections)
 
 ## Source Files

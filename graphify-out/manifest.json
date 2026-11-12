@@ -918,10 +918,10 @@
     "semantic_hash": "b1ffa2a8fe0ad534cc9c14f19e3c3537"
   },
   "internal/config/config.go": {
-    "mtime": 1794393712.507671,
-    "seen": 1794397831.256491,
-    "ast_hash": "8963e3f5b135b40b96cea0ccac1fce55",
-    "semantic_hash": "8963e3f5b135b40b96cea0ccac1fce55"
+    "mtime": 1794494729.5747802,
+    "seen": 1794495285.191746,
+    "ast_hash": "35fc58c88c2f2947f8fe9d3267af91ff",
+    "semantic_hash": "35fc58c88c2f2947f8fe9d3267af91ff"
   },
   "internal/config/envexpand_coverage_test.go": {
     "mtime": 1789799961.6287282,
@@ -954,10 +954,10 @@
     "semantic_hash": "a5ac4d05ffa62b184456c5c24767ce4b"
   },
   "internal/config/validation_coverage_test.go": {
-    "mtime": 1793280706.0481555,
-    "seen": 1794397831.256501,
-    "ast_hash": "7ac27c1b6523d0d7d571d6d6ece6b0f1",
-    "semantic_hash": "7ac27c1b6523d0d7d571d6d6ece6b0f1"
+    "mtime": 1794494729.5752332,
+    "seen": 1794495285.191755,
+    "ast_hash": "077abb0209019e2752b2bca8bec4e00f",
+    "semantic_hash": "077abb0209019e2752b2bca8bec4e00f"
   },
   "internal/config/config_test.go": {
     "mtime": 1789799961.6281118,
@@ -1110,28 +1110,28 @@
     "semantic_hash": "4a03605ea6743223e0a976d8357fe8c6"
   },
   "CHANGELOG.md": {
-    "mtime": 1794397041.5927534,
-    "seen": 1794397831.256752,
-    "ast_hash": "7eb2b9f57f3da6a165f7552d6ffdf91f",
-    "semantic_hash": "7eb2b9f57f3da6a165f7552d6ffdf91f"
+    "mtime": 1794494729.5514896,
+    "seen": 1794495285.1920488,
+    "ast_hash": "24576d9debe0176fe3a0ae1f1f5f214d",
+    "semantic_hash": "24576d9debe0176fe3a0ae1f1f5f214d"
   },
   "README.md": {
-    "mtime": 1794393712.4930449,
-    "seen": 1794397831.2567549,
-    "ast_hash": "99397e6c1b4e4458ab1af426a06f3471",
-    "semantic_hash": "99397e6c1b4e4458ab1af426a06f3471"
+    "mtime": 1794494729.5528688,
+    "seen": 1794495285.192051,
+    "ast_hash": "b2cfb7662b489aaf87c25bf99dce03e3",
+    "semantic_hash": "b2cfb7662b489aaf87c25bf99dce03e3"
   },
   "CONTRIBUTING.md": {
-    "mtime": 1793280706.016464,
-    "seen": 1794397831.256754,
-    "ast_hash": "b338df9f77a36322eda6df9be1b2663c",
-    "semantic_hash": "b338df9f77a36322eda6df9be1b2663c"
+    "mtime": 1794494729.5520945,
+    "seen": 1794495285.19205,
+    "ast_hash": "a60704dd483f1f95b8297e83d631411a",
+    "semantic_hash": "a60704dd483f1f95b8297e83d631411a"
   },
   "CLAUDE.md": {
-    "mtime": 1794393712.4844537,
-    "seen": 1794397831.256753,
-    "ast_hash": "46c23ef209cd6b3487fd67b8a36ac5f0",
-    "semantic_hash": "46c23ef209cd6b3487fd67b8a36ac5f0"
+    "mtime": 1794494720.1737554,
+    "seen": 1794495285.1920488,
+    "ast_hash": "132f653c3e281e67f93ac2eed570dc5c",
+    "semantic_hash": "132f653c3e281e67f93ac2eed570dc5c"
   },
   "deploy/helm/s3-encryption-proxy/README.md": {
     "mtime": 1793280706.0234592,
@@ -1140,16 +1140,16 @@
     "semantic_hash": "af47b4c4d18ca1f169c76d49ce8fc524"
   },
   "docs/tickets/017-filename-encryption.md": {
-    "mtime": 1793280706.0396862,
-    "seen": 1794397831.256814,
-    "ast_hash": "dde7c4ddfcf465ea7cb0803f00f8feb9",
-    "semantic_hash": "dde7c4ddfcf465ea7cb0803f00f8feb9"
+    "mtime": 1794494729.5701365,
+    "seen": 1794495285.192079,
+    "ast_hash": "3c1a1e0121e103e7419762a4a8c6a7e8",
+    "semantic_hash": "3c1a1e0121e103e7419762a4a8c6a7e8"
   },
   "docs/tickets/README.md": {
-    "mtime": 1793280706.04473,
-    "seen": 1794397831.256824,
-    "ast_hash": "7dd715d386f4022b1ab906d6720aa1ec",
-    "semantic_hash": "7dd715d386f4022b1ab906d6720aa1ec"
+    "mtime": 1794494729.5728915,
+    "seen": 1794495285.192081,
+    "ast_hash": "e18c4a3000b81d5adc10de5d8791ee3d",
+    "semantic_hash": "e18c4a3000b81d5adc10de5d8791ee3d"
   },
   "docs/tickets/025-tink-kms-hcvault.md": {
     "mtime": 1789802588.875084,
@@ -1380,40 +1380,40 @@
     "semantic_hash": "f25f26c736eee85aa43df4c8741823dd"
   },
   "docker-compose.demo.yml": {
-    "mtime": 1793280706.025583,
-    "seen": 1794397831.2564878,
-    "ast_hash": "e3abf8e714a1ea514a917a4525710ef3",
-    "semantic_hash": "e3abf8e714a1ea514a917a4525710ef3"
+    "mtime": 1794494729.5540257,
+    "seen": 1794495285.191742,
+    "ast_hash": "61b4fdfc750cf036c1cd8c880610d28f",
+    "semantic_hash": "61b4fdfc750cf036c1cd8c880610d28f"
   },
   "docs/adr/0001-the-backend-is-hostile.md": {
-    "mtime": 1789802588.8667068,
-    "seen": 1791369978.560906,
-    "ast_hash": "0ecd4c7ab47aae557ac10c79a7982293",
-    "semantic_hash": "0ecd4c7ab47aae557ac10c79a7982293"
+    "mtime": 1794494729.5545235,
+    "seen": 1794495285.192052,
+    "ast_hash": "58e8fe50718802e321f72a5885cf35b7",
+    "semantic_hash": "58e8fe50718802e321f72a5885cf35b7"
   },
   "docs/adr/0002-one-data-key-per-object.md": {
-    "mtime": 1789802588.8669014,
-    "seen": 1791369978.560906,
-    "ast_hash": "2d10714c1347f48720722775c28018c5",
-    "semantic_hash": "2d10714c1347f48720722775c28018c5"
+    "mtime": 1794494729.5550482,
+    "seen": 1794495285.192053,
+    "ast_hash": "e9d00964755562d3d26d074e1776c952",
+    "semantic_hash": "e9d00964755562d3d26d074e1776c952"
   },
   "docs/adr/0003-objects-are-an-authenticated-segment-chain.md": {
-    "mtime": 1789802588.8671274,
-    "seen": 1791369978.5609071,
-    "ast_hash": "c1862ec89c63093c2d9d6fd1ed4fe7a8",
-    "semantic_hash": "c1862ec89c63093c2d9d6fd1ed4fe7a8"
+    "mtime": 1794494729.5557234,
+    "seen": 1794495285.192053,
+    "ast_hash": "0cbdf3c0664d20a7cf88270711f1c9f5",
+    "semantic_hash": "0cbdf3c0664d20a7cf88270711f1c9f5"
   },
   "docs/adr/0004-one-local-key-provider.md": {
-    "mtime": 1793280706.0262308,
-    "seen": 1794397831.2567601,
-    "ast_hash": "f50793bb5f2c009f2bef424ab589facd",
-    "semantic_hash": "f50793bb5f2c009f2bef424ab589facd"
+    "mtime": 1794494729.5561392,
+    "seen": 1794495285.192054,
+    "ast_hash": "76d3268268081a6fc1a7819be1a7bfa4",
+    "semantic_hash": "76d3268268081a6fc1a7819be1a7bfa4"
   },
   "docs/adr/0005-a-kms-key-is-a-provider.md": {
-    "mtime": 1793280706.0267081,
-    "seen": 1794397831.256761,
-    "ast_hash": "42cb621d9fd44ed09b68f1b8fe8762fc",
-    "semantic_hash": "42cb621d9fd44ed09b68f1b8fe8762fc"
+    "mtime": 1794494729.5565622,
+    "seen": 1794495285.192055,
+    "ast_hash": "959b1ed5f6d5b91a0206f0540f3800c2",
+    "semantic_hash": "959b1ed5f6d5b91a0206f0540f3800c2"
   },
   "docs/adr/0006-the-proxy-serves-any-s3-client.md": {
     "mtime": 1789802588.8678155,
@@ -1422,22 +1422,22 @@
     "semantic_hash": "d46f691f378749489e20de2ac1a09672"
   },
   "docs/adr/0007-forward-it-or-refuse-it.md": {
-    "mtime": 1789802588.8680425,
-    "seen": 1791369978.560909,
-    "ast_hash": "cc877ac077853215caa25a279d81ba16",
-    "semantic_hash": "cc877ac077853215caa25a279d81ba16"
+    "mtime": 1794494729.5570476,
+    "seen": 1794495285.1920562,
+    "ast_hash": "2aa0b22a59db718086bf571c8f057bc0",
+    "semantic_hash": "2aa0b22a59db718086bf571c8f057bc0"
   },
   "docs/adr/0008-every-response-describes-the-proxy.md": {
-    "mtime": 1789802588.868263,
-    "seen": 1791369978.56091,
-    "ast_hash": "1447c6cf6ed2ccf5178f6d35107339a0",
-    "semantic_hash": "1447c6cf6ed2ccf5178f6d35107339a0"
+    "mtime": 1794494729.5574148,
+    "seen": 1794495285.1920571,
+    "ast_hash": "e3c3d8b3c63230b9a9d0d1649805769b",
+    "semantic_hash": "e3c3d8b3c63230b9a9d0d1649805769b"
   },
   "docs/adr/0009-the-metadata-prefix-is-the-proxys-namespace.md": {
-    "mtime": 1789802588.8685057,
-    "seen": 1791369978.56091,
-    "ast_hash": "dbec989118fbd403fb35ea231cad6567",
-    "semantic_hash": "dbec989118fbd403fb35ea231cad6567"
+    "mtime": 1794494729.5578444,
+    "seen": 1794495285.192058,
+    "ast_hash": "2f5b7ec3bcc17653bd0a595249a88229",
+    "semantic_hash": "2f5b7ec3bcc17653bd0a595249a88229"
   },
   "docs/adr/0010-sizes-and-listings-describe-the-plaintext.md": {
     "mtime": 1789802588.8687038,
@@ -1446,76 +1446,70 @@
     "semantic_hash": "fbdb5c5cc8b28a828d33c9fd1e48ba37"
   },
   "docs/adr/0011-the-proxy-owns-the-part-layout.md": {
-    "mtime": 1789802588.8689113,
-    "seen": 1791369978.560912,
-    "ast_hash": "e667a575983287c1458ae1e7241ef477",
-    "semantic_hash": "e667a575983287c1458ae1e7241ef477"
+    "mtime": 1794494729.5582302,
+    "seen": 1794495285.192058,
+    "ast_hash": "4a44fd129ec9546c8864a1cf2b2e026d",
+    "semantic_hash": "4a44fd129ec9546c8864a1cf2b2e026d"
   },
   "docs/adr/0012-client-checksums-are-verified-never-forwarded.md": {
-    "mtime": 1789802588.8691308,
-    "seen": 1791369978.560912,
-    "ast_hash": "d3bf9df9671c05b44cd572dc94254938",
-    "semantic_hash": "d3bf9df9671c05b44cd572dc94254938"
+    "mtime": 1794494729.5586696,
+    "seen": 1794495285.1920588,
+    "ast_hash": "3492f9c20424a1cba867f2ad55636cab",
+    "semantic_hash": "3492f9c20424a1cba867f2ad55636cab"
   },
   "docs/adr/0013-a-configuration-key-exists-only-if-code-reads-it.md": {
-    "mtime": 1793280706.027286,
-    "seen": 1794397831.256768,
-    "ast_hash": "c8d10836b53dfe818eb86ff703364f8e",
-    "semantic_hash": "c8d10836b53dfe818eb86ff703364f8e"
+    "mtime": 1794494729.5591097,
+    "seen": 1794495285.19206,
+    "ast_hash": "400ccd83e96489be80ac08a5ba3b30f6",
+    "semantic_hash": "400ccd83e96489be80ac08a5ba3b30f6"
   },
   "docs/adr/0014-authentication-is-sigv4-no-rate-limiting.md": {
-    "mtime": 1793280706.0276155,
-    "seen": 1794397831.256769,
-    "ast_hash": "be3f657b673aa1229a165a9b731a3d99",
-    "semantic_hash": "be3f657b673aa1229a165a9b731a3d99"
+    "mtime": 1794494729.5594811,
+    "seen": 1794495285.192061,
+    "ast_hash": "269af8871955a64c7fb067cc358f9216",
+    "semantic_hash": "269af8871955a64c7fb067cc358f9216"
   },
   "docs/adr/0015-a-transfer-is-bounded-by-the-client-and-by-shutdown.md": {
-    "mtime": 1789802588.8699508,
-    "seen": 1791369978.5609138,
-    "ast_hash": "3517fa06a309a3a9f533984484e1c857",
-    "semantic_hash": "3517fa06a309a3a9f533984484e1c857"
+    "mtime": 1794494729.5602283,
+    "seen": 1794495285.192062,
+    "ast_hash": "cde2d6e79deefa08da8ff3e13ec90905",
+    "semantic_hash": "cde2d6e79deefa08da8ff3e13ec90905"
   },
   "docs/adr/0017-stored-data-compatibility-is-not-owed.md": {
-    "mtime": 1793280706.028217,
-    "seen": 1794397831.256771,
-    "ast_hash": "972ab5eb69e8a2ad6defeaa09a7d5fe6",
-    "semantic_hash": "972ab5eb69e8a2ad6defeaa09a7d5fe6"
+    "mtime": 1794494729.5608058,
+    "seen": 1794495285.192063,
+    "ast_hash": "119ab76ad32d6dc6ccfa6ae289ee3a2e",
+    "semantic_hash": "119ab76ad32d6dc6ccfa6ae289ee3a2e"
   },
   "docs/adr/0018-a-major-release-is-declared-by-a-label.md": {
-    "mtime": 1794045219.1134565,
-    "seen": 1794397831.256772,
-    "ast_hash": "78fc0115277d40d4c4da1a57c7838478",
-    "semantic_hash": "78fc0115277d40d4c4da1a57c7838478"
+    "mtime": 1794494729.561344,
+    "seen": 1794495285.192063,
+    "ast_hash": "be3e60938b5ccb359ffb5b8f56c6c16f",
+    "semantic_hash": "be3e60938b5ccb359ffb5b8f56c6c16f"
   },
   "docs/adr/0019-integration-and-e2e-tests-are-the-product.md": {
-    "mtime": 1793280706.028549,
-    "seen": 1794397831.2567732,
-    "ast_hash": "aec312a74d7e9453123e7058579c9f70",
-    "semantic_hash": "aec312a74d7e9453123e7058579c9f70"
+    "mtime": 1794494729.5620391,
+    "seen": 1794495285.192064,
+    "ast_hash": "ffac0690e8201494072872b01a6d7f85",
+    "semantic_hash": "ffac0690e8201494072872b01a6d7f85"
   },
   "docs/adr/0020-performance-is-measured-before-and-after.md": {
-    "mtime": 1794301722.5254407,
-    "seen": 1794397831.2567732,
-    "ast_hash": "423cb4cfe388a9b4f4584abe5a6ae40a",
-    "semantic_hash": "423cb4cfe388a9b4f4584abe5a6ae40a"
+    "mtime": 1794494729.5625863,
+    "seen": 1794495285.192066,
+    "ast_hash": "97d9a344db01e95e15b2d6c3604e2dac",
+    "semantic_hash": "97d9a344db01e95e15b2d6c3604e2dac"
   },
   "docs/adr/0021-key-material-is-generated-never-committed.md": {
-    "mtime": 1793280706.0289338,
-    "seen": 1794397831.256774,
-    "ast_hash": "a23155ab33b36fddea17c6a91e903e1b",
-    "semantic_hash": "a23155ab33b36fddea17c6a91e903e1b"
-  },
-  "docs/adr/0023-filename-encryption-encrypts-directory-segments.md": {
-    "mtime": 1793280706.0296988,
-    "seen": 1794397831.2567759,
-    "ast_hash": "57aa4ea7139c5b9eaf240a0764378584",
-    "semantic_hash": "57aa4ea7139c5b9eaf240a0764378584"
+    "mtime": 1794494729.5631127,
+    "seen": 1794495285.192066,
+    "ast_hash": "2bd72bc883e40e9da88cb17cc36db5e0",
+    "semantic_hash": "2bd72bc883e40e9da88cb17cc36db5e0"
   },
   "docs/adr/README.md": {
-    "mtime": 1794393712.4979997,
-    "seen": 1794397831.25679,
-    "ast_hash": "933fbe81655f8e70b5d0c2402abe564d",
-    "semantic_hash": "933fbe81655f8e70b5d0c2402abe564d"
+    "mtime": 1794494729.5686307,
+    "seen": 1794495285.1920772,
+    "ast_hash": "992b6d7c8476f89dda7d53ddf26d2da8",
+    "semantic_hash": "992b6d7c8476f89dda7d53ddf26d2da8"
   },
   "docs/tickets/026-sse-c-passthrough.md": {
     "mtime": 1789802588.8753107,
@@ -1548,10 +1542,10 @@
     "semantic_hash": "96834c917ab786b3b6d85daf3a3e1375"
   },
   "test/e2e/velero/values-velero.yaml": {
-    "mtime": 1788722909.324729,
-    "seen": 1794397831.256702,
-    "ast_hash": "b5b92f61be488b837dd510ccae1250f1",
-    "semantic_hash": "b5b92f61be488b837dd510ccae1250f1"
+    "mtime": 1794494729.576623,
+    "seen": 1794495285.191988,
+    "ast_hash": "29ab6d64fe7118a609e2e7024026aedb",
+    "semantic_hash": "29ab6d64fe7118a609e2e7024026aedb"
   },
   "internal/orchestration/segmented.go": {
     "mtime": 1794393712.5149422,
@@ -1788,10 +1782,10 @@
     "semantic_hash": "7bc2f2dfa49c776b7eccdcf5d3fcc316"
   },
   "docs/adr/0025-leaving-is-a-supported-mode.md": {
-    "mtime": 1793280706.030102,
-    "seen": 1794397831.256777,
-    "ast_hash": "69e8a61976d2062d4f182ba2c4676732",
-    "semantic_hash": "69e8a61976d2062d4f182ba2c4676732"
+    "mtime": 1794494729.5646176,
+    "seen": 1794495285.1920698,
+    "ast_hash": "7166bd8e57d05ff1934d8adfb8700e88",
+    "semantic_hash": "7166bd8e57d05ff1934d8adfb8700e88"
   },
   "docs/developer/README.md": {
     "mtime": 1794393712.5005412,
@@ -2238,10 +2232,10 @@
     "semantic_hash": "2f3a5166266f477a5b1a35cc979bfe9c"
   },
   "test/e2e/s3cmd/scenarios_lifecycle_test.go": {
-    "mtime": 1794045219.1495988,
-    "seen": 1794397831.2566872,
-    "ast_hash": "9869aec4748b446d371d1d05f6b14d29",
-    "semantic_hash": "9869aec4748b446d371d1d05f6b14d29"
+    "mtime": 1794494729.5756276,
+    "seen": 1794495285.19197,
+    "ast_hash": "321c7a6433cb8f1b05a8c59788222d3a",
+    "semantic_hash": "321c7a6433cb8f1b05a8c59788222d3a"
   },
   "test/e2e/s3cmd/scenarios_read_test.go": {
     "mtime": 1794045219.149847,
@@ -2256,10 +2250,10 @@
     "semantic_hash": "48b28d6ad9ba6e649d552e639f69cce0"
   },
   "test/e2e/s3cmd/scenarios_upload_test.go": {
-    "mtime": 1794045219.1503763,
-    "seen": 1794397831.2566888,
-    "ast_hash": "a9e200b9afbed02ad9b09bfa37ef390d",
-    "semantic_hash": "a9e200b9afbed02ad9b09bfa37ef390d"
+    "mtime": 1794494729.5759876,
+    "seen": 1794495285.1919732,
+    "ast_hash": "a9aa93e5302171cd8deb81de74628d1a",
+    "semantic_hash": "a9aa93e5302171cd8deb81de74628d1a"
   },
   "test/integration/conformance/a_seed_test.go": {
     "mtime": 1789799961.6724095,
@@ -2394,40 +2388,40 @@
     "semantic_hash": "8be507fae31a342971c851d340bcf736"
   },
   "docs/adr/0022-tickets-are-work-lists-that-get-archived.md": {
-    "mtime": 1793280706.029234,
-    "seen": 1794397831.256775,
-    "ast_hash": "4c0ccb7401614bc192383af737b1d0bc",
-    "semantic_hash": "4c0ccb7401614bc192383af737b1d0bc"
+    "mtime": 1794494729.5636654,
+    "seen": 1794495285.1920671,
+    "ast_hash": "fa516a4993074232b2d1e9f5d1caaab5",
+    "semantic_hash": "fa516a4993074232b2d1e9f5d1caaab5"
   },
   "docs/adr/0026-the-proxy-terminates-tls-at-its-own-service.md": {
-    "mtime": 1793280706.0305157,
-    "seen": 1794397831.256778,
-    "ast_hash": "80b92ca2fc65c7c076ad6d6c822da111",
-    "semantic_hash": "80b92ca2fc65c7c076ad6d6c822da111"
+    "mtime": 1794494729.5649178,
+    "seen": 1794495285.192071,
+    "ast_hash": "6c706c5ff9cb4991de680d82e0bc3194",
+    "semantic_hash": "6c706c5ff9cb4991de680d82e0bc3194"
   },
   "docs/adr/0027-conformance-is-asserted-against-a-backend-that-is-not-minio.md": {
-    "mtime": 1789799961.584479,
-    "seen": 1794397831.256778,
-    "ast_hash": "2fdb24fa23d9f4ab4c46fd7236f89ef1",
-    "semantic_hash": "2fdb24fa23d9f4ab4c46fd7236f89ef1"
+    "mtime": 1794494729.56531,
+    "seen": 1794495285.192071,
+    "ast_hash": "9f8036aea0d17ce5845b80d05b1ce24d",
+    "semantic_hash": "9f8036aea0d17ce5845b80d05b1ce24d"
   },
   "docs/adr/0028-an-abandoned-upload-is-ended-not-forgotten.md": {
-    "mtime": 1789799961.5845702,
-    "seen": 1794397831.256779,
-    "ast_hash": "3e266a74d7a98b096eb87ba3da758b0d",
-    "semantic_hash": "3e266a74d7a98b096eb87ba3da758b0d"
+    "mtime": 1794494729.5656762,
+    "seen": 1794495285.192072,
+    "ast_hash": "97aba3cbe8e92b5a777269a3e90f93f2",
+    "semantic_hash": "97aba3cbe8e92b5a777269a3e90f93f2"
   },
   "docs/adr/0029-the-shutdown-budget-finishes-work-and-sweeps-what-cannot-be-finished.md": {
-    "mtime": 1789799961.584663,
-    "seen": 1794397831.2567801,
-    "ast_hash": "b1bb2c6ad9b8236c00479bc59295f5f0",
-    "semantic_hash": "b1bb2c6ad9b8236c00479bc59295f5f0"
+    "mtime": 1794494729.5664406,
+    "seen": 1794495285.1920729,
+    "ast_hash": "23519d3b3e4110555cefb2580c23b1e4",
+    "semantic_hash": "23519d3b3e4110555cefb2580c23b1e4"
   },
   "docs/adr/0030-the-network-boundary-belongs-to-the-administrator.md": {
-    "mtime": 1793280706.0308833,
-    "seen": 1794397831.256781,
-    "ast_hash": "ad7b61d33ea6d61ccba92cd16ab75367",
-    "semantic_hash": "ad7b61d33ea6d61ccba92cd16ab75367"
+    "mtime": 1794494729.566961,
+    "seen": 1794495285.192074,
+    "ast_hash": "04acf4f7716b071b6cdae3126c26af14",
+    "semantic_hash": "04acf4f7716b071b6cdae3126c26af14"
   },
   "docs/adr/0031-a-test-states-the-target-and-stays-red-until-the-product-meets-it.md": {
     "mtime": 1789799961.5848587,
@@ -2448,16 +2442,16 @@
     "semantic_hash": "a071d281e70389727e489deeecacdfaf"
   },
   "docs/adr/0034-a-probe-reports-the-process-never-its-dependencies.md": {
-    "mtime": 1793280706.0312223,
-    "seen": 1794397831.256784,
-    "ast_hash": "2c13840415f20b2ab16f6e56bcfa6fe7",
-    "semantic_hash": "2c13840415f20b2ab16f6e56bcfa6fe7"
+    "mtime": 1794494729.5674913,
+    "seen": 1794495285.192075,
+    "ast_hash": "17d20391179f929f230e2e7220f4929f",
+    "semantic_hash": "17d20391179f929f230e2e7220f4929f"
   },
   "docs/adr/0035-the-readme-advertises-the-reference-lives-under-docs.md": {
-    "mtime": 1789802588.8723867,
-    "seen": 1791369978.5609212,
-    "ast_hash": "0053c5872a3310d02e2a56ee4a105c0e",
-    "semantic_hash": "0053c5872a3310d02e2a56ee4a105c0e"
+    "mtime": 1794494729.5678895,
+    "seen": 1794495285.192076,
+    "ast_hash": "3c8347a78bbca78e71073e7a3d36b0dd",
+    "semantic_hash": "3c8347a78bbca78e71073e7a3d36b0dd"
   },
   "docs/developer/configuration.md": {
     "mtime": 1794393712.50139,
@@ -2478,10 +2472,10 @@
     "semantic_hash": "d93f40849a35cfc6e010b8a4887edbee"
   },
   "docs/operations/clients/s3cmd.md": {
-    "mtime": 1789799961.587182,
-    "seen": 1794397831.2568,
-    "ast_hash": "f2bf1b69cfa1972997d7674e55369d18",
-    "semantic_hash": "f2bf1b69cfa1972997d7674e55369d18"
+    "mtime": 1794494729.5690515,
+    "seen": 1794495285.192078,
+    "ast_hash": "c6ce61b352e34fffc228659fc22cad3f",
+    "semantic_hash": "c6ce61b352e34fffc228659fc22cad3f"
   },
   "docs/operations/clients/velero.md": {
     "mtime": 1789799961.5872498,
@@ -2538,10 +2532,10 @@
     "semantic_hash": "c039ef0eca81fef994f9fab315ce2e9f"
   },
   "docs/tickets/036-high-availability.md": {
-    "mtime": 1793280706.0411654,
-    "seen": 1794397831.2568178,
-    "ast_hash": "49d0fe5f5a92d0c4c88913bbc5cc478c",
-    "semantic_hash": "49d0fe5f5a92d0c4c88913bbc5cc478c"
+    "mtime": 1794494729.5719197,
+    "seen": 1794495285.1920798,
+    "ast_hash": "cf477be36fbc3faf7858f702c82bd7d0",
+    "semantic_hash": "cf477be36fbc3faf7858f702c82bd7d0"
   },
   "docs/tickets/037-multiple-backends.md": {
     "mtime": 1789802588.8763123,
@@ -2616,10 +2610,10 @@
     "semantic_hash": "9a0201ce65d6784def38bf4edef6dc37"
   },
   "docs/adr/0038-the-security-architecture-is-one-page-per-perspective.md": {
-    "mtime": 1793280706.0315294,
-    "seen": 1794397831.256787,
-    "ast_hash": "a8f941b8198175ebecedeb159224c692",
-    "semantic_hash": "a8f941b8198175ebecedeb159224c692"
+    "mtime": 1794494729.5682037,
+    "seen": 1794495285.1920772,
+    "ast_hash": "761571e1260f0e30519d2a5c84ab348c",
+    "semantic_hash": "761571e1260f0e30519d2a5c84ab348c"
   },
   "docs/security/README.md": {
     "mtime": 1789801383.4812682,
@@ -2782,5 +2776,11 @@
     "seen": 1794397831.256798,
     "ast_hash": "c9caa3946f07ffb944543bf02e19c31c",
     "semantic_hash": "c9caa3946f07ffb944543bf02e19c31c"
+  },
+  "docs/adr/0023-filename-encryption-encrypts-every-segment-with-a-searchable-leaf-head.md": {
+    "mtime": 1794494729.5642853,
+    "seen": 1794495285.192069,
+    "ast_hash": "da5a6ed3fb9e65a274309ef058cfcff5",
+    "semantic_hash": "da5a6ed3fb9e65a274309ef058cfcff5"
   }
 }

@@ -1,53 +1,57 @@
 # Keyencryption: Aes Test
 
-> 21 nodes · cohesion 0.13
+> 24 nodes · cohesion 0.16
 
 ## Key Concepts
 
-- **NewAESKeyEncryptor()** (18 connections) — `pkg/encryption/keyencryption/aes.go`
-- **KekNewAES()** (9 connections) — `pkg/encryption/keyencryption/aes_coverage_test.go`
-- **testKEK()** (9 connections) — `pkg/encryption/keyencryption/aes_test.go`
-- **TestKekAESNewProviderFromConfigMap()** (5 connections) — `pkg/encryption/keyencryption/aes_coverage_test.go`
-- **NewExitProvider()** (5 connections) — `pkg/encryption/keyencryption/exit.go`
-- **KekBytePattern()** (4 connections) — `pkg/encryption/keyencryption/aes_coverage_test.go`
-- **TestKekAESDEKRoundTrip()** (4 connections) — `pkg/encryption/keyencryption/aes_coverage_test.go`
-- **TestAESKeyEncryptorFingerprintDiffersPerKey()** (4 connections) — `pkg/encryption/keyencryption/aes_test.go`
-- **TestAESKeyEncryptorFingerprintVector()** (4 connections) — `pkg/encryption/keyencryption/aes_test.go`
-- **TestAESKeyEncryptorRejectsForeignWrap()** (4 connections) — `pkg/encryption/keyencryption/aes_test.go`
-- **TestAESKeyEncryptorRejectsShortWrap()** (4 connections) — `pkg/encryption/keyencryption/aes_test.go`
-- **TestAESKeyEncryptorRejectsTamperedWrap()** (4 connections) — `pkg/encryption/keyencryption/aes_test.go`
-- **TestAESKeyEncryptorWrapIsNotDeterministic()** (4 connections) — `pkg/encryption/keyencryption/aes_test.go`
-- **TestAESKeyEncryptorWrapRoundTrip()** (4 connections) — `pkg/encryption/keyencryption/aes_test.go`
-- **TestAESProviderFromConfig()** (4 connections) — `pkg/encryption/keyencryption/aes_test.go`
-- **TestKekExitProviderIdentity()** (4 connections) — `pkg/encryption/keyencryption/exit_coverage_test.go`
-- **TestKekExitProviderRefusesEveryKeyUse()** (4 connections) — `pkg/encryption/keyencryption/exit_coverage_test.go`
-- **TestKekAESEncryptDEKUsesFreshSalt()** (3 connections) — `pkg/encryption/keyencryption/aes_coverage_test.go`
-- **TestKekAESFingerprintStabilityAndUniqueness()** (3 connections) — `pkg/encryption/keyencryption/aes_coverage_test.go`
-- **TestKekAESNewFromRawKEK()** (3 connections) — `pkg/encryption/keyencryption/aes_coverage_test.go`
-- **TestAESKeyEncryptorRejectsWrongKEKSize()** (3 connections) — `pkg/encryption/keyencryption/aes_test.go`
+- **UtlCaptureLogger()** (12 connections) — `internal/proxy/response/errors_coverage_test.go`
+- **UtlDecodeLog()** (10 connections) — `internal/proxy/response/errors_coverage_test.go`
+- **UtlParseErrorBody()** (10 connections) — `internal/proxy/response/errors_coverage_test.go`
+- **TestRespWriteS3Error_DoesNotLeakBackendDetail()** (8 connections) — `internal/proxy/response/errors_coverage_test.go`
+- **TestRespWriteS3Error_StatusDrivesLogLevel()** (8 connections) — `internal/proxy/response/errors_coverage_test.go`
+- **UtlFindLog()** (8 connections) — `internal/proxy/response/errors_coverage_test.go`
+- **TestRespWriteS3Error_InternalTextStaysInternal()** (7 connections) — `internal/proxy/response/errors_coverage_test.go`
+- **TestRespWriteS3Error_NilError()** (7 connections) — `internal/proxy/response/errors_coverage_test.go`
+- **TestRespWriteS3Error_ResourceComposition()** (7 connections) — `internal/proxy/response/errors_coverage_test.go`
+- **TestRespWriteS3Error_WriteFailureIsLogged()** (7 connections) — `internal/proxy/response/errors_coverage_test.go`
+- **bytes.Buffer** (6 connections)
+- **RtPxfailingWriter** (6 connections) — `internal/proxy/handlers/root/listbuckets_coverage_test.go`
+- **TestRespErrorDocumentCarriesTheResponseRequestID()** (5 connections) — `internal/proxy/response/errors_coverage_test.go`
+- **TestRespWriteS3Error_EscapesResource()** (5 connections) — `internal/proxy/response/errors_coverage_test.go`
+- **teeBuffer** (4 connections) — `test/e2e/harness/exec.go`
+- **s3Error** (4 connections) — `internal/proxy/response/errors.go`
+- **io2()** (4 connections) — `test/e2e/harness/exec.go`
+- **UtlNewFailingWriter()** (3 connections) — `internal/proxy/response/errors_coverage_test.go`
+- **UtlSDKError()** (3 connections) — `internal/proxy/response/errors_coverage_test.go`
+- **UtlLogEntry** (3 connections) — `internal/proxy/response/errors_coverage_test.go`
+- **github.com/sirupsen/logrus.Level** (2 connections)
+- **.Write()** (1 connections) — `test/e2e/harness/exec.go`
+- **.Write()** (1 connections) — `internal/proxy/handlers/root/listbuckets_coverage_test.go`
+- **.WriteHeader()** (1 connections) — `internal/proxy/handlers/root/listbuckets_coverage_test.go`
 
 ## Relationships
 
-- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (21 shared connections)
-- [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (18 shared connections)
-- [Factory: Factory](Factory-_Factory.md) (7 shared connections)
-- [Tampering Harness](Tampering_Harness.md) (1 shared connections)
-- [Storedobject: Storedobject](Storedobject-_Storedobject.md) (1 shared connections)
-- [Config: Config](Config-_Config.md) (1 shared connections)
-- [Perf Harness and Report](Perf_Harness_and_Report.md) (1 shared connections)
+- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (19 shared connections)
+- [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (12 shared connections)
+- [Sub-Resource Handler Tests](Sub-Resource_Handler_Tests.md) (8 shared connections)
+- [Request Middleware Plumbing](Request_Middleware_Plumbing.md) (2 shared connections)
+- [Checksum Verifier](Checksum_Verifier.md) (1 shared connections)
+- [Object Checksum and Tagging Tests](Object_Checksum_and_Tagging_Tests.md) (1 shared connections)
+- [Bucket XML Documents](Bucket_XML_Documents.md) (1 shared connections)
+- [Request Documents and Owner Guard](Request_Documents_and_Owner_Guard.md) (1 shared connections)
+- [Harness: Exec](Harness-_Exec.md) (1 shared connections)
 
 ## Source Files
 
-- `pkg/encryption/keyencryption/aes.go`
-- `pkg/encryption/keyencryption/aes_coverage_test.go`
-- `pkg/encryption/keyencryption/aes_test.go`
-- `pkg/encryption/keyencryption/exit.go`
-- `pkg/encryption/keyencryption/exit_coverage_test.go`
+- `internal/proxy/handlers/root/listbuckets_coverage_test.go`
+- `internal/proxy/response/errors.go`
+- `internal/proxy/response/errors_coverage_test.go`
+- `test/e2e/harness/exec.go`
 
 ## Audit Trail
 
-- EXTRACTED: 61 (78%)
-- INFERRED: 17 (22%)
+- EXTRACTED: 81 (91%)
+- INFERRED: 8 (9%)
 - AMBIGUOUS: 0 (0%)
 
 ---

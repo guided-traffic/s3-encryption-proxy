@@ -25,34 +25,32 @@
 - **EncOracleBucket()** (9 connections) — `test/integration/s3-methods/encryption_at_rest_test.go`
 - **EncViewObject()** (9 connections) — `test/integration/s3-methods/encryption_at_rest_test.go`
 - **EncSHA256()** (8 connections) — `test/integration/s3-methods/encryption_at_rest_test.go`
+- **TestCksPartNumberTenThousandIsRefused()** (8 connections) — `test/integration/s3-methods/sealed_checksum_test.go`
 - **EncAPICode()** (6 connections) — `test/integration/s3-methods/encryption_at_rest_test.go`
 - **EncAssertBodyIsCiphertext()** (6 connections) — `test/integration/s3-methods/encryption_at_rest_test.go`
 - **EncCompareViews()** (6 connections) — `test/integration/s3-methods/encryption_at_rest_test.go`
-- **EncHTTPStatus()** (6 connections) — `test/integration/s3-methods/encryption_at_rest_test.go`
 - *... and 8 more nodes in this community*
 
 ## Relationships
 
-- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (25 shared connections)
-- [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (21 shared connections)
-- [Delete and Checksum Integration](Delete_and_Checksum_Integration.md) (12 shared connections)
-- [Chunked Encoding Tests](Chunked_Encoding_Tests.md) (10 shared connections)
-- [Multipart Conformance](Multipart_Conformance.md) (10 shared connections)
-- [Streaming Integration Helpers](Streaming_Integration_Helpers.md) (8 shared connections)
-- [Tampering Harness](Tampering_Harness.md) (7 shared connections)
-- [S3 Methods: Sealed Checksum Test](S3_Methods-_Sealed_Checksum_Test.md) (4 shared connections)
+- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (24 shared connections)
+- [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (22 shared connections)
+- [Chunked Encoding Tests](Chunked_Encoding_Tests.md) (22 shared connections)
+- [Delete and Checksum Integration](Delete_and_Checksum_Integration.md) (13 shared connections)
+- [Streaming Integration Helpers](Streaming_Integration_Helpers.md) (10 shared connections)
+- [Misc (15)](Misc_15.md) (7 shared connections)
 - [Request Middleware Plumbing](Request_Middleware_Plumbing.md) (3 shared connections)
-- [In-Process Provider Instances](In-Process_Provider_Instances.md) (1 shared connections)
-- [Keygen and Encrypt Readers](Keygen_and_Encrypt_Readers.md) (1 shared connections)
+- [S3 Methods: Sealed Checksum Test](S3_Methods-_Sealed_Checksum_Test.md) (3 shared connections)
+- [Dataencryption: Segmented Gcm Range](Dataencryption-_Segmented_Gcm_Range.md) (1 shared connections)
 
 ## Source Files
 
-- `test/integration/minio_test_helper.go`
 - `test/integration/s3-methods/encryption_at_rest_test.go`
+- `test/integration/s3-methods/sealed_checksum_test.go`
 
 ## Audit Trail
 
-- EXTRACTED: 221 (98%)
+- EXTRACTED: 224 (98%)
 - INFERRED: 4 (2%)
 - AMBIGUOUS: 0 (0%)
 

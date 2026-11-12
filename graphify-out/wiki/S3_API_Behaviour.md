@@ -1,75 +1,77 @@
 # S3 API Behaviour
 
-> 59 nodes · cohesion 0.05
+> 84 nodes · cohesion 0.03
 
 ## Key Concepts
 
-- **ADR 0007: Forward it or refuse it** (48 connections) — `docs/adr/0007-forward-it-or-refuse-it.md`
-- **Developer: Request paths** (32 connections) — `docs/developer/request-paths.md`
-- **Operations: S3 API behaviour** (19 connections) — `docs/operations/s3-api.md`
-- **PlaintextSize()** (12 connections) — `pkg/encryption/dataencryption/segmented_gcm.go`
-- **Upload checksum verifier reader** (11 connections) — `docs/developer/request-paths.md`
-- **Listings report plaintext size** (7 connections) — `docs/developer/request-paths.md`
+- **ADR 0007: Forward it or refuse it** (63 connections) — `docs/tickets/017-filename-encryption.md`
+- **ADR 0008: Every response describes the proxy** (42 connections) — `docs/adr/0008-every-response-describes-the-proxy.md`
+- **ADR 0009: The metadata prefix is the proxy namespace** (33 connections) — `docs/adr/0009-the-metadata-prefix-is-the-proxys-namespace.md`
+- **ADR 0032: The entity tag is a change token** (23 connections) — `docs/tickets/037-multiple-backends.md`
+- **Operations: S3 API behaviour** (22 connections) — `docs/operations/s3-api.md`
+- **Operating the proxy (operations index)** (11 connections) — `docs/operations/README.md`
+- **What the proxy guarantees about your bytes** (10 connections) — `docs/operations/integrity.md`
+- **Forward it or refuse it, never silently drop** (7 connections) — `docs/adr/0007-forward-it-or-refuse-it.md`
 - **x-amz-expected-bucket-owner set in every s3 Input literal** (7 connections) — `docs/developer/request-paths.md`
-- **What is verified on every S3 request** (6 connections) — `docs/security/request-authentication.md`
+- **rclone** (7 connections) — `docs/operations/clients/rclone.md`
+- **A control existing only in config or docs is worse than none** (5 connections) — `docs/adr/0001-the-backend-is-hostile.md`
 - **405 MethodNotAllowed vs 501 NotImplemented dispatch** (5 connections) — `docs/developer/request-paths.md`
+- **x-amz-expected-bucket-owner forwarded on every verb** (5 connections) — `docs/operations/s3-api.md`
 - **Client part sizes must cover whole 64 KiB segments** (5 connections) — `docs/operations/s3-api.md`
 - **Sub-resources: 501 NotImplemented or 405 MethodNotAllowed** (5 connections) — `docs/operations/s3-api.md`
-- **fillPart()** (5 connections) — `internal/proxy/handlers/object/operations.go`
 - **TestEveryBackendCallCarriesTheOwnerGuard()** (5 connections) — `internal/proxy/request/bucketowner_guard_test.go`
-- **CRC-64/NVME slicing-by-8 table** (4 connections) — `docs/developer/request-paths.md`
-- **response-* query parameter overrides** (4 connections) — `docs/developer/request-paths.md`
-- **Short-body guard (declared length check, only io.EOF ends a part)** (4 connections) — `docs/developer/request-paths.md`
-- **x-amz-expected-bucket-owner forwarded on every verb** (4 connections) — `docs/operations/s3-api.md`
+- **Prefix validated at startup (^[a-z0-9][a-z0-9-]{2,}-$)** (4 connections) — `docs/adr/0009-the-metadata-prefix-is-the-proxys-namespace.md`
+- **Backend Checksum Never Relayed; Proxy Serves Its Own Sealed CRC32C (D10/D10a)** (4 connections) — `docs/adr/0012-client-checksums-are-verified-never-forwarded.md`
 - **Storage headers on upload: forward it or refuse it** (4 connections) — `docs/operations/s3-api.md`
-- **TestSegOversizeRefused()** (4 connections) — `pkg/encryption/dataencryption/segmented_gcm_test.go`
-- **TestSegSizeGuardRejectsUnreachableLengths()** (4 connections) — `pkg/encryption/dataencryption/segmented_gcm_test.go`
-- **.reportedSize()** (3 connections) — `internal/proxy/handlers/bucket/listing.go`
-- **Error behind non-error status answered 500 (304 carve-out)** (3 connections) — `docs/adr/0008-every-response-describes-the-proxy.md`
-- **CompleteMultipartUpload reads body unverified** (3 connections) — `docs/developer/request-paths.md`
+- **x-amz-expected-bucket-owner carried on every backend call** (3 connections) — `docs/adr/0007-forward-it-or-refuse-it.md`
+- **Backend header restated by what it describes** (3 connections) — `docs/adr/0008-every-response-describes-the-proxy.md`
+- **Client metadata key inside the namespace refused 400 InvalidArgument** (3 connections) — `docs/adr/0009-the-metadata-prefix-is-the-proxys-namespace.md`
 - **When the defect is an omission, test the source** (3 connections) — `docs/developer/testing.md`
-- **HEAD, GET and listings report the plaintext size** (3 connections) — `docs/operations/s3-api.md`
-- *... and 34 more nodes in this community*
+- **use_multipart_etag = false** (3 connections) — `docs/operations/clients/rclone.md`
+- **Three write paths produce identical bytes** (3 connections) — `docs/operations/s3-api.md`
+- *... and 59 more nodes in this community*
 
 ## Relationships
 
-- [ADR Corpus and Release History](ADR_Corpus_and_Release_History.md) (28 shared connections)
-- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (16 shared connections)
-- [Integrity and Tail-First Read](Integrity_and_Tail-First_Read.md) (8 shared connections)
-- [Client Library and Storage Format](Client_Library_and_Storage_Format.md) (6 shared connections)
-- [Segment Codec and Range Planner](Segment_Codec_and_Range_Planner.md) (6 shared connections)
-- [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (5 shared connections)
-- [SigV4 Authentication Rules](SigV4_Authentication_Rules.md) (5 shared connections)
-- [Release Process and Doc Homes](Release_Process_and_Doc_Homes.md) (4 shared connections)
+- [Integrity and Tail-First Read](Integrity_and_Tail-First_Read.md) (22 shared connections)
+- [ADR Corpus and Release History](ADR_Corpus_and_Release_History.md) (20 shared connections)
+- [Exit Provider and Session Lifecycle](Exit_Provider_and_Session_Lifecycle.md) (14 shared connections)
+- [Client Library and Storage Format](Client_Library_and_Storage_Format.md) (12 shared connections)
+- [SigV4 Authentication Rules](SigV4_Authentication_Rules.md) (10 shared connections)
+- [Middleware: S3Auth Robust](Middleware-_S3Auth_Robust.md) (10 shared connections)
+- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (7 shared connections)
+- [Filename Encryption Ticket](Filename_Encryption_Ticket.md) (6 shared connections)
+- [Whole-Object Read Window](Whole-Object_Read_Window.md) (5 shared connections)
+- [Planned Work: SSE-C and HA](Planned_Work-_SSE-C_and_HA.md) (5 shared connections)
+- [Monitoring and Licence Removal](Monitoring_and_Licence_Removal.md) (5 shared connections)
 - [Key Hierarchy and Threat Rules](Key_Hierarchy_and_Threat_Rules.md) (4 shared connections)
-- [Performance and Test Docs](Performance_and_Test_Docs.md) (4 shared connections)
-- [Storedobject: Storedobject](Storedobject-_Storedobject.md) (4 shared connections)
-- [Key Material and Deployment Secrets](Key_Material_and_Deployment_Secrets.md) (4 shared connections)
 
 ## Source Files
 
 - `DEVELOPER.md`
+- `docs/adr/0001-the-backend-is-hostile.md`
+- `docs/adr/0006-the-proxy-serves-any-s3-client.md`
 - `docs/adr/0007-forward-it-or-refuse-it.md`
 - `docs/adr/0008-every-response-describes-the-proxy.md`
-- `docs/adr/0010-sizes-and-listings-describe-the-plaintext.md`
+- `docs/adr/0009-the-metadata-prefix-is-the-proxys-namespace.md`
+- `docs/adr/0012-client-checksums-are-verified-never-forwarded.md`
 - `docs/developer/request-paths.md`
 - `docs/developer/testing.md`
+- `docs/operations/README.md`
+- `docs/operations/clients/rclone.md`
+- `docs/operations/integrity.md`
 - `docs/operations/s3-api.md`
 - `docs/security/refusals.md`
-- `docs/security/request-authentication.md`
-- `docs/security/upload-integrity.md`
-- `internal/proxy/handlers/bucket/listing.go`
-- `internal/proxy/handlers/object/operations.go`
+- `docs/tickets/017-filename-encryption.md`
+- `docs/tickets/036-high-availability.md`
+- `docs/tickets/037-multiple-backends.md`
 - `internal/proxy/request/bucketowner_guard_test.go`
-- `pkg/encryption/dataencryption/segmented_gcm.go`
-- `pkg/encryption/dataencryption/segmented_gcm_test.go`
-- `pkg/s3enc/read.go`
 
 ## Audit Trail
 
-- EXTRACTED: 174 (89%)
-- INFERRED: 20 (10%)
-- AMBIGUOUS: 1 (1%)
+- EXTRACTED: 243 (94%)
+- INFERRED: 15 (6%)
+- AMBIGUOUS: 0 (0%)
 
 ---
 

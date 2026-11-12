@@ -1,62 +1,64 @@
 # Performance and Test Docs
 
-> 31 nodes · cohesion 0.07
+> 47 nodes · cohesion 0.05
 
 ## Key Concepts
 
-- **Developer: Testing** (25 connections) — `docs/developer/testing.md`
-- **Developer: Performance** (18 connections) — `docs/developer/performance.md`
-- **A client suite asserts the target behaviour** (6 connections) — `docs/developer/testing.md`
-- **PUT routes on plaintext length, never wire length** (5 connections) — `docs/developer/request-paths.md`
-- **Conformance suite (any backend)** (5 connections) — `docs/developer/testing.md`
-- **Three-Leg Upload Comparison** (4 connections) — `docs/developer/performance.md`
-- **The Memory Instrument Is the One Asserted Figure** (3 connections) — `docs/developer/performance.md`
-- **test/perf baseline records, never asserts throughput** (3 connections) — `docs/developer/testing.md`
-- **S3EP_PERF_ALT_PROXY second proxy** (2 connections) — `docs/developer/performance.md`
-- **Two Transports Inside One Ratio (HTTP proxy leg vs HTTPS backend leg)** (2 connections) — `docs/developer/performance.md`
-- **What Ruins a Before/After Comparison** (2 connections) — `docs/developer/performance.md`
-- **BACKEND DEVIATION log instead of a skip** (2 connections) — `docs/developer/testing.md`
-- **CI: semantic-release needs every suite** (2 connections) — `docs/developer/testing.md`
-- **Conformance cost rule and Budget.Authorize** (2 connections) — `docs/developer/testing.md`
-- **conformance-run.sh writes its own proxy configuration** (2 connections) — `docs/developer/testing.md`
-- **encryption-modes starts the proxy in process** (2 connections) — `docs/developer/testing.md`
-- **One tool, one e2e job** (2 connections) — `docs/developer/testing.md`
-- **Paid-run bucket policy (scoped sub-user)** (2 connections) — `docs/developer/testing.md`
-- **e2e verdict table (Still broken section)** (2 connections) — `docs/developer/testing.md`
-- **rclone e2e suite R1-R7** (2 connections) — `docs/operations/clients/rclone.md`
-- **The After Column (perf-baseline 20260911T103132Z-cc62c05)** (1 connections) — `docs/developer/performance.md`
-- **Record the Before Column First** (1 connections) — `docs/developer/performance.md`
-- **The In-Process Crypto Floor Rules the Cipher Out** (1 connections) — `docs/developer/performance.md`
-- **A Per-Request Log Line Is Debug** (1 connections) — `docs/developer/performance.md`
-- **Report what was measured, on what machine, against which column, and what the instrument could not separate** (1 connections) — `docs/developer/performance.md`
-- *... and 6 more nodes in this community*
+- **ADR 0022: Tickets are work lists that get archived** (20 connections) — `docs/tickets/README.md`
+- **CLAUDE.md AI coding instructions** (18 connections) — `CLAUDE.md`
+- **ADR 0035: The README advertises, the reference lives under docs** (14 connections) — `CLAUDE.md`
+- **ADR 0038: The security architecture is one page per perspective** (13 connections) — `docs/adr/0038-the-security-architecture-is-one-page-per-perspective.md`
+- **CONTRIBUTING guide** (9 connections) — `CONTRIBUTING.md`
+- **One stored format s3ep-gcm-seg-v2** (4 connections) — `CLAUDE.md`
+- **Pull request requirements (fifteen required checks)** (4 connections) — `CONTRIBUTING.md`
+- **Test layers (unit, integration, TLS, Velero, client e2e, conformance)** (4 connections) — `CONTRIBUTING.md`
+- **A ticket is closed by moving it into the archive; extraction is the close (D4)** (4 connections) — `docs/adr/0022-tickets-are-work-lists-that-get-archived.md`
+- **Documentation has five homes (ADR, developer, operations, security, tickets)** (3 connections) — `CLAUDE.md`
+- **Nothing outside the ticket directory references a ticket (D5)** (3 connections) — `docs/adr/0022-tickets-are-work-lists-that-get-archived.md`
+- **Five documentation homes; a statement goes to exactly one (D7)** (3 connections) — `docs/adr/0035-the-readme-advertises-the-reference-lives-under-docs.md`
+- **ADRs hold every decision, current state only, no code references** (2 connections) — `CLAUDE.md`
+- **Three build tags: integration, conformance, e2e** (2 connections) — `CLAUDE.md`
+- **Go version spelled out in exactly two files (Containerfile, go.mod)** (2 connections) — `CLAUDE.md`
+- **Renovate 'Go toolchain' group bumps both literals and tools/go.mod together** (2 connections) — `CLAUDE.md`
+- **A ticket is a work list, archived when work lands; nothing outside cites it** (2 connections) — `CLAUDE.md`
+- **Conventional commits drive the release version** (2 connections) — `CONTRIBUTING.md`
+- **release:major label guard for breaking changes** (2 connections) — `CONTRIBUTING.md`
+- **Linters run via go tool from tools/go.mod** (2 connections) — `CONTRIBUTING.md`
+- **An ADR carries no references into the code (D8)** (2 connections) — `docs/adr/0022-tickets-are-work-lists-that-get-archived.md`
+- **An ADR states the current decision only; rewritten, never superseded (D9)** (2 connections) — `docs/adr/0022-tickets-are-work-lists-that-get-archived.md`
+- **Status section says what is implemented vs only decided (D11)** (2 connections) — `docs/adr/0022-tickets-are-work-lists-that-get-archived.md`
+- **Every page ends with what it does not cover; a gap lives beside its mechanism (D2)** (2 connections) — `docs/adr/0038-the-security-architecture-is-one-page-per-perspective.md`
+- **Stable H-<n> identifier for open gaps; closed gaps become prose (D3)** (2 connections) — `docs/adr/0038-the-security-architecture-is-one-page-per-perspective.md`
+- *... and 22 more nodes in this community*
 
 ## Relationships
 
-- [ADR Corpus and Release History](ADR_Corpus_and_Release_History.md) (11 shared connections)
-- [Release Process and Doc Homes](Release_Process_and_Doc_Homes.md) (5 shared connections)
-- [S3 API Behaviour](S3_API_Behaviour.md) (4 shared connections)
-- [Client Library and Storage Format](Client_Library_and_Storage_Format.md) (4 shared connections)
-- [Request Documents and Owner Guard](Request_Documents_and_Owner_Guard.md) (2 shared connections)
-- [Whole-Object Read Window](Whole-Object_Read_Window.md) (2 shared connections)
-- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (2 shared connections)
-- [Integrity and Tail-First Read](Integrity_and_Tail-First_Read.md) (1 shared connections)
-- [Key Hierarchy and Threat Rules](Key_Hierarchy_and_Threat_Rules.md) (1 shared connections)
-- [Streaming Integration Helpers](Streaming_Integration_Helpers.md) (1 shared connections)
-- [SigV4 Authentication Rules](SigV4_Authentication_Rules.md) (1 shared connections)
-- [Configuration Loading](Configuration_Loading.md) (1 shared connections)
+- [Monitoring and Licence Removal](Monitoring_and_Licence_Removal.md) (7 shared connections)
+- [SigV4 Authentication Rules](SigV4_Authentication_Rules.md) (5 shared connections)
+- [Key Hierarchy and Threat Rules](Key_Hierarchy_and_Threat_Rules.md) (4 shared connections)
+- [ADR Corpus and Release History](ADR_Corpus_and_Release_History.md) (4 shared connections)
+- [Release Process and Doc Homes](Release_Process_and_Doc_Homes.md) (4 shared connections)
+- [Filename Encryption Ticket](Filename_Encryption_Ticket.md) (3 shared connections)
+- [Integrity and Tail-First Read](Integrity_and_Tail-First_Read.md) (3 shared connections)
+- [Misc (7)](Misc_7.md) (1 shared connections)
+- [Whole-Object Read Window](Whole-Object_Read_Window.md) (1 shared connections)
+- [Planned Work: SSE-C and HA](Planned_Work-_SSE-C_and_HA.md) (1 shared connections)
+- [Exit Provider and Session Lifecycle](Exit_Provider_and_Session_Lifecycle.md) (1 shared connections)
 
 ## Source Files
 
-- `docs/developer/performance.md`
-- `docs/developer/request-paths.md`
-- `docs/developer/testing.md`
-- `docs/operations/clients/rclone.md`
+- `CLAUDE.md`
+- `CONTRIBUTING.md`
+- `docs/adr/0022-tickets-are-work-lists-that-get-archived.md`
+- `docs/adr/0035-the-readme-advertises-the-reference-lives-under-docs.md`
+- `docs/adr/0038-the-security-architecture-is-one-page-per-perspective.md`
+- `docs/adr/README.md`
+- `docs/tickets/README.md`
 
 ## Audit Trail
 
-- EXTRACTED: 66 (93%)
-- INFERRED: 5 (7%)
+- EXTRACTED: 84 (91%)
+- INFERRED: 8 (9%)
 - AMBIGUOUS: 0 (0%)
 
 ---

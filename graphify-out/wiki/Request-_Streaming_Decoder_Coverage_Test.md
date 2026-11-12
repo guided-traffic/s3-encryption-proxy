@@ -1,59 +1,57 @@
 # Request: Streaming Decoder Coverage Test
 
-> 25 nodes · cohesion 0.14
+> 25 nodes · cohesion 0.11
 
 ## Key Concepts
 
-- **newStreamingAWSChunkedReader()** (25 connections) — `internal/proxy/request/streaming_aws_decoder.go`
-- **testLogger()** (24 connections) — `internal/proxy/request/streaming_aws_decoder_test.go`
-- **ChkverifyingParser()** (7 connections) — `internal/proxy/request/checksum_test.go`
-- **ChkpayloadHash()** (5 connections) — `internal/proxy/request/checksum_test.go`
-- **TestStreamingAWSChunkedReader_RoundTrip()** (5 connections) — `internal/proxy/request/streaming_aws_decoder_test.go`
-- **TestStreamingAWSChunkedReader_SmallReads()** (5 connections) — `internal/proxy/request/streaming_aws_decoder_test.go`
-- **TestReqStreamingAWSChunkedReader_OversizedDestinationBuffer()** (5 connections) — `internal/proxy/request/streaming_decoder_coverage_test.go`
-- **TestChkPayloadHashIsNotVerifiedUnlessConfigured()** (4 connections) — `internal/proxy/request/checksum_test.go`
-- **TestChkPayloadHashIsVerifiedBesideAnotherDigest()** (4 connections) — `internal/proxy/request/checksum_test.go`
-- **TestChkPayloadHashIsVerifiedWhenConfigured()** (4 connections) — `internal/proxy/request/checksum_test.go`
-- **TestChkPayloadHashNeverSatisfiesTheDeleteObjectsRule()** (4 connections) — `internal/proxy/request/checksum_test.go`
-- **TestStreamingAWSChunkedReader_Errors()** (4 connections) — `internal/proxy/request/streaming_aws_decoder_test.go`
-- **TestStreamingAWSChunkedReader_MultipleTrailers()** (4 connections) — `internal/proxy/request/streaming_aws_decoder_test.go`
-- **TestStreamingAWSChunkedReader_SizeMismatch()** (4 connections) — `internal/proxy/request/streaming_aws_decoder_test.go`
-- **TestReqStreamingAWSChunkedReader_BlankLineBetweenChunks()** (4 connections) — `internal/proxy/request/streaming_decoder_coverage_test.go`
-- **TestReqStreamingAWSChunkedReader_BlankLineThenEOF()** (4 connections) — `internal/proxy/request/streaming_decoder_coverage_test.go`
-- **TestReqStreamingAWSChunkedReader_BlankLineThenInvalidSize()** (4 connections) — `internal/proxy/request/streaming_decoder_coverage_test.go`
-- **TestReqStreamingAWSChunkedReader_ChunkHeaderVariants()** (4 connections) — `internal/proxy/request/streaming_decoder_coverage_test.go`
-- **TestReqStreamingAWSChunkedReader_ChunkTerminatorErrors()** (4 connections) — `internal/proxy/request/streaming_decoder_coverage_test.go`
-- **TestReqStreamingAWSChunkedReader_EmptyDestinationBuffer()** (4 connections) — `internal/proxy/request/streaming_decoder_coverage_test.go`
-- **TestReqStreamingAWSChunkedReader_NegativeChunkSize()** (4 connections) — `internal/proxy/request/streaming_decoder_coverage_test.go`
-- **TestReqStreamingAWSChunkedReader_ReadAfterEOF()** (4 connections) — `internal/proxy/request/streaming_decoder_coverage_test.go`
-- **TestReqStreamingAWSChunkedReader_TrailerDrain()** (4 connections) — `internal/proxy/request/streaming_decoder_coverage_test.go`
-- **TestReqStreamingAWSChunkedReader_TruncationIsUnexpectedEOF()** (4 connections) — `internal/proxy/request/streaming_decoder_coverage_test.go`
-- **TestReqStreamingAWSChunkedReader_UpstreamErrorPropagates()** (4 connections) — `internal/proxy/request/streaming_decoder_coverage_test.go`
+- **Release 5.0.0: incompatible stored format, strict configuration** (39 connections) — `CHANGELOG.md`
+- **Entity tag as change token with -0 suffix (ADR 0032)** (4 connections) — `CHANGELOG.md`
+- **Every declared upload checksum verified against plaintext (ADR 0012)** (4 connections) — `CHANGELOG.md`
+- **optimizations.max_request_document_size** (4 connections) — `docs/operations/s3-api.md`
+- **E2E suites: Velero (13), rclone (28), s3cmd (19)** (3 connections) — `CHANGELOG.md`
+- **Tail-first whole-object read with sealed CRC32C** (3 connections) — `CHANGELOG.md`
+- **Suites assert target behaviour, none skipped (ADR 0031, ADR 0019)** (3 connections) — `CHANGELOG.md`
+- **s3_security.verify_payload_hash** (3 connections) — `docs/operations/integrity.md`
+- **aes_key must be base64 of 32 random bytes** (2 connections) — `CHANGELOG.md`
+- **S3 client authentication (2.1.0)** (2 connections) — `CHANGELOG.md`
+- **Conformance tests against MinIO, LocalStack, Wasabi (ADR 0027)** (2 connections) — `CHANGELOG.md`
+- **${VAR} reference is the only environment mechanism; no S3EP_ overrides** (2 connections) — `CHANGELOG.md`
+- **Image ships config/default.yaml and an ENTRYPOINT** (2 connections) — `CHANGELOG.md`
+- **optimizations.multipart_short_part_buffer_size (process-wide budget)** (2 connections) — `CHANGELOG.md`
+- **max_presign_expiry_seconds and max_clock_skew_seconds (no 0)** (2 connections) — `CHANGELOG.md`
+- **x-amz-request-id on every response and RequestId in error documents** (2 connections) — `CHANGELOG.md`
+- **SigV4 canonical query sorted by name, whitespace collapsed** (2 connections) — `CHANGELOG.md`
+- **Chart ships no NetworkPolicy (ADR 0030)** (1 connections) — `CHANGELOG.md`
+- **Conditional requests honoured on every verb** (1 connections) — `CHANGELOG.md`
+- **Bucket listing as S3 ListBucketResult with plaintext size** (1 connections) — `CHANGELOG.md`
+- **Metrics: 13 dead series removed, Go runtime/process collectors restored** (1 connections) — `CHANGELOG.md`
+- **response-* query overrides honoured on HEAD** (1 connections) — `CHANGELOG.md`
+- **s3_backend mapping becomes s3_backends list (one entry)** (1 connections) — `CHANGELOG.md`
+- **Query string containing ';' refused with 400 InvalidArgument** (1 connections) — `CHANGELOG.md`
+- **Storage headers, tagging, retention, legal hold forwarded; SSE-C refused 501** (1 connections) — `CHANGELOG.md`
 
 ## Relationships
 
-- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (25 shared connections)
-- [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (22 shared connections)
-- [Checksum Verifier](Checksum_Verifier.md) (6 shared connections)
-- [Multipart Handlers and Manager](Multipart_Handlers_and_Manager.md) (3 shared connections)
-- [Request Documents and Owner Guard](Request_Documents_and_Owner_Guard.md) (3 shared connections)
-- [Request: Parser Test](Request-_Parser_Test.md) (3 shared connections)
-- [Sub-Resource Handler Tests](Sub-Resource_Handler_Tests.md) (1 shared connections)
-- [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (1 shared connections)
-- [Keygen and Encrypt Readers](Keygen_and_Encrypt_Readers.md) (1 shared connections)
-- [Request: Streaming Aws Decoder](Request-_Streaming_Aws_Decoder.md) (1 shared connections)
+- [Object: Range (2)](Object-_Range_2.md) (5 shared connections)
+- [Misc (31)](Misc_31.md) (4 shared connections)
+- [Changelog: Configuration Refusals](Changelog-_Configuration_Refusals.md) (3 shared connections)
+- [Changelog: Shutdown And Listener Budgets](Changelog-_Shutdown_And_Listener_Budgets.md) (3 shared connections)
+- [S3 API Behaviour](S3_API_Behaviour.md) (2 shared connections)
+- [Changelog: Release 4.0.0 Hardening](Changelog-_Release_4.0.0_Hardening.md) (1 shared connections)
+- [Changelog: Providers And Licence](Changelog-_Providers_And_Licence.md) (1 shared connections)
+- [Middleware: S3Auth Robust](Middleware-_S3Auth_Robust.md) (1 shared connections)
+- [Exit Provider and Session Lifecycle](Exit_Provider_and_Session_Lifecycle.md) (1 shared connections)
 
 ## Source Files
 
-- `internal/proxy/request/checksum_test.go`
-- `internal/proxy/request/streaming_aws_decoder.go`
-- `internal/proxy/request/streaming_aws_decoder_test.go`
-- `internal/proxy/request/streaming_decoder_coverage_test.go`
+- `CHANGELOG.md`
+- `docs/operations/integrity.md`
+- `docs/operations/s3-api.md`
 
 ## Audit Trail
 
-- EXTRACTED: 65 (61%)
-- INFERRED: 42 (39%)
+- EXTRACTED: 49 (89%)
+- INFERRED: 6 (11%)
 - AMBIGUOUS: 0 (0%)
 
 ---

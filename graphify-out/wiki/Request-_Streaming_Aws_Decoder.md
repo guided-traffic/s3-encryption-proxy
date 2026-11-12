@@ -16,9 +16,9 @@
 ## Relationships
 
 - [Multipart Handlers and Manager](Multipart_Handlers_and_Manager.md) (1 shared connections)
-- [Request: Streaming Decoder Coverage Test](Request-_Streaming_Decoder_Coverage_Test.md) (1 shared connections)
+- [Checksum Verifier](Checksum_Verifier.md) (1 shared connections)
 - [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (1 shared connections)
-- [S3 API Behaviour](S3_API_Behaviour.md) (1 shared connections)
+- [Middleware: S3Auth Robust](Middleware-_S3Auth_Robust.md) (1 shared connections)
 
 ## Source Files
 

@@ -1,24 +1,37 @@
 # Adr: 0026 The Proxy Terminates Tls At Its Own Service
 
-> 2 nodes · cohesion 1.00
+> 7 nodes · cohesion 0.67
 
 ## Key Concepts
 
-- **cert-manager Certificate must have a visible consumer** (1 connections) — `docs/adr/0026-the-proxy-terminates-tls-at-its-own-service.md`
-- **Enabled Ingress must terminate TLS for every host** (1 connections) — `docs/adr/0026-the-proxy-terminates-tls-at-its-own-service.md`
+- **.GetBucketReplication()** (8 connections) — `internal/proxy/interfaces/s3_backend.go`
+- **.GetBucketReplication()** (5 connections) — `internal/proxy/handlers/bucket/test_helpers_test.go`
+- **github.com/aws/aws-sdk-go-v2/service/s3.GetBucketReplicationInput** (5 connections)
+- **github.com/aws/aws-sdk-go-v2/service/s3.GetBucketReplicationOutput** (5 connections)
+- **.GetBucketReplication()** (5 connections) — `internal/proxy/handlers/multipart/multipart_test.go`
+- **.GetBucketReplication()** (5 connections) — `internal/proxy/handlers/object/test_helpers_test.go`
+- **.GetBucketReplication()** (5 connections) — `internal/proxy/handlers/root/test_helpers_test.go`
 
 ## Relationships
 
-- No strong cross-community connections detected
+- [Misc (15)](Misc_15.md) (5 shared connections)
+- [S3 Backend Mock](S3_Backend_Mock.md) (2 shared connections)
+- [Multipart Handlers and Manager](Multipart_Handlers_and_Manager.md) (1 shared connections)
+- [Backend Interface Calls](Backend_Interface_Calls.md) (1 shared connections)
+- [Misc (12)](Misc_12.md) (1 shared connections)
 
 ## Source Files
 
-- `docs/adr/0026-the-proxy-terminates-tls-at-its-own-service.md`
+- `internal/proxy/handlers/bucket/test_helpers_test.go`
+- `internal/proxy/handlers/multipart/multipart_test.go`
+- `internal/proxy/handlers/object/test_helpers_test.go`
+- `internal/proxy/handlers/root/test_helpers_test.go`
+- `internal/proxy/interfaces/s3_backend.go`
 
 ## Audit Trail
 
-- EXTRACTED: 1 (100%)
-- INFERRED: 0 (0%)
+- EXTRACTED: 20 (83%)
+- INFERRED: 4 (17%)
 - AMBIGUOUS: 0 (0%)
 
 ---

@@ -1,14 +1,14 @@
 # Sub-Resource Handler Tests
 
-> 83 nodes · cohesion 0.08
+> 80 nodes · cohesion 0.08
 
 ## Key Concepts
 
 - **NewErrorWriter()** (91 connections) — `internal/proxy/response/errors.go`
-- **NewParser()** (57 connections) — `internal/proxy/request/parser.go`
+- **NewParser()** (56 connections) — `internal/proxy/request/parser.go`
 - **NewXMLWriter()** (52 connections) — `internal/proxy/response/xml.go`
 - **NewBaseSubResourceHandler()** (49 connections) — `internal/proxy/handlers/bucket/base.go`
-- **NewHandler()** (40 connections) — `internal/proxy/handlers/bucket/handler.go`
+- **NewHandler()** (39 connections) — `internal/proxy/handlers/bucket/handler.go`
 - **BaseSubResourceHandler** (34 connections) — `internal/proxy/handlers/bucket/base.go`
 - **NewAccelerateHandler()** (11 connections) — `internal/proxy/handlers/bucket/accelerate.go`
 - **NewRequestPaymentHandler()** (11 connections) — `internal/proxy/handlers/bucket/request_payment.go`
@@ -29,22 +29,22 @@
 - **TestNotificationHandler_ComplexConfigurations()** (7 connections) — `internal/proxy/handlers/bucket/notification_test.go`
 - **TestNotificationHandler_EventTypes()** (7 connections) — `internal/proxy/handlers/bucket/notification_test.go`
 - **TestNotificationHandler_Handle()** (7 connections) — `internal/proxy/handlers/bucket/notification_test.go`
-- *... and 58 more nodes in this community*
+- *... and 55 more nodes in this community*
 
 ## Relationships
 
-- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (82 shared connections)
+- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (79 shared connections)
 - [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (64 shared connections)
-- [Multipart Handlers and Manager](Multipart_Handlers_and_Manager.md) (34 shared connections)
-- [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (28 shared connections)
-- [Checksum Verifier](Checksum_Verifier.md) (11 shared connections)
+- [Multipart Handlers and Manager](Multipart_Handlers_and_Manager.md) (31 shared connections)
+- [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (16 shared connections)
+- [Object: Metadata Coverage Test](Object-_Metadata_Coverage_Test.md) (15 shared connections)
+- [Keyencryption: Aes Test](Keyencryption-_Aes_Test.md) (8 shared connections)
 - [Error Mapping](Error_Mapping.md) (7 shared connections)
+- [Bucket Handler Tests](Bucket_Handler_Tests.md) (6 shared connections)
 - [Response: Error Mapping Coverage Test](Response-_Error_Mapping_Coverage_Test.md) (6 shared connections)
-- [Bucket Handler Tests](Bucket_Handler_Tests.md) (5 shared connections)
-- [CORS and Middleware](CORS_and_Middleware.md) (4 shared connections)
-- [Config Types and Monitoring Plan](Config_Types_and_Monitoring_Plan.md) (3 shared connections)
+- [Request Documents and Owner Guard](Request_Documents_and_Owner_Guard.md) (4 shared connections)
+- [Checksum Verifier](Checksum_Verifier.md) (4 shared connections)
 - [Multipart Checksum Answers](Multipart_Checksum_Answers.md) (3 shared connections)
-- [Backend TLS Trust](Backend_TLS_Trust.md) (3 shared connections)
 
 ## Source Files
 
@@ -58,21 +58,21 @@
 - `internal/proxy/handlers/bucket/handlers_test.go`
 - `internal/proxy/handlers/bucket/lifecycle.go`
 - `internal/proxy/handlers/bucket/lifecycle_test.go`
-- `internal/proxy/handlers/bucket/location.go`
 - `internal/proxy/handlers/bucket/location_test.go`
-- `internal/proxy/handlers/bucket/logging.go`
 - `internal/proxy/handlers/bucket/logging_test.go`
 - `internal/proxy/handlers/bucket/notification.go`
 - `internal/proxy/handlers/bucket/notification_test.go`
-- `internal/proxy/handlers/bucket/policy.go`
 - `internal/proxy/handlers/bucket/policy_test.go`
 - `internal/proxy/handlers/bucket/replication.go`
 - `internal/proxy/handlers/bucket/replication_test.go`
+- `internal/proxy/handlers/bucket/request_payment.go`
+- `internal/proxy/handlers/bucket/request_payment_test.go`
+- `internal/proxy/handlers/bucket/tagging.go`
 
 ## Audit Trail
 
-- EXTRACTED: 370 (72%)
-- INFERRED: 146 (28%)
+- EXTRACTED: 362 (71%)
+- INFERRED: 146 (29%)
 - AMBIGUOUS: 0 (0%)
 
 ---

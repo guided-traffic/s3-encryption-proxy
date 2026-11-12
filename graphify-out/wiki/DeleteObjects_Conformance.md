@@ -33,16 +33,15 @@
 
 ## Relationships
 
-- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (23 shared connections)
+- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (22 shared connections)
+- [Chunked Encoding Tests](Chunked_Encoding_Tests.md) (21 shared connections)
 - [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (19 shared connections)
-- [Chunked Encoding Tests](Chunked_Encoding_Tests.md) (11 shared connections)
-- [Multipart Conformance](Multipart_Conformance.md) (10 shared connections)
-- [Tampering Harness](Tampering_Harness.md) (6 shared connections)
-- [Streaming Integration Helpers](Streaming_Integration_Helpers.md) (5 shared connections)
+- [Streaming Integration Helpers](Streaming_Integration_Helpers.md) (6 shared connections)
+- [Misc (15)](Misc_15.md) (6 shared connections)
 - [Delete and Checksum Integration](Delete_and_Checksum_Integration.md) (4 shared connections)
 - [Bucket XML Documents](Bucket_XML_Documents.md) (3 shared connections)
 - [Request Middleware Plumbing](Request_Middleware_Plumbing.md) (1 shared connections)
-- [Router and Middleware Setup](Router_and_Middleware_Setup.md) (1 shared connections)
+- [Misc (18)](Misc_18.md) (1 shared connections)
 
 ## Source Files
 

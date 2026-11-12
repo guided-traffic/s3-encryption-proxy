@@ -1,6 +1,6 @@
 # Bucket Handler Tests
 
-> 89 nodes · cohesion 0.06
+> 92 nodes · cohesion 0.06
 
 ## Key Concepts
 
@@ -29,22 +29,22 @@
 - **TestBktListObjectsV1IsARealListBucketResult()** (7 connections) — `internal/proxy/handlers/bucket/operations_coverage_test.go`
 - **TestBktListObjectsV2IsARealListBucketResult()** (7 connections) — `internal/proxy/handlers/bucket/operations_coverage_test.go`
 - **TestBktResponseWriteFailuresAreLoggedNotPropagated()** (7 connections) — `internal/proxy/handlers/bucket/operations_coverage_test.go`
-- *... and 64 more nodes in this community*
+- *... and 67 more nodes in this community*
 
 ## Relationships
 
-- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (84 shared connections)
-- [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (61 shared connections)
-- [Sub-Resource Handler Tests](Sub-Resource_Handler_Tests.md) (5 shared connections)
-- [Router and Middleware Setup](Router_and_Middleware_Setup.md) (3 shared connections)
-- [Multipart Handlers and Manager](Multipart_Handlers_and_Manager.md) (3 shared connections)
-- [DeleteObjects Handling](DeleteObjects_Handling.md) (2 shared connections)
+- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (86 shared connections)
+- [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (60 shared connections)
+- [Sub-Resource Handler Tests](Sub-Resource_Handler_Tests.md) (6 shared connections)
+- [Multipart Handlers and Manager](Multipart_Handlers_and_Manager.md) (5 shared connections)
+- [Misc (19)](Misc_19.md) (2 shared connections)
 - [Misc (32)](Misc_32.md) (2 shared connections)
 - [Misc (33)](Misc_33.md) (2 shared connections)
-- [Config Types and Monitoring Plan](Config_Types_and_Monitoring_Plan.md) (2 shared connections)
 - [Misc (2)](Misc_2.md) (2 shared connections)
 - [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (2 shared connections)
-- [Manager Tests](Manager_Tests.md) (1 shared connections)
+- [Method Not Allowed Handler](Method_Not_Allowed_Handler.md) (2 shared connections)
+- [DeleteObjects Handling](DeleteObjects_Handling.md) (1 shared connections)
+- [CORS and Middleware](CORS_and_Middleware.md) (1 shared connections)
 
 ## Source Files
 
@@ -54,11 +54,12 @@
 - `internal/proxy/handlers/bucket/subresource_chunked_body_test.go`
 - `internal/proxy/handlers/bucket/subresource_matrix_coverage_test.go`
 - `internal/proxy/handlers/bucket/subresource_methods_coverage_test.go`
+- `internal/proxy/router.go`
 
 ## Audit Trail
 
-- EXTRACTED: 335 (81%)
-- INFERRED: 79 (19%)
+- EXTRACTED: 342 (81%)
+- INFERRED: 80 (19%)
 - AMBIGUOUS: 0 (0%)
 
 ---

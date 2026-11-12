@@ -28,8 +28,8 @@
 - [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (18 shared connections)
 - [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (18 shared connections)
 - [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (4 shared connections)
-- [Middleware: S3Auth Robust](Middleware-_S3Auth_Robust.md) (3 shared connections)
-- [Velero E2E Suite](Velero_E2E_Suite.md) (2 shared connections)
+- [Server and Listings](Server_and_Listings.md) (3 shared connections)
+- [Shutdown: Shutdown Test](Shutdown-_Shutdown_Test.md) (2 shared connections)
 
 ## Source Files
 

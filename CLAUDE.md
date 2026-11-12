@@ -92,7 +92,10 @@ together before touching code, and it is committed, so it is always available.
 release 5.4.1): every code file re-extracted by AST, every document re-extracted
 or replayed from an unchanged cache entry, and the old graph replaced rather than
 merged into, so no node for deleted code survives. The extraction read the
-longest work lists under `docs/tickets/` only in part.
+longest work lists under `docs/tickets/` only in part. It was updated
+incrementally on 2026-11-12 (release 5.4.2): the rewritten ADRs, the pages and
+the code files changed since were re-extracted in full and replaced their old
+nodes.
 
 **Use it first, especially at the start of a ticket and for any code research:**
 - Read `graphify-out/wiki/index.md`, then the community articles that name the

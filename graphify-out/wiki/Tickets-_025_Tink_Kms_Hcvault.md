@@ -4,7 +4,7 @@
 
 ## Key Concepts
 
-- **Ticket 025: Vault as a key provider (parked)** (16 connections) — `docs/tickets/025-tink-kms-hcvault.md`
+- **Ticket 025: Vault as a key provider (parked)** (17 connections) — `docs/tickets/025-tink-kms-hcvault.md`
 - **HashiCorp Vault Transit KEK provider (parked)** (4 connections) — `docs/tickets/025-tink-kms-hcvault.md`
 - **DEK cache: 1024-entry LRU with no expiry** (2 connections) — `docs/tickets/025-tink-kms-hcvault.md`
 - **Provider registry shutdown path (manager -> registry -> provider)** (2 connections) — `docs/tickets/025-tink-kms-hcvault.md`
@@ -20,9 +20,11 @@
 
 ## Relationships
 
-- [Key Hierarchy and Threat Rules](Key_Hierarchy_and_Threat_Rules.md) (3 shared connections)
+- [Key Hierarchy and Threat Rules](Key_Hierarchy_and_Threat_Rules.md) (2 shared connections)
 - [ADR Corpus and Release History](ADR_Corpus_and_Release_History.md) (2 shared connections)
 - [Integrity and Tail-First Read](Integrity_and_Tail-First_Read.md) (1 shared connections)
+- [SigV4 Authentication Rules](SigV4_Authentication_Rules.md) (1 shared connections)
+- [Monitoring and Licence Removal](Monitoring_and_Licence_Removal.md) (1 shared connections)
 
 ## Source Files
 
@@ -30,7 +32,7 @@
 
 ## Audit Trail
 
-- EXTRACTED: 22 (100%)
+- EXTRACTED: 23 (100%)
 - INFERRED: 0 (0%)
 - AMBIGUOUS: 0 (0%)
 

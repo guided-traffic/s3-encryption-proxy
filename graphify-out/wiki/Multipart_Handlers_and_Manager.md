@@ -6,17 +6,16 @@
 
 - **S3BackendInterface** (83 connections) — `internal/proxy/interfaces/s3_backend.go`
 - **github.com/sirupsen/logrus.Entry** (59 connections)
-- **Manager** (47 connections) — `internal/orchestration/manager.go`
-- **Parser** (40 connections) — `internal/proxy/request/parser.go`
+- **Manager** (46 connections) — `internal/orchestration/manager.go`
 - **ErrorWriter** (33 connections) — `internal/proxy/response/errors.go`
 - **setupMultipartTestEnv()** (29 connections) — `internal/proxy/handlers/multipart/multipart_test.go`
 - **XMLWriter** (26 connections) — `internal/proxy/response/xml.go`
 - **NewCreateHandler()** (24 connections) — `internal/proxy/handlers/multipart/create.go`
 - **NewUploadHandler()** (21 connections) — `internal/proxy/handlers/multipart/upload.go`
 - **Handler** (20 connections) — `internal/proxy/handlers/multipart/handler.go`
-- **NewHandler()** (17 connections) — `internal/proxy/handlers/multipart/handler.go`
-- **NewHandler()** (17 connections) — `internal/proxy/handlers/object/handler.go`
 - **NewCompleteHandler()** (16 connections) — `internal/proxy/handlers/multipart/complete.go`
+- **NewHandler()** (16 connections) — `internal/proxy/handlers/multipart/handler.go`
+- **NewHandler()** (16 connections) — `internal/proxy/handlers/object/handler.go`
 - **ListHandler** (14 connections) — `internal/proxy/handlers/multipart/list.go`
 - **NewHandler()** (13 connections) — `internal/proxy/handlers/root/handler.go`
 - **AbortHandler** (13 connections) — `internal/proxy/handlers/multipart/abort.go`
@@ -29,22 +28,23 @@
 - **alignedPlaintext()** (9 connections) — `internal/proxy/handlers/multipart/multipart_test.go`
 - **TestCompleteHandler_AbortSurvivesClientDisconnect()** (9 connections) — `internal/proxy/handlers/multipart/multipart_test.go`
 - **CopyHandler** (9 connections) — `internal/proxy/handlers/multipart/copy.go`
+- **NewCopyHandler()** (8 connections) — `internal/proxy/handlers/multipart/copy.go`
 - *... and 46 more nodes in this community*
 
 ## Relationships
 
-- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (53 shared connections)
-- [Request Documents and Owner Guard](Request_Documents_and_Owner_Guard.md) (38 shared connections)
-- [Sub-Resource Handler Tests](Sub-Resource_Handler_Tests.md) (34 shared connections)
-- [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (28 shared connections)
+- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (52 shared connections)
+- [Request Documents and Owner Guard](Request_Documents_and_Owner_Guard.md) (42 shared connections)
+- [Sub-Resource Handler Tests](Sub-Resource_Handler_Tests.md) (31 shared connections)
 - [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (26 shared connections)
-- [Multipart Checksum Answers](Multipart_Checksum_Answers.md) (15 shared connections)
-- [CORS and Middleware](CORS_and_Middleware.md) (7 shared connections)
+- [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (20 shared connections)
+- [Misc (19)](Misc_19.md) (11 shared connections)
+- [Misc (15)](Misc_15.md) (6 shared connections)
 - [Manager Tests](Manager_Tests.md) (6 shared connections)
-- [Backend Interface Calls](Backend_Interface_Calls.md) (6 shared connections)
-- [Server and Listings](Server_and_Listings.md) (5 shared connections)
-- [Config Types and Monitoring Plan](Config_Types_and_Monitoring_Plan.md) (5 shared connections)
-- [Segmented Session Tests](Segmented_Session_Tests.md) (5 shared connections)
+- [Object: Metadata Coverage Test](Object-_Metadata_Coverage_Test.md) (5 shared connections)
+- [Bucket Handler Tests](Bucket_Handler_Tests.md) (5 shared connections)
+- [Dataencryption: Segmented Gcm Io (2)](Dataencryption-_Segmented_Gcm_Io_2.md) (4 shared connections)
+- [Object Checksum and Tagging Tests](Object_Checksum_and_Tagging_Tests.md) (4 shared connections)
 
 ## Source Files
 
@@ -66,13 +66,13 @@
 - `internal/proxy/handlers/root/handler_test.go`
 - `internal/proxy/handlers/root/listbuckets_coverage_test.go`
 - `internal/proxy/interfaces/s3_backend.go`
-- `internal/proxy/request/parser.go`
 - `internal/proxy/response/errors.go`
+- `internal/proxy/response/xml.go`
 
 ## Audit Trail
 
-- EXTRACTED: 473 (87%)
-- INFERRED: 68 (13%)
+- EXTRACTED: 447 (87%)
+- INFERRED: 69 (13%)
 - AMBIGUOUS: 0 (0%)
 
 ---

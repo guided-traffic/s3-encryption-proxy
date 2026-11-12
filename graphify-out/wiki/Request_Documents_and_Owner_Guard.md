@@ -1,9 +1,10 @@
 # Request Documents and Owner Guard
 
-> 54 nodes · cohesion 0.08
+> 56 nodes · cohesion 0.08
 
 ## Key Concepts
 
+- **Parser** (39 connections) — `internal/proxy/request/parser.go`
 - **UploadHandler** (21 connections) — `internal/proxy/handlers/multipart/upload.go`
 - **.WriteGenericError()** (19 connections) — `internal/proxy/response/errors.go`
 - **.Handle()** (18 connections) — `internal/proxy/handlers/multipart/complete.go`
@@ -28,28 +29,28 @@
 - **.StreamingReader()** (9 connections) — `internal/proxy/request/parser.go`
 - **.readPart()** (8 connections) — `internal/proxy/handlers/multipart/upload.go`
 - **.WriteChecksumVerdict()** (8 connections) — `internal/proxy/response/errors.go`
-- **.writeErrorDocument()** (8 connections) — `internal/proxy/response/errors.go`
-- *... and 29 more nodes in this community*
+- *... and 31 more nodes in this community*
 
 ## Relationships
 
-- [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (70 shared connections)
-- [Multipart Handlers and Manager](Multipart_Handlers_and_Manager.md) (38 shared connections)
-- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (17 shared connections)
-- [Orchestration: Segmented Session](Orchestration-_Segmented_Session.md) (11 shared connections)
-- [Keygen and Encrypt Readers](Keygen_and_Encrypt_Readers.md) (6 shared connections)
+- [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (72 shared connections)
+- [Multipart Handlers and Manager](Multipart_Handlers_and_Manager.md) (42 shared connections)
+- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (19 shared connections)
+- [Orchestration: Segmented Session](Orchestration-_Segmented_Session.md) (12 shared connections)
+- [Checksum Verifier](Checksum_Verifier.md) (8 shared connections)
+- [Dataencryption: Segmented Gcm Range](Dataencryption-_Segmented_Gcm_Range.md) (7 shared connections)
 - [Object: Storage Headers](Object-_Storage_Headers.md) (5 shared connections)
+- [Sub-Resource Handler Tests](Sub-Resource_Handler_Tests.md) (4 shared connections)
 - [Misc (45)](Misc_45.md) (4 shared connections)
-- [Request: Streaming Decoder Coverage Test](Request-_Streaming_Decoder_Coverage_Test.md) (3 shared connections)
 - [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (3 shared connections)
 - [Etag: Etag](Etag-_Etag.md) (3 shared connections)
-- [Checksum Verifier](Checksum_Verifier.md) (3 shared connections)
-- [Multipart Checksum Answers](Multipart_Checksum_Answers.md) (3 shared connections)
+- [Exit Provider and Session Lifecycle](Exit_Provider_and_Session_Lifecycle.md) (2 shared connections)
 
 ## Source Files
 
 - `docs/developer/performance.md`
 - `internal/orchestration/manager.go`
+- `internal/orchestration/segmented_session.go`
 - `internal/proxy/handlers/bucket/base.go`
 - `internal/proxy/handlers/multipart/abort.go`
 - `internal/proxy/handlers/multipart/complete.go`
@@ -66,8 +67,8 @@
 
 ## Audit Trail
 
-- EXTRACTED: 180 (60%)
-- INFERRED: 120 (40%)
+- EXTRACTED: 210 (64%)
+- INFERRED: 120 (36%)
 - AMBIGUOUS: 0 (0%)
 
 ---

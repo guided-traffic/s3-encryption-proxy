@@ -20,7 +20,7 @@
 - [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (5 shared connections)
 - [Chunked Encoding Tests](Chunked_Encoding_Tests.md) (3 shared connections)
 - [Streaming Integration Helpers](Streaming_Integration_Helpers.md) (2 shared connections)
-- [Tampering Harness](Tampering_Harness.md) (2 shared connections)
+- [Misc (15)](Misc_15.md) (2 shared connections)
 - [In-Process Provider Instances](In-Process_Provider_Instances.md) (1 shared connections)
 - [Client Library and Storage Format](Client_Library_and_Storage_Format.md) (1 shared connections)
 

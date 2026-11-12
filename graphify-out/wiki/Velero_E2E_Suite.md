@@ -1,11 +1,11 @@
 # Velero E2E Suite
 
-> 93 nodes · cohesion 0.08
+> 90 nodes · cohesion 0.09
 
 ## Key Concepts
 
 - **velero/exec.go** (32 connections) — `test/e2e/velero/exec.go`
-- **time.Duration** (26 connections)
+- **velero/scenarios_lifecycle_test.go** (24 connections) — `test/e2e/velero/scenarios_lifecycle_test.go`
 - **preflight()** (23 connections) — `test/e2e/velero/e2e_test.go`
 - **waitBackupCompleted()** (23 connections) — `test/e2e/velero/healthcheck.go`
 - **loadVersionsEnv()** (21 connections) — `test/e2e/velero/exec.go`
@@ -29,22 +29,20 @@
 - **TestV10_PresignedLogAccess()** (15 connections) — `test/e2e/velero/scenarios_lifecycle_test.go`
 - **cleanupNamespace()** (15 connections) — `test/e2e/velero/scenarios_metadata_test.go`
 - **TestV7_RestoreIntoDifferentNamespace()** (15 connections) — `test/e2e/velero/scenarios_metadata_test.go`
-- *... and 68 more nodes in this community*
+- *... and 65 more nodes in this community*
 
 ## Relationships
 
-- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (67 shared connections)
+- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (68 shared connections)
 - [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (58 shared connections)
-- [Tampering Harness](Tampering_Harness.md) (39 shared connections)
-- [Streaming Integration Helpers](Streaming_Integration_Helpers.md) (6 shared connections)
+- [Misc (15)](Misc_15.md) (35 shared connections)
+- [Shutdown: Shutdown Test](Shutdown-_Shutdown_Test.md) (6 shared connections)
 - [Harness: Atrest](Harness-_Atrest.md) (4 shared connections)
-- [Server and Listings](Server_and_Listings.md) (3 shared connections)
-- [Segmented Session Tests](Segmented_Session_Tests.md) (2 shared connections)
-- [Middleware: S3Auth Presigned Test](Middleware-_S3Auth_Presigned_Test.md) (2 shared connections)
-- [Shutdown: Shutdown Test](Shutdown-_Shutdown_Test.md) (2 shared connections)
-- [Perf Harness and Report](Perf_Harness_and_Report.md) (2 shared connections)
-- [Orchestration: Segmented Session](Orchestration-_Segmented_Session.md) (2 shared connections)
+- [Streaming Integration Helpers](Streaming_Integration_Helpers.md) (2 shared connections)
+- [Perf Harness and Report](Perf_Harness_and_Report.md) (1 shared connections)
 - [Rclone: Rclone Test (2)](Rclone-_Rclone_Test_2.md) (1 shared connections)
+- [Object Checksum and Tagging Tests](Object_Checksum_and_Tagging_Tests.md) (1 shared connections)
+- [Server and Listings](Server_and_Listings.md) (1 shared connections)
 
 ## Source Files
 
@@ -58,12 +56,11 @@
 - `test/e2e/velero/scenarios_metadata_test.go`
 - `test/e2e/velero/scenarios_volumes_test.go`
 - `test/e2e/velero/workloads.go`
-- `test/integration/s3-methods/transfer_budget_test.go`
 
 ## Audit Trail
 
-- EXTRACTED: 331 (60%)
-- INFERRED: 219 (40%)
+- EXTRACTED: 318 (59%)
+- INFERRED: 219 (41%)
 - AMBIGUOUS: 0 (0%)
 
 ---

@@ -36,9 +36,9 @@
 - [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (40 shared connections)
 - [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (27 shared connections)
 - [Streaming Integration Helpers](Streaming_Integration_Helpers.md) (4 shared connections)
-- [Orchestration: Providers Coverage Test (2)](Orchestration-_Providers_Coverage_Test_2.md) (1 shared connections)
-- [In-Process Provider Instances](In-Process_Provider_Instances.md) (1 shared connections)
 - [Tampering Harness](Tampering_Harness.md) (1 shared connections)
+- [In-Process Provider Instances](In-Process_Provider_Instances.md) (1 shared connections)
+- [Misc (15)](Misc_15.md) (1 shared connections)
 - [Perf Harness and Report](Perf_Harness_and_Report.md) (1 shared connections)
 
 ## Source Files

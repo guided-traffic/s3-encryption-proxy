@@ -5,7 +5,7 @@
 ## Key Concepts
 
 - **etag.go** (14 connections) — `internal/proxy/etag/etag.go`
-- **Entity tag -0 marker gates** (12 connections) — `docs/developer/request-paths.md`
+- **Entity tag -0 marker gates** (11 connections) — `docs/developer/request-paths.md`
 - **Mark()** (10 connections) — `internal/proxy/etag/etag.go`
 - **Unmark()** (9 connections) — `internal/proxy/etag/etag.go`
 - **UnmarkList()** (6 connections) — `internal/proxy/etag/etag.go`
@@ -26,12 +26,12 @@
 
 - [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (11 shared connections)
 - [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (5 shared connections)
-- [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (4 shared connections)
 - [Request Documents and Owner Guard](Request_Documents_and_Owner_Guard.md) (3 shared connections)
+- [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (3 shared connections)
+- [S3 API Behaviour](S3_API_Behaviour.md) (2 shared connections)
 - [Orchestration: Segmented Session](Orchestration-_Segmented_Session.md) (2 shared connections)
-- [Key Material and Deployment Secrets](Key_Material_and_Deployment_Secrets.md) (2 shared connections)
-- [ADR Corpus and Release History](ADR_Corpus_and_Release_History.md) (1 shared connections)
-- [S3 API Behaviour](S3_API_Behaviour.md) (1 shared connections)
+- [Object: Metadata Coverage Test](Object-_Metadata_Coverage_Test.md) (1 shared connections)
+- [Middleware: S3Auth Robust](Middleware-_S3Auth_Robust.md) (1 shared connections)
 
 ## Source Files
 
@@ -44,8 +44,8 @@
 
 ## Audit Trail
 
-- EXTRACTED: 49 (84%)
-- INFERRED: 9 (16%)
+- EXTRACTED: 49 (86%)
+- INFERRED: 8 (14%)
 - AMBIGUOUS: 0 (0%)
 
 ---

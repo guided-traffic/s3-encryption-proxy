@@ -1,14 +1,12 @@
 # Backend TLS Trust
 
-> 35 nodes · cohesion 0.08
+> 28 nodes · cohesion 0.11
 
 ## Key Concepts
 
-- **NewServer()** (31 connections) — `internal/proxy/server.go`
-- **RtPxconfig()** (13 connections) — `internal/proxy/server_coverage_test.go`
-- **createTestConfigExit()** (9 connections) — `internal/proxy/server_test.go`
-- **backendClientOptions()** (8 connections) — `internal/proxy/server.go`
-- **backendHTTPClient()** (6 connections) — `internal/proxy/server.go`
+- **NewServer()** (30 connections) — `internal/proxy/server.go`
+- **RtPxconfig()** (12 connections) — `internal/proxy/server_coverage_test.go`
+- **createTestConfigExit()** (8 connections) — `internal/proxy/server_test.go`
 - **TestServer_handleS3Error_KEK_MISSING()** (6 connections) — `internal/proxy/server_test.go`
 - **TestServer_WriteS3Error_KEK_MISSING()** (6 connections) — `internal/proxy/server_test.go`
 - **TestRtPxMetadataPrefixResolution()** (5 connections) — `internal/proxy/server_coverage_test.go`
@@ -29,27 +27,27 @@
 - **TestServer_ProbeEndpoints()** (4 connections) — `internal/proxy/server_test.go`
 - **TestServerTLSConfiguration()** (4 connections) — `internal/proxy/tls_test.go`
 - **TestServerTLSGracefulShutdown()** (4 connections) — `internal/proxy/tls_test.go`
-- *... and 10 more nodes in this community*
+- **TestTLSConfigurationLogging()** (4 connections) — `internal/proxy/tls_test.go`
+- **TestServer_CORSOptionsRequest()** (3 connections) — `internal/proxy/server_test.go`
+- *... and 3 more nodes in this community*
 
 ## Relationships
 
-- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (32 shared connections)
-- [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (26 shared connections)
-- [Config Types and Monitoring Plan](Config_Types_and_Monitoring_Plan.md) (5 shared connections)
+- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (28 shared connections)
+- [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (23 shared connections)
+- [Config Types and Monitoring Plan](Config_Types_and_Monitoring_Plan.md) (3 shared connections)
 - [Sub-Resource Handler Tests](Sub-Resource_Handler_Tests.md) (3 shared connections)
-- [Manager Tests](Manager_Tests.md) (2 shared connections)
 - [In-Process Provider Instances](In-Process_Provider_Instances.md) (2 shared connections)
-- [Planned Work: SSE-C and HA](Planned_Work-_SSE-C_and_HA.md) (1 shared connections)
-- [Monitoring: Backend Test](Monitoring-_Backend_Test.md) (1 shared connections)
-- [Multipart Handlers and Manager](Multipart_Handlers_and_Manager.md) (1 shared connections)
-- [Request Middleware Plumbing](Request_Middleware_Plumbing.md) (1 shared connections)
-- [Router and Middleware Setup](Router_and_Middleware_Setup.md) (1 shared connections)
-- [Misc](Misc.md) (1 shared connections)
+- [Misc (18)](Misc_18.md) (1 shared connections)
+- [Failing Listener Test Fixture](Failing_Listener_Test_Fixture.md) (1 shared connections)
+- [Dataencryption: Segmented Gcm Io](Dataencryption-_Segmented_Gcm_Io.md) (1 shared connections)
+- [Manager Tests](Manager_Tests.md) (1 shared connections)
+- [Monitoring: Status](Monitoring-_Status.md) (1 shared connections)
+- [Server and Listings](Server_and_Listings.md) (1 shared connections)
+- [Whole-Object Read Window](Whole-Object_Read_Window.md) (1 shared connections)
 
 ## Source Files
 
-- `docs/tickets/039-backend-certificate-verification-failure-is-named.md`
-- `internal/proxy/backend_client_test.go`
 - `internal/proxy/server.go`
 - `internal/proxy/server_coverage_test.go`
 - `internal/proxy/server_test.go`
@@ -57,8 +55,8 @@
 
 ## Audit Trail
 
-- EXTRACTED: 104 (80%)
-- INFERRED: 26 (20%)
+- EXTRACTED: 87 (80%)
+- INFERRED: 22 (20%)
 - AMBIGUOUS: 0 (0%)
 
 ---

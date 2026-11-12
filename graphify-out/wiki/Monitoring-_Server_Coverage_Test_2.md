@@ -1,30 +1,37 @@
 # Monitoring: Server Coverage Test (2)
 
-> 5 nodes · cohesion 0.40
+> 7 nodes · cohesion 0.67
 
 ## Key Concepts
 
-- **MonfailingWriter** (5 connections) — `internal/monitoring/server_coverage_test.go`
-- **TestMonServerEndpointsSurviveWriteFailures()** (4 connections) — `internal/monitoring/server_coverage_test.go`
-- **.Header()** (3 connections) — `internal/monitoring/server_coverage_test.go`
-- **.Write()** (1 connections) — `internal/monitoring/server_coverage_test.go`
-- **.WriteHeader()** (1 connections) — `internal/monitoring/server_coverage_test.go`
+- **.GetBucketLocation()** (8 connections) — `internal/proxy/interfaces/s3_backend.go`
+- **.GetBucketLocation()** (5 connections) — `internal/proxy/handlers/bucket/test_helpers_test.go`
+- **github.com/aws/aws-sdk-go-v2/service/s3.GetBucketLocationInput** (5 connections)
+- **github.com/aws/aws-sdk-go-v2/service/s3.GetBucketLocationOutput** (5 connections)
+- **.GetBucketLocation()** (5 connections) — `internal/proxy/handlers/multipart/multipart_test.go`
+- **.GetBucketLocation()** (5 connections) — `internal/proxy/handlers/object/test_helpers_test.go`
+- **.GetBucketLocation()** (5 connections) — `internal/proxy/handlers/root/test_helpers_test.go`
 
 ## Relationships
 
-- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (2 shared connections)
-- [Request Middleware Plumbing](Request_Middleware_Plumbing.md) (2 shared connections)
-- [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (1 shared connections)
-- [Monitoring: Server Coverage Test](Monitoring-_Server_Coverage_Test.md) (1 shared connections)
+- [Misc (15)](Misc_15.md) (5 shared connections)
+- [S3 Backend Mock](S3_Backend_Mock.md) (2 shared connections)
+- [Multipart Handlers and Manager](Multipart_Handlers_and_Manager.md) (1 shared connections)
+- [Backend Interface Calls](Backend_Interface_Calls.md) (1 shared connections)
+- [Misc (12)](Misc_12.md) (1 shared connections)
 
 ## Source Files
 
-- `internal/monitoring/server_coverage_test.go`
+- `internal/proxy/handlers/bucket/test_helpers_test.go`
+- `internal/proxy/handlers/multipart/multipart_test.go`
+- `internal/proxy/handlers/object/test_helpers_test.go`
+- `internal/proxy/handlers/root/test_helpers_test.go`
+- `internal/proxy/interfaces/s3_backend.go`
 
 ## Audit Trail
 
-- EXTRACTED: 8 (80%)
-- INFERRED: 2 (20%)
+- EXTRACTED: 20 (83%)
+- INFERRED: 4 (17%)
 - AMBIGUOUS: 0 (0%)
 
 ---

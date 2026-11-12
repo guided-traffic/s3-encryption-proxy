@@ -15,7 +15,8 @@
 ## Relationships
 
 - [Bucket Sub-Resource Documents](Bucket_Sub-Resource_Documents.md) (8 shared connections)
-- [Bucket: Subresource Documents](Bucket-_Subresource_Documents.md) (2 shared connections)
+- [Replication Configuration Document](Replication_Configuration_Document.md) (1 shared connections)
+- [Bucket: Subresource Documents](Bucket-_Subresource_Documents.md) (1 shared connections)
 - [Bucket XML Documents](Bucket_XML_Documents.md) (1 shared connections)
 
 ## Source Files

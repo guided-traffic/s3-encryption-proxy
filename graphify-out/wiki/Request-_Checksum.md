@@ -23,10 +23,10 @@
 
 - [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (11 shared connections)
 - [Request Documents and Owner Guard](Request_Documents_and_Owner_Guard.md) (2 shared connections)
-- [S3 API Behaviour](S3_API_Behaviour.md) (2 shared connections)
+- [Middleware: S3Auth Robust](Middleware-_S3Auth_Robust.md) (2 shared connections)
 - [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (2 shared connections)
 - [S3 Methods: Sealed Checksum Test](S3_Methods-_Sealed_Checksum_Test.md) (1 shared connections)
-- [Keygen and Encrypt Readers](Keygen_and_Encrypt_Readers.md) (1 shared connections)
+- [Dataencryption: Segmented Gcm Range](Dataencryption-_Segmented_Gcm_Range.md) (1 shared connections)
 
 ## Source Files
 

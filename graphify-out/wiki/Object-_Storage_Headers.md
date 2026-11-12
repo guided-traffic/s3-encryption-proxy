@@ -31,16 +31,16 @@
 
 - [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (16 shared connections)
 - [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (14 shared connections)
-- [Segment Seal and Trailer](Segment_Seal_and_Trailer.md) (7 shared connections)
 - [Request Documents and Owner Guard](Request_Documents_and_Owner_Guard.md) (5 shared connections)
-- [S3 API Behaviour](S3_API_Behaviour.md) (3 shared connections)
+- [Segment Seal and Trailer](Segment_Seal_and_Trailer.md) (4 shared connections)
 - [Server and Listings](Server_and_Listings.md) (3 shared connections)
 - [Misc (42)](Misc_42.md) (3 shared connections)
+- [Middleware: S3Auth Robust](Middleware-_S3Auth_Robust.md) (2 shared connections)
 - [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (2 shared connections)
 - [Misc (5)](Misc_5.md) (2 shared connections)
+- [Dataencryption: Segmented Gcm Range](Dataencryption-_Segmented_Gcm_Range.md) (2 shared connections)
+- [S3 API Behaviour](S3_API_Behaviour.md) (1 shared connections)
 - [Orchestration: Providers](Orchestration-_Providers.md) (1 shared connections)
-- [Integrity and Tail-First Read](Integrity_and_Tail-First_Read.md) (1 shared connections)
-- [GET Response Writing](GET_Response_Writing.md) (1 shared connections)
 
 ## Source Files
 

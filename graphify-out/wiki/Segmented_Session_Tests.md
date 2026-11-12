@@ -1,25 +1,20 @@
 # Segmented Session Tests
 
-> 39 nodes · cohesion 0.13
+> 33 nodes · cohesion 0.13
 
 ## Key Concepts
 
-- **segmented_session_test.go** (60 connections) — `internal/orchestration/segmented_session_test.go`
 - **segManager()** (35 connections) — `internal/orchestration/segmented_test.go`
 - **segPlaintext()** (26 connections) — `internal/orchestration/segmented_test.go`
 - **segRegisteredSession()** (20 connections) — `internal/orchestration/segmented_session_test.go`
-- **TestSegmentedSessionEveryPartMovesTheIdleClock()** (11 connections) — `internal/orchestration/segmented_session_test.go`
 - **TestSegmentedSessionASlowPartOutlivesTheIdleTimeout()** (8 connections) — `internal/orchestration/segmented_session_test.go`
 - **TestSegmentedSessionShortLastPart()** (7 connections) — `internal/orchestration/segmented_session_test.go`
-- **segCompleted()** (6 connections) — `internal/orchestration/segmented_session_test.go`
 - **TestSegmentedSessionHeldPartReplacedByAStreamedOne()** (6 connections) — `internal/orchestration/segmented_session_test.go`
 - **TestSegmentedSessionShortPartBudgetIsReleasedOnEveryEnding()** (6 connections) — `internal/orchestration/segmented_session_test.go`
 - **TestSegmentedSessionTrailerAsItsOwnPart()** (6 connections) — `internal/orchestration/segmented_session_test.go`
 - **TestSegmentedTrailerAnswersHead()** (6 connections) — `internal/orchestration/segmented_test.go`
 - **TestSegmentedUploadRoundTrip()** (6 connections) — `internal/orchestration/segmented_test.go`
 - **TestSegmentedWriteDrawsAFreshDataKeyPerObject()** (6 connections) — `internal/orchestration/segmented_test.go`
-- **.SetMultipartAbandoner()** (6 connections) — `internal/orchestration/manager.go`
-- **slowReader** (6 connections) — `internal/orchestration/segmented_session_test.go`
 - **TestSegmentedSessionAlignedLastPartOutOfOrderIsRefused()** (5 connections) — `internal/orchestration/segmented_session_test.go`
 - **TestSegmentedSessionFailedStreamKeepsTheHeldPart()** (5 connections) — `internal/orchestration/segmented_session_test.go`
 - **TestSegmentedSessionHeldPartReplacedByAStorableOne()** (5 connections) — `internal/orchestration/segmented_session_test.go`
@@ -29,22 +24,27 @@
 - **TestSegmentedSessionRefusesALayoutItCannotStore()** (5 connections) — `internal/orchestration/segmented_session_test.go`
 - **TestSegmentedSessionRefusesASecondShortPart()** (5 connections) — `internal/orchestration/segmented_session_test.go`
 - **TestSegmentedSessionShortPartBudgetIsSharedAcrossSessions()** (5 connections) — `internal/orchestration/segmented_session_test.go`
-- *... and 14 more nodes in this community*
+- **TestSegmentedRangeRead()** (5 connections) — `internal/orchestration/segmented_test.go`
+- **.SetMultipartAbandoner()** (5 connections) — `internal/orchestration/manager.go`
+- **TestSegmentedSessionLifecycle()** (4 connections) — `internal/orchestration/segmented_session_test.go`
+- **TestSegmentedAssociatedDataDoesNotBindTheBucket()** (4 connections) — `internal/orchestration/segmented_test.go`
+- **TestSegmentedOpenRefusesAnEditedKeyWrap()** (4 connections) — `internal/orchestration/segmented_test.go`
+- *... and 8 more nodes in this community*
 
 ## Relationships
 
-- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (49 shared connections)
-- [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (33 shared connections)
-- [Orchestration: Segmented Session](Orchestration-_Segmented_Session.md) (12 shared connections)
-- [Segment Codec and Range Planner](Segment_Codec_and_Range_Planner.md) (6 shared connections)
-- [Multipart Handlers and Manager](Multipart_Handlers_and_Manager.md) (5 shared connections)
-- [Object Checksum and Tagging Tests](Object_Checksum_and_Tagging_Tests.md) (2 shared connections)
-- [Segment Seal and Trailer](Segment_Seal_and_Trailer.md) (2 shared connections)
-- [Velero E2E Suite](Velero_E2E_Suite.md) (2 shared connections)
+- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (32 shared connections)
+- [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (31 shared connections)
+- [Orchestration: Segmented Session](Orchestration-_Segmented_Session.md) (8 shared connections)
+- [Multipart Handlers and Manager](Multipart_Handlers_and_Manager.md) (4 shared connections)
+- [GET Response Writing](GET_Response_Writing.md) (2 shared connections)
 - [Orchestration: Providers Coverage Test](Orchestration-_Providers_Coverage_Test.md) (2 shared connections)
 - [Storedobject: Storedobject](Storedobject-_Storedobject.md) (2 shared connections)
-- [Multipart Checksum Answers](Multipart_Checksum_Answers.md) (1 shared connections)
-- [Object Checksum Agreement Tests](Object_Checksum_Agreement_Tests.md) (1 shared connections)
+- [Shutdown: Shutdown Test](Shutdown-_Shutdown_Test.md) (1 shared connections)
+- [Manager Tests](Manager_Tests.md) (1 shared connections)
+- [Dataencryption: Segmented Gcm Range](Dataencryption-_Segmented_Gcm_Range.md) (1 shared connections)
+- [Segment Codec and Range Planner](Segment_Codec_and_Range_Planner.md) (1 shared connections)
+- [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (1 shared connections)
 
 ## Source Files
 
@@ -55,8 +55,8 @@
 
 ## Audit Trail
 
-- EXTRACTED: 172 (79%)
-- INFERRED: 47 (21%)
+- EXTRACTED: 117 (75%)
+- INFERRED: 40 (25%)
 - AMBIGUOUS: 0 (0%)
 
 ---

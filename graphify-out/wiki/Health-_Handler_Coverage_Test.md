@@ -32,9 +32,9 @@
 - [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (11 shared connections)
 - [Multipart Handlers and Manager](Multipart_Handlers_and_Manager.md) (3 shared connections)
 - [Request Middleware Plumbing](Request_Middleware_Plumbing.md) (2 shared connections)
-- [DeleteObjects Handling](DeleteObjects_Handling.md) (1 shared connections)
+- [Misc (19)](Misc_19.md) (1 shared connections)
 - [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (1 shared connections)
-- [Object Checksum and Tagging Tests](Object_Checksum_and_Tagging_Tests.md) (1 shared connections)
+- [Response: Error Mapping Coverage Test](Response-_Error_Mapping_Coverage_Test.md) (1 shared connections)
 - [Server and Listings](Server_and_Listings.md) (1 shared connections)
 
 ## Source Files

@@ -1,37 +1,38 @@
 # Misc (31)
 
-> 7 nodes · cohesion 0.67
+> 12 nodes · cohesion 0.18
 
 ## Key Concepts
 
-- **.ListMultipartUploads()** (9 connections) — `internal/proxy/interfaces/s3_backend.go`
-- **.ListMultipartUploads()** (5 connections) — `internal/proxy/handlers/bucket/test_helpers_test.go`
-- **github.com/aws/aws-sdk-go-v2/service/s3.ListMultipartUploadsInput** (5 connections)
-- **github.com/aws/aws-sdk-go-v2/service/s3.ListMultipartUploadsOutput** (5 connections)
-- **.ListMultipartUploads()** (5 connections) — `internal/proxy/handlers/multipart/multipart_test.go`
-- **.ListMultipartUploads()** (5 connections) — `internal/proxy/handlers/object/test_helpers_test.go`
-- **.ListMultipartUploads()** (5 connections) — `internal/proxy/handlers/root/test_helpers_test.go`
+- **CHANGELOG (release history 1.0.0 - 5.4.2)** (12 connections) — `CHANGELOG.md`
+- **5.0.0 upload performance: multipart re-framing overlaps receive and send (ADR 0024, ADR 0020)** (3 connections) — `CHANGELOG.md`
+- **Go client library for the stored format** (3 connections) — `CHANGELOG.md`
+- **optimizations.multipart_part_size (renamed from streaming_segment_size)** (3 connections) — `CHANGELOG.md`
+- **Chart probe scheme derived from tls.enabled** (2 connections) — `CHANGELOG.md`
+- **Helm chart: rendered ConfigMap/Secret checksum rolls the pods** (2 connections) — `CHANGELOG.md`
+- **Release 3.8.0: streaming throughput toward AES-NI ceiling** (2 connections) — `CHANGELOG.md`
+- **Release 5.1.0: probes, one endpoint per question** (2 connections) — `CHANGELOG.md`
+- **Release 5.3.0: Go module requirable by release tag** (2 connections) — `CHANGELOG.md`
+- **Release 5.4.0: client library for the stored format** (2 connections) — `CHANGELOG.md`
+- **Release 1.0.0: initial AES256 file encryption** (1 connections) — `CHANGELOG.md`
+- **Renovate-driven dependency patch releases** (1 connections) — `CHANGELOG.md`
 
 ## Relationships
 
-- [Tampering Harness](Tampering_Harness.md) (5 shared connections)
-- [S3 Backend Mock](S3_Backend_Mock.md) (2 shared connections)
-- [Backend Interface Calls](Backend_Interface_Calls.md) (2 shared connections)
-- [Multipart Handlers and Manager](Multipart_Handlers_and_Manager.md) (1 shared connections)
-- [Request Documents and Owner Guard](Request_Documents_and_Owner_Guard.md) (1 shared connections)
+- [Request: Streaming Decoder Coverage Test](Request-_Streaming_Decoder_Coverage_Test.md) (4 shared connections)
+- [Object: Range (2)](Object-_Range_2.md) (4 shared connections)
+- [Changelog: Shutdown And Listener Budgets](Changelog-_Shutdown_And_Listener_Budgets.md) (1 shared connections)
+- [Changelog: Release 4.0.0 Hardening](Changelog-_Release_4.0.0_Hardening.md) (1 shared connections)
+- [Changelog: Providers And Licence](Changelog-_Providers_And_Licence.md) (1 shared connections)
 
 ## Source Files
 
-- `internal/proxy/handlers/bucket/test_helpers_test.go`
-- `internal/proxy/handlers/multipart/multipart_test.go`
-- `internal/proxy/handlers/object/test_helpers_test.go`
-- `internal/proxy/handlers/root/test_helpers_test.go`
-- `internal/proxy/interfaces/s3_backend.go`
+- `CHANGELOG.md`
 
 ## Audit Trail
 
-- EXTRACTED: 20 (80%)
-- INFERRED: 5 (20%)
+- EXTRACTED: 19 (83%)
+- INFERRED: 4 (17%)
 - AMBIGUOUS: 0 (0%)
 
 ---

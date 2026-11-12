@@ -1,39 +1,34 @@
 # Object: Range (2)
 
-> 7 nodes · cohesion 0.33
+> 9 nodes · cohesion 0.25
 
 ## Key Concepts
 
-- **Ranged GET window planning** (9 connections) — `docs/developer/request-paths.md`
-- **provisionalWindow()** (6 connections) — `internal/proxy/handlers/object/range.go`
-- **Range header decided twice (parseRangeSpec classifies, parseByteRange resolves)** (5 connections) — `docs/developer/request-paths.md`
-- **parseRangeSpec()** (5 connections) — `internal/proxy/handlers/object/range.go`
-- **closeDrained()** (4 connections) — `internal/proxy/handlers/object/range.go`
-- **TestObjGetParseRangeSpec()** (3 connections) — `internal/proxy/handlers/object/rangeread_coverage_test.go`
-- **rangeSpec** (3 connections) — `internal/proxy/handlers/object/range.go`
+- **Authenticated AES-256-GCM segment chain (s3ep-gcm-seg-v2)** (10 connections) — `CHANGELOG.md`
+- **AES-CTR streaming encryption with IV in metadata (legacy)** (3 connections) — `CHANGELOG.md`
+- **HMAC integrity verification and integrity_verification modes (3.x, removed)** (3 connections) — `CHANGELOG.md`
+- **Release 2.0.0: unified proxy architecture, s3client removed** (3 connections) — `CHANGELOG.md`
+- **Release 3.0.0: encryption manager refactor (HMAC, AES-CTR streaming)** (3 connections) — `CHANGELOG.md`
+- **ListParts answered from the proxy part table; 9999 client part numbers** (2 connections) — `CHANGELOG.md`
+- **Objects from 3.x/4.0.x answer 403 InvalidObjectState** (2 connections) — `CHANGELOG.md`
+- **Ranged read served from whole 64 KiB segments** (2 connections) — `CHANGELOG.md`
+- **internal/s3client package removed in 2.0.0** (1 connections) — `CHANGELOG.md`
 
 ## Relationships
 
-- [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (7 shared connections)
-- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (4 shared connections)
-- [S3 API Behaviour](S3_API_Behaviour.md) (3 shared connections)
-- [Client Library and Storage Format](Client_Library_and_Storage_Format.md) (2 shared connections)
-- [ADR Corpus and Release History](ADR_Corpus_and_Release_History.md) (1 shared connections)
-- [Object: Range](Object-_Range.md) (1 shared connections)
-- [Keygen and Encrypt Readers](Keygen_and_Encrypt_Readers.md) (1 shared connections)
-- [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (1 shared connections)
-- [Object Checksum and Tagging Tests](Object_Checksum_and_Tagging_Tests.md) (1 shared connections)
+- [Request: Streaming Decoder Coverage Test](Request-_Streaming_Decoder_Coverage_Test.md) (5 shared connections)
+- [Misc (31)](Misc_31.md) (4 shared connections)
+- [Changelog: Configuration Refusals](Changelog-_Configuration_Refusals.md) (1 shared connections)
+- [Changelog: Providers And Licence](Changelog-_Providers_And_Licence.md) (1 shared connections)
 
 ## Source Files
 
-- `docs/developer/request-paths.md`
-- `internal/proxy/handlers/object/range.go`
-- `internal/proxy/handlers/object/rangeread_coverage_test.go`
+- `CHANGELOG.md`
 
 ## Audit Trail
 
-- EXTRACTED: 26 (93%)
-- INFERRED: 2 (7%)
+- EXTRACTED: 19 (95%)
+- INFERRED: 1 (5%)
 - AMBIGUOUS: 0 (0%)
 
 ---

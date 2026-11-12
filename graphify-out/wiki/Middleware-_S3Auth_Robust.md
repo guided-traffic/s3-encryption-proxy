@@ -1,55 +1,66 @@
 # Middleware: S3Auth Robust
 
-> 25 nodes · cohesion 0.13
+> 37 nodes · cohesion 0.07
 
 ## Key Concepts
 
-- **S3AuthenticationService** (19 connections) — `internal/proxy/middleware/s3auth_robust.go`
-- **.AuthenticateRequest()** (9 connections) — `internal/proxy/middleware/s3auth_robust.go`
-- **canonicalQueryString()** (8 connections) — `internal/proxy/middleware/s3auth_presigned.go`
-- **.validateSignature()** (7 connections) — `internal/proxy/middleware/s3auth_robust.go`
-- **canonicalURI()** (6 connections) — `internal/proxy/middleware/s3auth_presigned.go`
-- **.buildCanonicalRequest()** (6 connections) — `internal/proxy/middleware/s3auth_robust.go`
-- **.authenticatePresigned()** (5 connections) — `internal/proxy/middleware/s3auth_presigned.go`
-- **.buildCanonicalHeaders()** (5 connections) — `internal/proxy/middleware/s3auth_robust.go`
-- **SignatureInfo** (5 connections) — `internal/proxy/middleware/s3auth_robust.go`
-- **uriEncode()** (4 connections) — `internal/proxy/middleware/s3auth_presigned.go`
-- **.buildPresignedCanonicalRequest()** (4 connections) — `internal/proxy/middleware/s3auth_presigned.go`
-- **.calculateSignature()** (4 connections) — `internal/proxy/middleware/s3auth_robust.go`
-- **.logSecurityEvent()** (4 connections) — `internal/proxy/middleware/s3auth_robust.go`
-- **.validateTimestamp()** (4 connections) — `internal/proxy/middleware/s3auth_robust.go`
-- **isPresignedRequest()** (3 connections) — `internal/proxy/middleware/s3auth_presigned.go`
-- **parseCredentialScope()** (3 connections) — `internal/proxy/middleware/s3auth_presigned.go`
-- **TestAuthCanonicalQueryIsSortedByName()** (3 connections) — `internal/proxy/middleware/s3auth_presigned_test.go`
-- **TestCanonicalQueryString()** (3 connections) — `internal/proxy/middleware/s3auth_presigned_test.go`
-- **TestCanonicalURI()** (3 connections) — `internal/proxy/middleware/s3auth_presigned_test.go`
-- **TestURIEncode()** (3 connections) — `internal/proxy/middleware/s3auth_presigned_test.go`
-- **.buildStringToSign()** (3 connections) — `internal/proxy/middleware/s3auth_robust.go`
-- **.parseAuthorizationHeader()** (3 connections) — `internal/proxy/middleware/s3auth_robust.go`
-- **net/url.Values** (2 connections)
-- **stripExcessSpaces()** (2 connections) — `internal/proxy/middleware/s3auth_robust.go`
-- **.hmacSHA256()** (2 connections) — `internal/proxy/middleware/s3auth_robust.go`
+- **ADR 0012: Client-supplied checksums are verified against the plaintext and never forwarded** (45 connections) — `docs/adr/0012-client-checksums-are-verified-never-forwarded.md`
+- **Developer: Request paths** (31 connections) — `docs/developer/request-paths.md`
+- **Upload checksum verifier reader** (11 connections) — `docs/developer/request-paths.md`
+- **Client-leg checksum verification** (7 connections) — `docs/security/upload-integrity.md`
+- **What is verified on every S3 request** (6 connections) — `docs/security/request-authentication.md`
+- **Client Checksum Verified Against Plaintext (D1-D3)** (5 connections) — `docs/adr/0012-client-checksums-are-verified-never-forwarded.md`
+- **fillPart()** (5 connections) — `internal/proxy/handlers/object/operations.go`
+- **CRC-64/NVME slicing-by-8 table** (4 connections) — `docs/developer/request-paths.md`
+- **response-* query parameter overrides** (4 connections) — `docs/developer/request-paths.md`
+- **Short-body guard (declared length check, only io.EOF ends a part)** (4 connections) — `docs/developer/request-paths.md`
+- **Client-declared checksums verified, never forwarded** (4 connections) — `docs/operations/integrity.md`
+- **No Plaintext Checksum in Object Metadata (D9)** (3 connections) — `docs/adr/0012-client-checksums-are-verified-never-forwarded.md`
+- **SigV4 Payload Hash Verified When Enabled (D15)** (3 connections) — `docs/adr/0012-client-checksums-are-verified-never-forwarded.md`
+- **CompleteMultipartUpload reads body unverified** (3 connections) — `docs/developer/request-paths.md`
+- **Upload integrity: the client leg** (3 connections) — `docs/security/upload-integrity.md`
+- **400 BadDigest / 400 InvalidDigest Verdicts (D6)** (2 connections) — `docs/adr/0012-client-checksums-are-verified-never-forwarded.md`
+- **Client Checksum Never Forwarded to Backend (D8)** (2 connections) — `docs/adr/0012-client-checksums-are-verified-never-forwarded.md`
+- **DeleteObjects Requires a Body Digest (D14)** (2 connections) — `docs/adr/0012-client-checksums-are-verified-never-forwarded.md`
+- **Verdict Lands Before Anything Is Committed (D7)** (2 connections) — `docs/adr/0012-client-checksums-are-verified-never-forwarded.md`
+- **D9a aws-chunked decoding unconditional** (2 connections) — `docs/adr/0013-a-configuration-key-exists-only-if-code-reads-it.md`
+- **Per-chunk aws-chunked signatures not verified** (2 connections) — `docs/adr/0014-authentication-is-sigv4-no-rate-limiting.md`
+- **s3_security carries exactly three enforced keys** (2 connections) — `docs/adr/0014-authentication-is-sigv4-no-rate-limiting.md`
+- **DELETE and DeleteObjects** (2 connections) — `docs/developer/request-paths.md`
+- **The multipart verbs routing** (2 connections) — `docs/developer/request-paths.md`
+- **Router SkipClean: a//b, a/./b and a/../b are distinct keys** (2 connections) — `docs/developer/request-paths.md`
+- *... and 12 more nodes in this community*
 
 ## Relationships
 
-- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (12 shared connections)
-- [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (9 shared connections)
-- [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (9 shared connections)
-- [Server and Listings](Server_and_Listings.md) (4 shared connections)
-- [Middleware: S3Auth Presigned Test](Middleware-_S3Auth_Presigned_Test.md) (3 shared connections)
-- [Config Types and Monitoring Plan](Config_Types_and_Monitoring_Plan.md) (2 shared connections)
-- [SigV4 Authentication Rules](SigV4_Authentication_Rules.md) (1 shared connections)
+- [SigV4 Authentication Rules](SigV4_Authentication_Rules.md) (11 shared connections)
+- [S3 API Behaviour](S3_API_Behaviour.md) (10 shared connections)
+- [Exit Provider and Session Lifecycle](Exit_Provider_and_Session_Lifecycle.md) (9 shared connections)
+- [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (9 shared connections)
+- [ADR Corpus and Release History](ADR_Corpus_and_Release_History.md) (7 shared connections)
+- [Integrity and Tail-First Read](Integrity_and_Tail-First_Read.md) (5 shared connections)
+- [Client Library and Storage Format](Client_Library_and_Storage_Format.md) (3 shared connections)
+- [Bucket Sub-Resource Handlers](Bucket_Sub-Resource_Handlers.md) (3 shared connections)
+- [Whole-Object Read Window](Whole-Object_Read_Window.md) (2 shared connections)
+- [Monitoring and Licence Removal](Monitoring_and_Licence_Removal.md) (2 shared connections)
+- [Object: Storage Headers](Object-_Storage_Headers.md) (2 shared connections)
+- [Orchestration: Providers Coverage Test (2)](Orchestration-_Providers_Coverage_Test_2.md) (2 shared connections)
 
 ## Source Files
 
-- `internal/proxy/middleware/s3auth_presigned.go`
-- `internal/proxy/middleware/s3auth_presigned_test.go`
-- `internal/proxy/middleware/s3auth_robust.go`
+- `docs/adr/0012-client-checksums-are-verified-never-forwarded.md`
+- `docs/adr/0013-a-configuration-key-exists-only-if-code-reads-it.md`
+- `docs/adr/0014-authentication-is-sigv4-no-rate-limiting.md`
+- `docs/developer/request-paths.md`
+- `docs/operations/integrity.md`
+- `docs/security/request-authentication.md`
+- `docs/security/upload-integrity.md`
+- `internal/proxy/handlers/object/operations.go`
 
 ## Audit Trail
 
-- EXTRACTED: 57 (71%)
-- INFERRED: 23 (29%)
+- EXTRACTED: 114 (93%)
+- INFERRED: 9 (7%)
 - AMBIGUOUS: 0 (0%)
 
 ---

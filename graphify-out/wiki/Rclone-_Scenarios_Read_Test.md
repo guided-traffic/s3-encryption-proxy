@@ -17,8 +17,8 @@
 - [Handler Core and Entry Points](Handler_Core_and_Entry_Points.md) (4 shared connections)
 - [Shutdown and Test Contexts](Shutdown_and_Test_Contexts.md) (3 shared connections)
 - [Harness: Atrest](Harness-_Atrest.md) (3 shared connections)
-- [Tampering Harness](Tampering_Harness.md) (2 shared connections)
-- [s3cmd E2E Suite](s3cmd_E2E_Suite.md) (1 shared connections)
+- [Misc (15)](Misc_15.md) (2 shared connections)
+- [Harness: Backend](Harness-_Backend.md) (1 shared connections)
 
 ## Source Files
 
