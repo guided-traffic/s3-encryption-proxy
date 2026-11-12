@@ -34,10 +34,10 @@ group, and each run writes `test-results/e2e-s3cmd-verdicts.md`.
   end-to-end digest of an s3cmd upload anywhere. Over HTTPS the TLS record MAC
   covers the wire; over the plain listener nothing does. Use the TLS endpoint
   with s3cmd.
-- `s3cmd del --recursive` and `s3cmd multipart` are refused (`501` and `405`):
-  s3cmd addresses a bucket with a trailing slash and this proxy does not route
-  `POST /bucket/?delete` or `GET /bucket/?uploads`. Delete objects by their full
-  key, and clear an abandoned upload from the backend.
+- s3cmd addresses a bucket with a trailing slash — `del --recursive` sends
+  `POST /bucket/?delete`, `multipart` sends `GET /bucket/?uploads`. The proxy
+  serves every bucket operation in both forms, so both work, and so does `rb`
+  after a recursive delete.
 - On read s3cmd prefers the plaintext MD5 in its own `x-amz-meta-s3cmd-attrs`,
   which the proxy preserves, so `get` verifies and both `info` and
   `ls --list-md5` report the same digest — the latter falls back to that

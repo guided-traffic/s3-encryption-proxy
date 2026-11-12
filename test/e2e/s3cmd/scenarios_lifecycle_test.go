@@ -11,16 +11,14 @@ import (
 	"github.com/guided-traffic/s3-encryption-proxy/v5/test/e2e/harness"
 )
 
-// TestS6_Lifecycle covers the lifecycle, and it turned up a second defect that has
-// nothing to do with the entity tag.
+// TestS6_Lifecycle covers the lifecycle of a bucket s3cmd creates, fills and
+// removes itself.
 //
 // s3cmd addresses a bucket with a trailing slash. `del --recursive s3://b/`
 // sends `POST /b/?delete`, and `multipart s3://b` sends `GET /b/?uploads` — both
-// the bucket resource, both what S3 answers as a bucket operation. This proxy
-// routes neither: its DeleteObjects route matches the path without the trailing
-// slash, and the trailing-slash route carries no POST at all, so the request
-// falls through to the object handler with an empty key. A client that always
-// writes the slash therefore cannot delete recursively, cannot list its open
+// the bucket resource, both what S3 answers as a bucket operation. The proxy has
+// to route every bucket operation in that form as well as without the slash, or
+// a client that always writes it cannot delete recursively, cannot list its open
 // uploads, and — because of that — cannot remove its own bucket.
 func TestS6_Lifecycle(t *testing.T) {
 	ctx := preflight(t)
@@ -70,9 +68,8 @@ func TestS6_Lifecycle(t *testing.T) {
 			Endpoint: ep.name,
 			What:     "del --recursive over a prefix",
 			Wants: "delete the objects. s3cmd sends DeleteObjects as POST on the bucket WITH a trailing " +
-				"slash; the proxy routes DeleteObjects only on the path without it, and its trailing-slash " +
-				"bucket route carries no POST, so the request reaches the object handler with an empty key " +
-				"and is answered 501 NotImplemented. A routing gap, unrelated to the entity tag",
+				"slash, and the proxy must route it there like the path without it — not hand it to the " +
+				"object handler with an empty key",
 		}, r.OK() && len(left) == 0, s.says(r))
 	})
 
@@ -83,17 +80,15 @@ func TestS6_Lifecycle(t *testing.T) {
 			ID:       "S6b",
 			Endpoint: ep.name,
 			What:     "multipart — list the bucket's open uploads",
-			Wants: "answer the listing. Same trailing slash: the proxy routes ListMultipartUploads on the " +
-				"bucket path without it, and the trailing-slash route hands GET to the plain bucket handler, " +
-				"which does not know the uploads sub-resource and answers 405 — so a client cannot see or " +
+			Wants: "answer the listing. Same trailing slash: ListMultipartUploads must be routed on " +
+				"GET /bucket/?uploads, not handed to the plain bucket handler, or a client cannot see or " +
 				"abort an upload it left open",
 		}, r.OK(), s.says(r))
 	})
 
 	t.Run("rb_removes_an_empty_bucket", func(t *testing.T) {
-		// Emptied with the backend client because the client's own recursive
-		// delete is S6a's open defect. When S6a passes, `del --recursive` does
-		// this and the backend client comes out.
+		// Emptied with the backend client so this case judges rb alone: when S6a
+		// is red, its leftovers must not turn this verdict red as well.
 		harness.EmptyBucket(t, ctx, s.bucket)
 
 		r := s.run(t, ctx, "rb", s.uri(""))

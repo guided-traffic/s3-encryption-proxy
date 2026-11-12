@@ -508,8 +508,8 @@ func TestCfgValidateOptimizationsBoundaries(t *testing.T) {
 		{name: "document ceiling at its default", opts: OptimizationsConfig{MaxRequestDocumentSize: DefaultMaxRequestDocumentSize}},
 		{
 			// ADR 0013 D7 / ADR 0017 D8: a value that switches a protection off is
-			// refused by name - the idle timeout got that check, the cleanup interval
-			// was left behind (ADR 0028, residual risks).
+			// refused by name, the idle timeout and the cleanup interval alike
+			// (ADR 0028).
 			// Open: whether a written 0 is caught here or in the loader beside the
 			// idle timeout's zero check. The minimum of 1 itself is not open.
 			name:        "cleanup interval below its minimum is refused",

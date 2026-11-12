@@ -4,23 +4,18 @@
 
 **Accepted.** Date: 2026-09-10.
 
-**Implemented on the 5.0.0 branch the same day.** The provider type is `exit`; `none` is refused
-by name with a message that points at it. All three write paths store plaintext, every read path
-decides per object — whole-object `GET`, ranged `GET` and `HEAD`, verified 2026-09-12 — and
-switching the active alias to `exit` needs nothing beyond the configuration entry.
+**Implemented, and released in 5.0.0.** The provider type is `exit`; `none` is refused by name
+with a message that points at it. All three write paths store plaintext, every read path decides
+per object — whole-object `GET`, ranged `GET` and `HEAD` — and switching the active alias to
+`exit` needs nothing beyond the configuration entry. A client part of a multipart upload is
+forwarded while it arrives when the request declares its length; one that declares none is read
+under the budget that bounds every other part this process holds and refused above it, so the
+backend's rules about part sizes are the ones the client meets and no single part can exhaust the
+process's memory.
 
-**Corrected 2026-09-13.** Until that day this mode did not keep its own promise that the backend's
-rules about part sizes are the ones the client meets: a client part was read into memory in full
-before it was forwarded, with no bound but the S3 maximum, so a part larger than the container's
-free memory ended the process and one authenticated client was enough to do it. A part whose length
-the request declares is now forwarded while it arrives; one that declares none is read under the
-budget that bounds every other part this process holds and refused above it.
-
-This supersedes D10 of [ADR 0004](0004-one-local-key-provider.md), which kept a pass-through
-provider "for testing and end-of-life only". The end-of-life half is now the whole point and it is
-specified here; the testing half survives as a consequence rather than a purpose, because in a
-bucket that holds nothing this proxy encrypted, the exit provider behaves exactly as pure
-pass-through did.
+This record holds the only pass-through rule in the product. Testing is not its purpose; it is a
+consequence of it, because in a bucket that holds nothing this proxy encrypted, the exit provider
+behaves exactly as pure pass-through does.
 
 ## Context
 
@@ -166,9 +161,9 @@ refusing to start over data that may no longer exist.
 
 The exit provider cannot tell a client that a given object is plaintext or ciphertext. A client
 that needs to know has to read the object metadata itself, and the proxy strips its own namespace
-from every response ([ADR 0009](0009-the-metadata-prefix-is-the-proxys-namespace.md)) — the
-whole-object pass-through included, which is where it was not true until 2026-09-12. This has not
-been raised as a requirement; it is recorded because a migration tool might want it.
+from every response ([ADR 0009](0009-the-metadata-prefix-is-the-proxys-namespace.md)), the
+whole-object pass-through included. This has not been raised as a requirement; it is recorded
+because a migration tool might want it.
 
 The extra `HEAD` on a ranged read under exit has not been measured. It is one request against a
 backend that already answers the range request, so the cost is a round trip rather than a transfer,
@@ -178,7 +173,8 @@ but the claim is reasoned rather than recorded.
 
 - [ADR 0001](0001-the-backend-is-hostile.md) — why a fingerprint from object metadata may not
   select a no-op unwrap.
-- [ADR 0004](0004-one-local-key-provider.md) — the local key provider whose D10 this supersedes.
+- [ADR 0004](0004-one-local-key-provider.md) — the local key provider, the one that keeps the
+  key the exit provider reads with.
 - [ADR 0016](0016-the-proxy-is-apache-licensed-and-checks-no-license.md) — no provider type is
   gated on a license.
 - [ADR 0017](0017-stored-data-compatibility-is-not-owed.md) — why `none` is refused rather than

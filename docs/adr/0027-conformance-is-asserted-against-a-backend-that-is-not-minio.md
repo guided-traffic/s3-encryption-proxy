@@ -2,18 +2,21 @@
 
 ## Status
 
-**Accepted.** Date: 2026-09-11.
+**Accepted.** Date: 2026-09-12.
 
-Implemented the same day: the suite, one script for every backend, the free
-matrix in continuous integration and the scheduled paid matrix.
+Implemented: the suite, one script that sets up every backend for a workstation and for
+continuous integration alike (`make test-conformance`, `make test-conformance-parallel`), the free
+matrix — MinIO and LocalStack — on every change in continuous integration as a release gate, and
+the paid matrix on a weekly schedule (`make test-conformance-wasabi` on a workstation). Both
+matrices run with `fail-fast` off.
 
-**First paid run, 2026-09-11.** The corpus seeded in one pass — 17 objects,
-10,878,989 bytes of a 16,777,216 byte budget — and all seventeen assertions pass
-against Wasabi. Three things the run found, in the order they matter:
+The paid corpus seeds in one pass — 17 objects, 10,878,989 bytes of a 16,777,216 byte budget —
+and all seventeen assertions pass against Wasabi. What the runs establish, in the order it
+matters:
 
 - **No backend this project can reach implements `x-amz-expected-bucket-owner`.**
   Three were probed: MinIO, LocalStack 3.8 and Wasabi. All three accept a wrong
-  bucket owner and succeed. It was the gap this suite was built partly to close,
+  bucket owner and succeed. It is the gap this suite was built partly to close,
   and it stays open — recorded against
   [ADR 0007](0007-forward-it-or-refuse-it.md) rather than worked around.
   The pattern has a cause worth writing down: the header checks an **AWS account
@@ -22,37 +25,29 @@ against Wasabi. Three things the run found, in the order they matter:
   and still does not enforce it. Only AWS S3 itself is likely to close this.
   A negative result, and the suite reporting it by name is the point of D2.
 - **The three multipart permissions are a cost control, not a convenience.**
-  The first runs were made with a credential that could neither list nor abort
-  multipart uploads, and left three uploads open that nothing could see or
-  remove. They carried no parts, so they cost nothing — but a seed that died
-  halfway through its 5 MiB multipart would have left billed parts in exactly
-  that state. The policy is written out in
-  [docs/developer/testing.md](../developer/testing.md), and the suite carries an
-  opt-in sweep — `--clean` — that aborts the uploads left under its own prefix,
-  because a test's own cleanup can be the thing that fails.
-- **D9 caught a defect in this ADR's own implementation.** The seed created the
-  bucket unconditionally, which works on a throwaway stack and is denied by a
-  correctly scoped paid credential. It now creates one only when `HeadBucket`
-  says it is missing, and says so plainly when it may not.
+  A credential that can neither list nor abort multipart uploads leaves uploads
+  open that nothing can see or remove. Without parts they cost nothing — but a
+  seed that dies halfway through its 5 MiB multipart leaves billed parts in
+  exactly that state. The policy is written out in the developer documentation's
+  testing page, and the suite carries an opt-in sweep — `--clean` — that aborts
+  the uploads left under its own prefix, because a test's own cleanup can be the
+  thing that fails.
+- **D9 holds against a correctly scoped paid credential.** The seed creates a
+  bucket only when `HeadBucket` says it is missing, and says so plainly when it
+  may not; an unconditional create is denied by such a credential.
 
-**Corrected 2026-09-12.** Two things this ADR described were not what the suite did. D4's
-"fails on the first byte it tries to write" read as an enforcement the suite does not have, and
-the residual risk at the bottom said so in the same document; D4 now carries the qualification
-and the two statements agree. And the budget's own arithmetic had never been exercised: its
-ceiling refusal had no test, and its zero-budget branch was unreachable, because the only caller
-runs in a seeding process where the limit is never zero. The reservation is now a function that
-returns its refusal, and four cases pin it.
+D4 holds with the qualification it states: the budget refuses a write that reserves through it,
+and a test that writes through the SDK without reserving is caught after the fact. The budget's
+own arithmetic — its ceiling refusal and its zero-budget branch — is covered by tests of its own.
 
-Found with it: the three cost guards — D7's open-upload assertion, and the footprint ceiling and
-the refusal guard D4 names — ran **before** the tests whose residue they audit —
-Go runs a package's tests in file-name order, and the cost file sorted ahead of the refusal file.
-Each run therefore reported on the previous one. The seeding and cost files now carry their order
-in their names, so the corpus check runs first and the guards run last.
+The three cost guards — D7's open-upload assertion, and the footprint ceiling and the refusal
+guard D4 names — run **after** the tests whose residue they audit, and the corpus check runs
+first, so each run reports on itself rather than on the previous one.
 
 ## Context
 
-MinIO is the only backend this project has ever tested against, and MinIO is not
-S3. It implements most of the API and quietly ignores parts of it, which means a
+MinIO is the backend every other suite of this project tests against, and MinIO is
+not S3. It implements most of the API and quietly ignores parts of it, which means a
 whole class of proxy defect is invisible here: **a header the proxy drops and a
 header the proxy forwards produce the same answer from a backend that does not
 act on it.**
@@ -167,9 +162,9 @@ a backend enforces has to pick values no backend can accidentally accept.
 
 ## Consequences
 
-- **The proxy is now asserted against a specification rather than against one
+- **The proxy is asserted against a specification rather than against one
   implementation.** The class of defect that produced the bucket-owner gap is
-  reachable by a test for the first time.
+  reachable by a test.
 - **A second backend is a second thing that can break the build**, and some of
   those breaks will be the backend's fault rather than the proxy's. D2 is what
   keeps that useful: the suite is expected to report deviations, and a deviation

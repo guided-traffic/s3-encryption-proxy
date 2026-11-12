@@ -2,7 +2,7 @@
 #
 # image.tag is an explicit override: chart 12.1.0 ships appVersion 1.18.1, and
 # versions.env pins VELERO_VERSION=v1.18.2. Without the override the suite would
-# quietly test a different Velero than the one the ticket names. e2e-up.sh keeps
+# quietly test a different Velero than the one versions.env pins. e2e-up.sh keeps
 # the two in sync from versions.env.
 image:
   repository: docker.io/velero/velero
