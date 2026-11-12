@@ -4,8 +4,34 @@ entries:
   - annotations:
       category: Security
     apiVersion: v2
+    appVersion: 5.4.2
+    created: "2026-11-12T09:06:46.524422055Z"
+    description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
+      proxy
+    digest: 0874ccc9ed8eefdbc9b2f143ff5a69f2ec3bcd036ee981dced2e008526c886cb
+    home: https://github.com/guided-traffic/s3-encryption-proxy
+    keywords:
+    - s3
+    - encryption
+    - proxy
+    - security
+    - data-protection
+    kubeVersion: '>=1.34.0-0'
+    maintainers:
+    - email: info@s3ep.com
+      name: Guided Traffic Team
+    name: s3-encryption-proxy
+    sources:
+    - https://github.com/guided-traffic/s3-encryption-proxy
+    type: application
+    urls:
+    - https://guided-traffic.github.io/s3-encryption-proxy/s3-encryption-proxy-5.4.2.tgz
+    version: 5.4.2
+  - annotations:
+      category: Security
+    apiVersion: v2
     appVersion: 5.4.1
-    created: "2026-11-11T11:42:50.438416881Z"
+    created: "2026-11-12T09:06:46.52126855Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 07d40ebd911282e09012b5f693dfdb5a628b044b7e8d21ff7b10294fe237ce87
@@ -31,7 +57,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 5.4.0
-    created: "2026-11-11T11:42:50.436507499Z"
+    created: "2026-11-12T09:06:46.519436567Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: f6d07c7a42357bd5f6b37f102151615fdf4b9780db755d83a6b3b41674ba6c48
@@ -57,7 +83,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 5.3.2
-    created: "2026-11-11T11:42:50.434414Z"
+    created: "2026-11-12T09:06:46.5172292Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 32cec61468050a181bdcd8ddcea298a527b34fb7f2c8e748932e7c4fc2c8965a
@@ -83,7 +109,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 5.3.1
-    created: "2026-11-11T11:42:50.431989024Z"
+    created: "2026-11-12T09:06:46.515279878Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 8769741add707203098364a6318ff3328287b12894fb65368a0769c06614d602
@@ -109,7 +135,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 5.3.0
-    created: "2026-11-11T11:42:50.428938495Z"
+    created: "2026-11-12T09:06:46.513343078Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: aa19898202e692edfc9cad6ce9d13f87349a94dbce5cf83c78bf722812517066
@@ -135,7 +161,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 5.2.1
-    created: "2026-11-11T11:42:50.426737682Z"
+    created: "2026-11-12T09:06:46.51145994Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 7dead34d4fa6e6a5fdf4974ddab31259f60a52bb77f1a1d9c8e93cdc4513e06a
@@ -161,7 +187,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 5.2.0
-    created: "2026-11-11T11:42:50.423853328Z"
+    created: "2026-11-12T09:06:46.509237033Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 9e01a0a567faf4366ccbbf21947eea656eeeabdabc59f58a7c61c541141f36fe
@@ -187,7 +213,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 5.1.19
-    created: "2026-11-11T11:42:50.396447998Z"
+    created: "2026-11-12T09:06:46.488703352Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: b7f9876c73b7528b95cbcb72e9ba092f4bbc619f853e848c07f706f28640665e
@@ -213,7 +239,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 5.1.18
-    created: "2026-11-11T11:42:50.393853971Z"
+    created: "2026-11-12T09:06:46.486938306Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: f5b0a472ce906c1127b28466a47996eb6e1ea5d7af131bfb0e72e4ba6c314cec
@@ -239,7 +265,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 5.1.17
-    created: "2026-11-11T11:42:50.391576615Z"
+    created: "2026-11-12T09:06:46.485041431Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: cbbd3c441b3eb3846240660f7f25e0fb9ae60757df456a798caca81c3806d9a5
@@ -265,7 +291,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 5.1.16
-    created: "2026-11-11T11:42:50.389567385Z"
+    created: "2026-11-12T09:06:46.483128056Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 53da7e9c62ace903ffcbce59f54d7ef56e7ba8b43a9a1e95fd007254bd42aedb
@@ -291,7 +317,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 5.1.15
-    created: "2026-11-11T11:42:50.387604884Z"
+    created: "2026-11-12T09:06:46.47866977Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: ed6de141fe4257e2d555e8866fc54b2357af21680bb4d6189ba3b41d57e4bbc7
@@ -317,7 +343,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 5.1.14
-    created: "2026-11-11T11:42:50.385040955Z"
+    created: "2026-11-12T09:06:46.476404434Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 61b19101a79ea7ddab5497ca1841a058d9785805b2b57a9f57ad2c7cfdd95613
@@ -343,7 +369,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 5.1.13
-    created: "2026-11-11T11:42:50.381028055Z"
+    created: "2026-11-12T09:06:46.474191676Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 1bcfe6fb69cc28f0c5cc08118be11e51df6275935d2e499dd360fc47ab4eba70
@@ -369,7 +395,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 5.1.12
-    created: "2026-11-11T11:42:50.375130261Z"
+    created: "2026-11-12T09:06:46.472080049Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 9b4e3cb0ce9e72d5543ed8ed7b6be597420194101f7ef3d18d63564f51581a76
@@ -395,7 +421,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 5.1.11
-    created: "2026-11-11T11:42:50.370962449Z"
+    created: "2026-11-12T09:06:46.469454064Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 7a81f3d9ea4a8f2ccf03dfcba670d0ecfe905718db0407ab3ed8ee6fe2fe1532
@@ -421,7 +447,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 5.1.10
-    created: "2026-11-11T11:42:50.367600791Z"
+    created: "2026-11-12T09:06:46.467000084Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 911448407a01f589d44a05ada3c53b3ec55906483e232402cbf8bc999b2ef812
@@ -447,7 +473,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 5.1.9
-    created: "2026-11-11T11:42:50.421037993Z"
+    created: "2026-11-12T09:06:46.505790027Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: d48b72c2db09621c1241f8ce36c1e49e1c4c16e454bec8cc27f14ccd50e53011
@@ -473,7 +499,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 5.1.8
-    created: "2026-11-11T11:42:50.418304564Z"
+    created: "2026-11-12T09:06:46.504031091Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 18cfbcc5c030fb49e6c3a12cef5889d17c00a4ae4218c574c267007a9065ac6e
@@ -499,7 +525,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 5.1.7
-    created: "2026-11-11T11:42:50.416224039Z"
+    created: "2026-11-12T09:06:46.502229657Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 940ff66f725f03b72c947be5f819753496b5ab66bf7f4901711d5bf86fa7969b
@@ -525,7 +551,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 5.1.6
-    created: "2026-11-11T11:42:50.413325637Z"
+    created: "2026-11-12T09:06:46.500306243Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: ec6f3ca1e0d3e82bf2d6718267027cd6a7761b4175931d5f81ac58712f484532
@@ -551,7 +577,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 5.1.5
-    created: "2026-11-11T11:42:50.410625791Z"
+    created: "2026-11-12T09:06:46.498509637Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 4d333249738620ee08ec853e8786e58b94f507455b9910118b4a294e0bac9ada
@@ -577,7 +603,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 5.1.4
-    created: "2026-11-11T11:42:50.408503348Z"
+    created: "2026-11-12T09:06:46.496269688Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: ce908b79a51337ec0573770e9f8f2e77db7761e759fa5961c9dbba4c4ebc7be6
@@ -603,7 +629,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 5.1.3
-    created: "2026-11-11T11:42:50.405919029Z"
+    created: "2026-11-12T09:06:46.492564717Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: b4f26394f556591b472693b1dfc0cb47c86e4ad936d26b1fe02d5f048871a3ee
@@ -629,7 +655,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 5.1.2
-    created: "2026-11-11T11:42:50.402469937Z"
+    created: "2026-11-12T09:06:46.490618149Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: fdcd7ffadccefff20fdc78a9ace29e79268c601ba6f3f90162c17c87acb1e910
@@ -655,7 +681,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 5.1.1
-    created: "2026-11-11T11:42:50.364411829Z"
+    created: "2026-11-12T09:06:46.46314531Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: d6dce6e7fe511e3f85eb75f578f2a4166411e140b7a1e749db7009581d98987f
@@ -681,7 +707,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 5.1.0
-    created: "2026-11-11T11:42:50.361946006Z"
+    created: "2026-11-12T09:06:46.461068328Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: c3bf331dbc7e2937f831bfc552a6160f67850d7ac7cb4899df0756e576556e1c
@@ -707,7 +733,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 5.0.2
-    created: "2026-11-11T11:42:50.358783966Z"
+    created: "2026-11-12T09:06:46.458957031Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: d0a50a7723b32cf97e8d06420a6dda92f590ca59ae30a3145ae92806313759d3
@@ -732,7 +758,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 5.0.1
-    created: "2026-11-11T11:42:50.354192372Z"
+    created: "2026-11-12T09:06:46.45691253Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 0c78d22b1806141ae81b8e6d7e17943e515f60b68d8c24548f73574dd0f06392
@@ -757,7 +783,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 5.0.0
-    created: "2026-11-11T11:42:50.346648696Z"
+    created: "2026-11-12T09:06:46.455109832Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 3f63ca4792e510d2562e8bd1bc84658a0da534516e8cf1b5b235d0e44de39964
@@ -782,7 +808,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 4.0.3
-    created: "2026-11-11T11:42:50.344517224Z"
+    created: "2026-11-12T09:06:46.453449453Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: ee60a434b9c1b03ea322d3efcbfd9a5e7fd0b70fbf06c030e9bbbe050d5801ae
@@ -807,7 +833,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 4.0.2
-    created: "2026-11-11T11:42:50.341374651Z"
+    created: "2026-11-12T09:06:46.452119815Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 171ed62152dc5e08cdb2ce3ef73c07f98b32f5e32fbf5d24d297efeed7bda4d9
@@ -832,7 +858,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 4.0.1
-    created: "2026-11-11T11:42:50.339659798Z"
+    created: "2026-11-12T09:06:46.449056779Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: f63f3b1956a66af9ffabe0d6ad83cfb5a7aedbe2601820bae7107b8b29d824a8
@@ -857,7 +883,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 4.0.0
-    created: "2026-11-11T11:42:50.333954798Z"
+    created: "2026-11-12T09:06:46.447950831Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: fdf1e7195dddab9922d43731c1dd94a4f7958d85a2d07070b01a92f9f9cd2be7
@@ -882,7 +908,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.57
-    created: "2026-11-11T11:42:50.317834712Z"
+    created: "2026-11-12T09:06:46.442027723Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 206f3969633c0b22939b56db104f8e2e2da5e2f9eebb88c9e7059102e765d778
@@ -907,7 +933,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.56
-    created: "2026-11-11T11:42:50.316717409Z"
+    created: "2026-11-12T09:06:46.440823379Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: aeb56081aa2d577cb6c0c1f7cdc0a5c351f0490c5e82ac209cf91c947888137d
@@ -932,7 +958,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.55
-    created: "2026-11-11T11:42:50.315510216Z"
+    created: "2026-11-12T09:06:46.43931769Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: eb1b3b8a85fcf15395c66ecf29165cb8157af837dc1c28fccd0004ce004ee2b6
@@ -957,7 +983,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.54
-    created: "2026-11-11T11:42:50.313796815Z"
+    created: "2026-11-12T09:06:46.436295843Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 99a7d60b5dc641877c3f0f246a99a3f9ff01b72fd509a3c1daa97a22f6171c83
@@ -982,7 +1008,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.53
-    created: "2026-11-11T11:42:50.310989496Z"
+    created: "2026-11-12T09:06:46.435046465Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 242d53b3152b8c297dea6c723ccc597b8ca00bf761178d7350ce20a4f2356650
@@ -1007,7 +1033,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.52
-    created: "2026-11-11T11:42:50.309411001Z"
+    created: "2026-11-12T09:06:46.433763024Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 2f07c1aff76b1cccfd687ba5084fcd4a0859b4ff012f89867da4902c85272ca5
@@ -1032,7 +1058,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.51
-    created: "2026-11-11T11:42:50.307701738Z"
+    created: "2026-11-12T09:06:46.43243052Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: dd003e1810887f111aeba8cd458a5109357c0adb862cd2deb2461a3d79fa8c16
@@ -1057,7 +1083,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.50
-    created: "2026-11-11T11:42:50.306224744Z"
+    created: "2026-11-12T09:06:46.431196842Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 5ac0f80b8c2140970ff9e9d9c7525b3e52c3d233ce1b531db9cc823efecb4358
@@ -1082,7 +1108,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.49
-    created: "2026-11-11T11:42:50.300721236Z"
+    created: "2026-11-12T09:06:46.428964758Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 03448417497d8015c64c1ee0227993e212d6e56890c56cdacf17f04154eaa0a8
@@ -1107,7 +1133,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.48
-    created: "2026-11-11T11:42:50.298632085Z"
+    created: "2026-11-12T09:06:46.42784824Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: baa6bd9c255957f5705c9182947ff5c415d5a93148fd261578f74d73cfff56bf
@@ -1132,7 +1158,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.47
-    created: "2026-11-11T11:42:50.294681613Z"
+    created: "2026-11-12T09:06:46.42674654Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 1a7b63b5669e017d9c9c0d2a23c8ff910ae7ccf82fb95c0de4d70d6ffd410dc0
@@ -1157,7 +1183,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.46
-    created: "2026-11-11T11:42:50.293083501Z"
+    created: "2026-11-12T09:06:46.424130445Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 1ca8167469730882bdb0a0e7707580b8278d20c166f378cb0e12670baa83491d
@@ -1182,7 +1208,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.45
-    created: "2026-11-11T11:42:50.291538138Z"
+    created: "2026-11-12T09:06:46.42303165Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: b70ba097e9dbdfd71ca69ca372d86470dcf19ae5b2101cd06a76dcef614dd9e8
@@ -1207,7 +1233,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.44
-    created: "2026-11-11T11:42:50.289933373Z"
+    created: "2026-11-12T09:06:46.421838088Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 33bd4aa1f2f233e24e5d11eaf22c6f9961437c765693c153110a999eddd7afd2
@@ -1232,7 +1258,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.43
-    created: "2026-11-11T11:42:50.288307778Z"
+    created: "2026-11-12T09:06:46.420659093Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: b8b88094da3c7cb2f93176b6b90d8857c23f288885e05b088536beeed828d88f
@@ -1257,7 +1283,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.42
-    created: "2026-11-11T11:42:50.286488778Z"
+    created: "2026-11-12T09:06:46.419568713Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: fe04e51d26f447e7c727275e82489f40992fc8421d972639c6c047fd12bc7d99
@@ -1282,7 +1308,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.41
-    created: "2026-11-11T11:42:50.284690087Z"
+    created: "2026-11-12T09:06:46.418303407Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 65fd5b61512fa4a2976d5bcd5f9ef7d13a468bc86a3cc341058eccfe72fb63fe
@@ -1307,7 +1333,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.38
-    created: "2026-11-11T11:42:50.281311306Z"
+    created: "2026-11-12T09:06:46.415560823Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 787cdc398cfcc7b657778ab1b059ffc8f24962ff31921ec5a52e06500ffbec27
@@ -1332,7 +1358,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.37
-    created: "2026-11-11T11:42:50.279604749Z"
+    created: "2026-11-12T09:06:46.413980473Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 73f8fae5df35c39cfe1b9fc7e001bf9d2c87a294decb9698893b4265c7d6bf41
@@ -1357,7 +1383,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.36
-    created: "2026-11-11T11:42:50.276608563Z"
+    created: "2026-11-12T09:06:46.411985355Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 04765be3909a08fd113e18cb145b3d9db477ad18107fe6577016d75196a4fed9
@@ -1382,7 +1408,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.35
-    created: "2026-11-11T11:42:50.273895562Z"
+    created: "2026-11-12T09:06:46.409631682Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 20ba874432378ea67e2f26398939db52861f9c756ab291759bd1c78abbbb856c
@@ -1407,7 +1433,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.34
-    created: "2026-11-11T11:42:50.269904804Z"
+    created: "2026-11-12T09:06:46.40833147Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: abb09f6bb75e224e3a71f4f33c07a9036fa72c48ae56bdbb39dced4eb427ace7
@@ -1432,7 +1458,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.33
-    created: "2026-11-11T11:42:50.268707681Z"
+    created: "2026-11-12T09:06:46.407207799Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: d933cafd4a2b7d3059bb8ef67918e17f85d9db4b7618c9e28598fcb8e3ac9206
@@ -1457,7 +1483,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.32
-    created: "2026-11-11T11:42:50.263302929Z"
+    created: "2026-11-12T09:06:46.405978328Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 426a7c96f2649613f17740095dcefb091cd31165507ba3aa124333c99054812d
@@ -1482,7 +1508,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.31
-    created: "2026-11-11T11:42:50.262014773Z"
+    created: "2026-11-12T09:06:46.404793001Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 1eab431679b11eabce2d9ed4d3518fb46bccfb72843627a714665c957b9a7516
@@ -1507,7 +1533,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.30
-    created: "2026-11-11T11:42:50.260811557Z"
+    created: "2026-11-12T09:06:46.403763608Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 98238767dccde14ea4916c19a09812728ad2c662e3a0f57bfbbe9905f4c60827
@@ -1532,7 +1558,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.29
-    created: "2026-11-11T11:42:50.255006699Z"
+    created: "2026-11-12T09:06:46.401662419Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 708dd5bfac84a892c3da7be94410585c489d1da049f78edcb201325df3e4a100
@@ -1557,7 +1583,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.28
-    created: "2026-11-11T11:42:50.253658159Z"
+    created: "2026-11-12T09:06:46.400297816Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 005f352f1b01862f5e855b9c79ddfa161fd5e77eb800718f4e1251785b60b09b
@@ -1582,7 +1608,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.27
-    created: "2026-11-11T11:42:50.247477569Z"
+    created: "2026-11-12T09:06:46.397504837Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 0bcdd821b05c31e8aee09ac17a38ebeb126007762586469931fec06fb66ea280
@@ -1607,7 +1633,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.24
-    created: "2026-11-11T11:42:50.24582847Z"
+    created: "2026-11-12T09:06:46.395934987Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: a74a5e7ded201b3ebd7fe4c144cb7937abbe3ffdd0a28253aa8aedf8377e9a91
@@ -1632,7 +1658,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.23
-    created: "2026-11-11T11:42:50.242831292Z"
+    created: "2026-11-12T09:06:46.394822056Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 18ef84a089b43166f5c3db88b26c5bf394bd1d36c9fc9989b074341dd0e3f7e0
@@ -1657,7 +1683,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.22
-    created: "2026-11-11T11:42:50.241774684Z"
+    created: "2026-11-12T09:06:46.393575124Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: ce9be20b4237652022609390c05fb54f35b4444fcc305a26ebcf054b904db41a
@@ -1682,7 +1708,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.21
-    created: "2026-11-11T11:42:50.237818302Z"
+    created: "2026-11-12T09:06:46.39233842Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: ff2799e1019e042ff11db90cc297f67469144bd04cb7e6b81323633bc87843b5
@@ -1707,7 +1733,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.20
-    created: "2026-11-11T11:42:50.236667254Z"
+    created: "2026-11-12T09:06:46.390987802Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: a61eed2ab825c0fb9cded70594e07b5123c343214f3cf5653fd0203513943c46
@@ -1732,7 +1758,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.19
-    created: "2026-11-11T11:42:50.232960234Z"
+    created: "2026-11-12T09:06:46.388241602Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 57fcb891681850f36594895c59be8e28b7338bfe7c8690fb7fb7955caa504195
@@ -1757,7 +1783,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.18
-    created: "2026-11-11T11:42:50.231493449Z"
+    created: "2026-11-12T09:06:46.386140775Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: f4ea47a9d21e8f4ad286ad0dd60a8e24fec8a8b0b908f23c0edfaa8ec17e1327
@@ -1782,7 +1808,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.17
-    created: "2026-11-11T11:42:50.227200851Z"
+    created: "2026-11-12T09:06:46.38474894Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: a696f6f3395d460e9bb9dac27b539e9df61506670ad5aedac868344800bc0171
@@ -1807,7 +1833,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.16
-    created: "2026-11-11T11:42:50.222909094Z"
+    created: "2026-11-12T09:06:46.382002109Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 8790cdc10a6ad5de0d26d3d1df4b1726f47491ce40340ab2bec769f4462dea30
@@ -1832,7 +1858,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.15
-    created: "2026-11-11T11:42:50.221662287Z"
+    created: "2026-11-12T09:06:46.380260607Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: fd88766fc71d63467ca573902ef177913c181b606849ad9d2737daea0ac6aef8
@@ -1857,7 +1883,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.14
-    created: "2026-11-11T11:42:50.220155687Z"
+    created: "2026-11-12T09:06:46.379154559Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: f8676abdb64c01320b884a61155c0fcb3290c6f467e9487dd53537741cdec40e
@@ -1882,7 +1908,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.13
-    created: "2026-11-11T11:42:50.218966768Z"
+    created: "2026-11-12T09:06:46.378040365Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 3280b37d28d6d5aea7033e8f89b5b7290505cffb348e2ac75e3f1dabfd7ffe29
@@ -1907,7 +1933,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.12
-    created: "2026-11-11T11:42:50.217787608Z"
+    created: "2026-11-12T09:06:46.376894392Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 5d0af4a6b583e021f8e28b43426d29fe8c4af87a3fce3d306a6150a4702a1e0b
@@ -1932,7 +1958,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.11
-    created: "2026-11-11T11:42:50.216580385Z"
+    created: "2026-11-12T09:06:46.37556836Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 8752679b3cc56398cf707d919f141494803b944bdda5ebf41f2fcf56ba40d72b
@@ -1957,7 +1983,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.10
-    created: "2026-11-11T11:42:50.215009765Z"
+    created: "2026-11-12T09:06:46.374203976Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 0a8b2e8120ed2420962d971d03471f3abcbb3a0848f785d9c6909aaafbc16089
@@ -1982,7 +2008,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.9
-    created: "2026-11-11T11:42:50.332201753Z"
+    created: "2026-11-12T09:06:46.446843931Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 9c1574a7afdb872f8cdf388b304460ba2c297b0acbda5238255ef1a723b30b77
@@ -2007,7 +2033,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.8
-    created: "2026-11-11T11:42:50.327242714Z"
+    created: "2026-11-12T09:06:46.445410478Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 851a1b41d0f48d09110231077b6bb9b80c7e047c1706336cf74f3f2cbd8a811b
@@ -2032,7 +2058,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.7
-    created: "2026-11-11T11:42:50.322828837Z"
+    created: "2026-11-12T09:06:46.444219109Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: c2464e331f427087c6249b290bba17bf969a6392c557563c61c535222e456ea9
@@ -2057,7 +2083,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.6
-    created: "2026-11-11T11:42:50.319114742Z"
+    created: "2026-11-12T09:06:46.443108683Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 1b067ec7231dbde28ef468e84620affef0a68622d290d3bda37faf0da8adbe8f
@@ -2082,7 +2108,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.5
-    created: "2026-11-11T11:42:50.303649945Z"
+    created: "2026-11-12T09:06:46.43006717Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 7ba37b00ed9588d81a3d66f1c725b09660c9656362c056d949e07a32337e3e9e
@@ -2107,7 +2133,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.4
-    created: "2026-11-11T11:42:50.283115529Z"
+    created: "2026-11-12T09:06:46.416932571Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: a63a3f3e16fde207eb7b46562b7ca602d340d2c284ab9747e3607cf0e5db029e
@@ -2132,7 +2158,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.3
-    created: "2026-11-11T11:42:50.259538359Z"
+    created: "2026-11-12T09:06:46.402714666Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 5811e613150eb93d96b371d9d78c5a2cc8e41fb09fc5294bc3f76c161c23a33b
@@ -2157,7 +2183,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.2
-    created: "2026-11-11T11:42:50.235526857Z"
+    created: "2026-11-12T09:06:46.389774784Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 54a8a0280e47c1db09de56e6184d484e5b3f0f7ae8b1343f9b0dcb39baa720b3
@@ -2182,7 +2208,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.1
-    created: "2026-11-11T11:42:50.213573298Z"
+    created: "2026-11-12T09:06:46.372615683Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 4908bb96eb2cd25bbb72f4d2e7faebbdb2392775fed0fd1e46680ec1ac40b716
@@ -2207,7 +2233,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.8.0
-    created: "2026-11-11T11:42:50.207767338Z"
+    created: "2026-11-12T09:06:46.370876345Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: cfd8405bb63e8cc03b9b6c91111efae3b5c33d5bdf18632c1db14f4e53b8f4fd
@@ -2232,7 +2258,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.7.0
-    created: "2026-11-11T11:42:50.206054358Z"
+    created: "2026-11-12T09:06:46.367672464Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: dec890304739c4aa1624d73d5ec07f396d967fbf3799275172f394989632d88b
@@ -2257,7 +2283,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.6.10
-    created: "2026-11-11T11:42:50.190659222Z"
+    created: "2026-11-12T09:06:46.353216113Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: c76a0f65543dc86e1f2830277ac286384a0256feefc13bf5bb44e7b679e3d540
@@ -2282,7 +2308,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.6.9
-    created: "2026-11-11T11:42:50.204391704Z"
+    created: "2026-11-12T09:06:46.365888032Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: bf035aaec2265ca43dde5253abec6c5dd962763eaaa16d7ff074d343a89bbe06
@@ -2307,7 +2333,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.6.8
-    created: "2026-11-11T11:42:50.200753172Z"
+    created: "2026-11-12T09:06:46.364234925Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: b09c94e977606961831a827e91e29109dc7201037da43bafdbb7119afb9939cc
@@ -2332,7 +2358,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.6.7
-    created: "2026-11-11T11:42:50.199136334Z"
+    created: "2026-11-12T09:06:46.36280581Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 86193ff3046874eb3242fb96ea2c4d0c5cbc7ff47f26edde830707243498f486
@@ -2357,7 +2383,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.6.6
-    created: "2026-11-11T11:42:50.197466888Z"
+    created: "2026-11-12T09:06:46.361298218Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 3d17e99b51c36b13999c8b46b1316556bf9a335e30b7248e3dabc1582902fe1a
@@ -2382,7 +2408,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.6.5
-    created: "2026-11-11T11:42:50.19528985Z"
+    created: "2026-11-12T09:06:46.359936208Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 50da91ce1b24e2ecef5eede09a324a32aafa780f835120e3b66c1b06fcb4b07e
@@ -2407,7 +2433,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.6.4
-    created: "2026-11-11T11:42:50.194035217Z"
+    created: "2026-11-12T09:06:46.358742857Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: e91efda9c279525bef5c40747a94c48e4289fe0dbe8c98a017ac7d3868ac2050
@@ -2432,7 +2458,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.6.3
-    created: "2026-11-11T11:42:50.192966516Z"
+    created: "2026-11-12T09:06:46.357093157Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 36a9e1061585e6849a2fc2bcb7423f185fcd2e7eeea8d78e4c31c1ccadabb64c
@@ -2457,7 +2483,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.6.2
-    created: "2026-11-11T11:42:50.191849904Z"
+    created: "2026-11-12T09:06:46.355601243Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 680f0fbe7ab5128c888d37127249f671c836472e0ddd961c84b37f4660e444da
@@ -2482,7 +2508,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.6.1
-    created: "2026-11-11T11:42:50.18901872Z"
+    created: "2026-11-12T09:06:46.350791206Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: c584f8d53b14fd90831dc6197f0f66b39425e5fa72152f0c1962e7def85ede0d
@@ -2507,7 +2533,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.6.0
-    created: "2026-11-11T11:42:50.186353229Z"
+    created: "2026-11-12T09:06:46.349568008Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: ad79b0f07e546b558371d37a98c9f36af9921d1e28c7fa64f197f317738a25cc
@@ -2532,7 +2558,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.5.2
-    created: "2026-11-11T11:42:50.181982582Z"
+    created: "2026-11-12T09:06:46.348216588Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: b2e6f1658c57f9cc36b1718a8c403c79188b3fe342ae19bfee16244a18ff95ba
@@ -2557,7 +2583,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.0.2
-    created: "2026-11-11T11:42:50.17959139Z"
+    created: "2026-11-12T09:06:46.346584522Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 06f61a0e4ec5388c0f42e60a9e6ef6ca0a7c290c4273c3d5d4a11ed56d0bb283
@@ -2582,7 +2608,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.0.1
-    created: "2026-11-11T11:42:50.177966308Z"
+    created: "2026-11-12T09:06:46.344929162Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 70b3a904a0ef22b2b9bcdca51b128b2d0e8c5b612dd7682967d0cf1b20e8d7b4
@@ -2607,7 +2633,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.0.0
-    created: "2026-11-11T11:42:50.174857037Z"
+    created: "2026-11-12T09:06:46.343385141Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 7498357ded61d4c9499e5d97b9fd369ca8eeaa91b3254436d5712e57f9bda09e
@@ -2632,7 +2658,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 2.1.1
-    created: "2026-11-11T11:42:50.173319508Z"
+    created: "2026-11-12T09:06:46.341980251Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 6066164b6fce8cf50aa7a80a365a7a4470c82f63b0c6507035e266d1cc69c985
@@ -2657,7 +2683,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 2.1.0
-    created: "2026-11-11T11:42:50.168144712Z"
+    created: "2026-11-12T09:06:46.340518395Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 3dada17a318f3c163117a80943b83c304e24f6d96ca2289c3480ad10c44129b4
@@ -2682,7 +2708,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 2.0.4
-    created: "2026-11-11T11:42:50.166990048Z"
+    created: "2026-11-12T09:06:46.337395748Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: f12990b2ffda7b051d20fc378c00bcf341d3db7d3800fc2c004bf968c6a4d845
@@ -2707,7 +2733,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 2.0.3
-    created: "2026-11-11T11:42:50.165786603Z"
+    created: "2026-11-12T09:06:46.335032256Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 0d8ae4b19272f84aa2824345c7b85fe5e20391f26bced41d159c07ff9567b0fc
@@ -2732,7 +2758,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 2.0.2
-    created: "2026-11-11T11:42:50.163873885Z"
+    created: "2026-11-12T09:06:46.333660519Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 9cea7b32241446f77ddaf964593c450b8d2a8b843c4090e86aee37463f303929
@@ -2757,7 +2783,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 2.0.1
-    created: "2026-11-11T11:42:50.16151792Z"
+    created: "2026-11-12T09:06:46.332348774Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 7430b3fbe41b7bc093b707ff5d202c98bdc0e7d3e47ae63341941a92f3ec642d
@@ -2782,7 +2808,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 2.0.0
-    created: "2026-11-11T11:42:50.158743392Z"
+    created: "2026-11-12T09:06:46.331130856Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 00bc667597a2782b6d42274e883c461552263596befe3e5d528c804930da1e57
@@ -2807,7 +2833,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.24.1
-    created: "2026-11-11T11:42:50.104775196Z"
+    created: "2026-11-12T09:06:46.299133536Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 604be6e79d805c064323100f6bd676bbbb58fd5f001d8459aefe27e23e1785de
@@ -2832,7 +2858,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.24.0
-    created: "2026-11-11T11:42:50.101654323Z"
+    created: "2026-11-12T09:06:46.297896581Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 6b25425aa79d5df757ad0ba3a948a40a050791d80a5baf9816a94c49ae0195c7
@@ -2857,7 +2883,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.23.0
-    created: "2026-11-11T11:42:50.095367734Z"
+    created: "2026-11-12T09:06:46.296678944Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 699f7a1715060f5f856ce928d08ae5e6db4a019dae4aa1d4165ef5c91b054bc7
@@ -2882,7 +2908,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.22.1
-    created: "2026-11-11T11:42:50.091251429Z"
+    created: "2026-11-12T09:06:46.29407419Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: b675eac9ef4fa6ab80094443e690e82923cbf546a68693aff38a4edd5c9069f1
@@ -2907,7 +2933,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.22.0
-    created: "2026-11-11T11:42:50.089252238Z"
+    created: "2026-11-12T09:06:46.292949536Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 42ed064ff3516f33310d70cd4f66672595903741d11f625ef105d130681de25d
@@ -2932,7 +2958,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.21.1
-    created: "2026-11-11T11:42:50.08685279Z"
+    created: "2026-11-12T09:06:46.29173772Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: d6794e6fe0e230e64a24e7846247cb680e7665aee12c9df11656e0a40e0b99ec
@@ -2957,7 +2983,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.21.0
-    created: "2026-11-11T11:42:50.08336329Z"
+    created: "2026-11-12T09:06:46.290250586Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: eb217892e72da014b5d4981baba08f1e0bb41b00b7d21067c5c013519eaea59c
@@ -2982,7 +3008,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.20.0
-    created: "2026-11-11T11:42:50.080886936Z"
+    created: "2026-11-12T09:06:46.288735639Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 2cc0a6da11147cad2864fe2fff6e99180824deaef7e83a91c4efa8304056e3e1
@@ -3007,7 +3033,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.19.5
-    created: "2026-11-11T11:42:50.075442731Z"
+    created: "2026-11-12T09:06:46.285433264Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: f535cc4c4c6b2d82cee8a57e8dd24c597d7e99afd69affae5f65e4f1ad0e35bd
@@ -3032,7 +3058,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.19.4
-    created: "2026-11-11T11:42:50.074506761Z"
+    created: "2026-11-12T09:06:46.284108114Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: f1e60d383f676c1f67e7ce743b3c17aac83644de13548883dc35a36fa63cd730
@@ -3057,7 +3083,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.19.3
-    created: "2026-11-11T11:42:50.073561894Z"
+    created: "2026-11-12T09:06:46.281140769Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: ac09f487c1921c4560e4fba516b1b85c8565e884b61be9148fd91718c860d526
@@ -3082,7 +3108,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.19.2
-    created: "2026-11-11T11:42:50.072555921Z"
+    created: "2026-11-12T09:06:46.280137323Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 27ecb23ca53b88ee592b55bc8ac404dc68fd270d4e99c4a2c8489e516b23e9bb
@@ -3107,7 +3133,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.19.1
-    created: "2026-11-11T11:42:50.07133386Z"
+    created: "2026-11-12T09:06:46.279067754Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 9c647805e8dae1bbd095b332f722563ae343c511cee98e20d0cc601927e31377
@@ -3132,7 +3158,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.19.0
-    created: "2026-11-11T11:42:50.069180147Z"
+    created: "2026-11-12T09:06:46.278111687Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 1379ebfcca4b91daf998e5ff8098771793dba3691afd9502ee7e010558f562a5
@@ -3157,7 +3183,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.18.1
-    created: "2026-11-11T11:42:50.067598856Z"
+    created: "2026-11-12T09:06:46.277172373Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: cd207d83049480131dcb7ed195e73c735d6d017f21da7fb2ccafc4462ac91899
@@ -3182,7 +3208,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.18.0
-    created: "2026-11-11T11:42:50.065930631Z"
+    created: "2026-11-12T09:06:46.276221296Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 0c2ac0bf867f8e176429a1d431cfcedad4131dff28273b56f952f710805cbb46
@@ -3207,7 +3233,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.17.2
-    created: "2026-11-11T11:42:50.061988215Z"
+    created: "2026-11-12T09:06:46.275142038Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: b6e06ae282e2e8c0d668f2d18a50c831ff3b2e539c3f40f1437f82a7f98be5f9
@@ -3232,7 +3258,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.17.1
-    created: "2026-11-11T11:42:50.058082749Z"
+    created: "2026-11-12T09:06:46.273905403Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 06a6a216b37fd43c53e458e07cb2b3dceb94b53c599ef9a4c5aee2b678d914ad
@@ -3257,7 +3283,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.17.0
-    created: "2026-11-11T11:42:50.056450501Z"
+    created: "2026-11-12T09:06:46.272614639Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 32dba70c3532f793933fd1dba0bcb043a71a0d7b041fe14809fd6bf0d1843abb
@@ -3282,7 +3308,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.15.2
-    created: "2026-11-11T11:42:50.05469406Z"
+    created: "2026-11-12T09:06:46.268617869Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 889dae75f61f193cf51a2b994ce1918b8607c4aa6964eac8da266c4e306750f1
@@ -3307,7 +3333,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.15.1
-    created: "2026-11-11T11:42:50.053031466Z"
+    created: "2026-11-12T09:06:46.267601409Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 90f1e1f390170788ed14edf78bbef6e6419885667eaca4bf3944014c414143ab
@@ -3332,7 +3358,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.15.0
-    created: "2026-11-11T11:42:50.051582726Z"
+    created: "2026-11-12T09:06:46.266607081Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: b342196859769c08b1eed5b7faa1c7f1db7dcfb894aefc8619c9ce60ebced4c5
@@ -3357,7 +3383,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.14.1
-    created: "2026-11-11T11:42:50.050048955Z"
+    created: "2026-11-12T09:06:46.265691421Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 4fed3d0469b58836b561f2e241847973c0853ebb0737e2b9f9abf98d540a7936
@@ -3382,7 +3408,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.14.0
-    created: "2026-11-11T11:42:50.048615675Z"
+    created: "2026-11-12T09:06:46.264533886Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: f7c235dc2ab0bda1e5dcff691b0ea9819e6d8b4da0ef1b496624083427bb12d6
@@ -3407,7 +3433,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.13.2
-    created: "2026-11-11T11:42:50.047021349Z"
+    created: "2026-11-12T09:06:46.263564865Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 49d5e782ccc46cb59da80aea7c47424a1054c10a662f4366538993788293f173
@@ -3432,7 +3458,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.13.1
-    created: "2026-11-11T11:42:50.045357132Z"
+    created: "2026-11-12T09:06:46.262532034Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: b586e9ebec9b94847b7029dfe3bdccbea4b0881b5b6e71ceb72ed8a314554f3b
@@ -3457,7 +3483,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.13.0
-    created: "2026-11-11T11:42:50.040993108Z"
+    created: "2026-11-12T09:06:46.261510385Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 1db3cd0424f757bb08a09cc53489829d066089ad83020601f235159438630204
@@ -3482,7 +3508,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.12.0
-    created: "2026-11-11T11:42:50.03947637Z"
+    created: "2026-11-12T09:06:46.260511268Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 972569bdd1f60e8be574726d56cc524e6b85cc1e2c19ca09efb5f56166ab827c
@@ -3507,7 +3533,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.11.1
-    created: "2026-11-11T11:42:50.037822051Z"
+    created: "2026-11-12T09:06:46.25939498Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 324b2cd9a0806a0f5edbfa5b7c8e89e20efd1b54ecf5361e6de56e6510dab659
@@ -3532,7 +3558,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.11.0
-    created: "2026-11-11T11:42:50.035006046Z"
+    created: "2026-11-12T09:06:46.25821862Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 6258ac21eab235c5ddd8128f54cfc3fb08c5062a40042cd5210d3e091cc39a38
@@ -3557,7 +3583,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.10.0
-    created: "2026-11-11T11:42:50.029575986Z"
+    created: "2026-11-12T09:06:46.257169378Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 8e20b9f8774bac66a4f6725b9b930351379cd67617216dd08e24d25769951c59
@@ -3582,7 +3608,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.8.1
-    created: "2026-11-11T11:42:50.157404299Z"
+    created: "2026-11-12T09:06:46.329859708Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: d45027ec1785782023d096ae1ae72a91f36dc135eef51267582b67d17e0b3fc8
@@ -3607,7 +3633,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.8.0
-    created: "2026-11-11T11:42:50.156345687Z"
+    created: "2026-11-12T09:06:46.328307151Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 4d05251fb5c937430e38977e481ed77b29665c9634f9f51ffde59ad23ae14ada
@@ -3632,7 +3658,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.7.1
-    created: "2026-11-11T11:42:50.155142682Z"
+    created: "2026-11-12T09:06:46.327183529Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 386fdd8fd208e0b79f3c160e4c246a674be3982e3f1610dd4ee2e74b57efd16e
@@ -3657,7 +3683,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.7.0
-    created: "2026-11-11T11:42:50.150810719Z"
+    created: "2026-11-12T09:06:46.326077962Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 1e6f42c1f37425afa09782a17135ece2bdd4e7ea972c160eaf4e6d3b72332659
@@ -3682,7 +3708,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.6.0
-    created: "2026-11-11T11:42:50.14952075Z"
+    created: "2026-11-12T09:06:46.324845687Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: e7aeb971566a03dd69b02d9339d934dc4bdb54ccd71aef1961688b98e9235918
@@ -3707,7 +3733,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.5.5
-    created: "2026-11-11T11:42:50.148053625Z"
+    created: "2026-11-12T09:06:46.321986004Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 34542dcc054bc7c79f2207560e52ce11472928fde2176a816cdcbbf1d6d3af61
@@ -3732,7 +3758,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.5.4
-    created: "2026-11-11T11:42:50.146899914Z"
+    created: "2026-11-12T09:06:46.320502205Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: d9d2c0acc132cbc2106098c10174b7586a1022ab9980894bf1c297455f337fb5
@@ -3757,7 +3783,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.5.3
-    created: "2026-11-11T11:42:50.145494225Z"
+    created: "2026-11-12T09:06:46.319148883Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 1df6e4cc6f76a93bf8314ffe6d80d95003bfdde51b46f67299216a1890a54bad
@@ -3782,7 +3808,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.5.2
-    created: "2026-11-11T11:42:50.138671702Z"
+    created: "2026-11-12T09:06:46.317905095Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 937264ae2db347808a62c9d30bf05a8294ccecea2711d0119a92f999382fce1a
@@ -3807,7 +3833,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.5.1
-    created: "2026-11-11T11:42:50.136913707Z"
+    created: "2026-11-12T09:06:46.316600104Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: c288f13fd8a0ae0aef181ba9706440c26aafc62c565eb5e3d1258e7a519a0ec7
@@ -3832,7 +3858,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.5.0
-    created: "2026-11-11T11:42:50.13208756Z"
+    created: "2026-11-12T09:06:46.315457447Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 1d59df809f1a58042b0187ed19715161ad59598053778f642d398da665ff93dd
@@ -3857,7 +3883,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.4.8
-    created: "2026-11-11T11:42:50.130832506Z"
+    created: "2026-11-12T09:06:46.314494878Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: e1a910ef197e505e94856749953037d74e3029862234c37ffd6ab739953513ce
@@ -3882,7 +3908,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.4.7
-    created: "2026-11-11T11:42:50.129802027Z"
+    created: "2026-11-12T09:06:46.313533432Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 23275c89d3e27d12ac8a174cf5d06ac6e9067b9315dc7520ec12a73740ad35af
@@ -3907,7 +3933,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.4.6
-    created: "2026-11-11T11:42:50.128695765Z"
+    created: "2026-11-12T09:06:46.312584439Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 159dc9428b8bc87da264e16e43efc6169a27b70451ec6a17e9f1c864fbb0d833
@@ -3932,7 +3958,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.4.5
-    created: "2026-11-11T11:42:50.127608789Z"
+    created: "2026-11-12T09:06:46.311608835Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: ef459960ef4b8d5952d3b1064241908933dad07f5d1445a8765c2d89fe7c5c04
@@ -3957,7 +3983,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.4.4
-    created: "2026-11-11T11:42:50.126580324Z"
+    created: "2026-11-12T09:06:46.308889196Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: b7debb57edcfb8ab38e47903b581cddc7a51cabd1914eb5f45c8919605333fa0
@@ -3982,7 +4008,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.4.3
-    created: "2026-11-11T11:42:50.120827835Z"
+    created: "2026-11-12T09:06:46.307847889Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 4f12ee806d091b73b054490a6794cc085e4c135a25f081b6eefa113758b36c30
@@ -4007,7 +4033,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.4.2
-    created: "2026-11-11T11:42:50.119690033Z"
+    created: "2026-11-12T09:06:46.306777728Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 640e4f994c96cd80df64eab697f4c442245b3467078adc4bcbafac931ce0d5c9
@@ -4032,7 +4058,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.4.1
-    created: "2026-11-11T11:42:50.118593499Z"
+    created: "2026-11-12T09:06:46.305663816Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 32b75cb56f49993fad8a0cbaf0356b2c9f2d80b9ab91e86090c389874c488856
@@ -4057,7 +4083,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.4.0
-    created: "2026-11-11T11:42:50.116807922Z"
+    created: "2026-11-12T09:06:46.304442701Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 5d1b74b0a8c0279a99e653a59ce563c57bcbcd2be686626adf43c2928379dc75
@@ -4082,7 +4108,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.3.2
-    created: "2026-11-11T11:42:50.111004307Z"
+    created: "2026-11-12T09:06:46.303097424Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 00ece8e823dd63a58c58ce2acfd2d805a8749f779ca009bc46b696b1db0849ac
@@ -4107,7 +4133,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.3.1
-    created: "2026-11-11T11:42:50.109112218Z"
+    created: "2026-11-12T09:06:46.301457663Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 17293f7f980306a887a97f29532a44c91004ac0d4b9438d809f51139454f4d9f
@@ -4132,7 +4158,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.3.0
-    created: "2026-11-11T11:42:50.106214738Z"
+    created: "2026-11-12T09:06:46.300261255Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 130a84ffb9d288cfae72b14b814e85d7721a362d95828cf0f81300601d284381
@@ -4157,7 +4183,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.2.4
-    created: "2026-11-11T11:42:50.079178345Z"
+    created: "2026-11-12T09:06:46.287656692Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 38d6235d1a8d370534ea65c123200a13039ab2bf7c5062f7b8477d26a1194b2c
@@ -4182,7 +4208,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 1.2.3
-    created: "2026-11-11T11:42:50.07644653Z"
+    created: "2026-11-12T09:06:46.286550904Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 1abb195257e4b4cb9a0b2a0ae9668ab710170bdba361e03ea2ea065fc1921683
@@ -4208,7 +4234,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.5.0
-    created: "2026-11-11T11:42:50.605902966Z"
+    created: "2026-11-12T09:06:46.634539707Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 10010031c2adee3d61f78ca25ac290b9861ac3c1957784341bdc304b65bcdd95
@@ -4233,7 +4259,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.35
-    created: "2026-11-11T11:42:50.591008999Z"
+    created: "2026-11-12T09:06:46.624937355Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 0e4b52153f58e6edcf870db5f1152c8e3df1a4045d46a8a8e9137a2362417f3b
@@ -4258,7 +4284,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.34
-    created: "2026-11-11T11:42:50.589626714Z"
+    created: "2026-11-12T09:06:46.623386661Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 6057c8bb8108e7467beab8c51c77bb5a42a5a9c0b29ede4c3dc893c2b8eeb00c
@@ -4283,7 +4309,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.32
-    created: "2026-11-11T11:42:50.588209684Z"
+    created: "2026-11-12T09:06:46.622140721Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 6cc0b8b7d42719d5d6146cd6066374991c45500ae26d18ed29e192d8857bdae5
@@ -4308,7 +4334,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.31
-    created: "2026-11-11T11:42:50.586847659Z"
+    created: "2026-11-12T09:06:46.619619103Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: ffc60f5e8c0be9eb8e7f0f4a3480eeae0ffc4fdd4fed39d39d5a4aab59ccfec0
@@ -4333,7 +4359,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.29
-    created: "2026-11-11T11:42:50.582573054Z"
+    created: "2026-11-12T09:06:46.616519058Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 0a681cc94ba8b910898910a32b76764913d3419e72bf4629b6853168e47d66e9
@@ -4358,7 +4384,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.28
-    created: "2026-11-11T11:42:50.580688219Z"
+    created: "2026-11-12T09:06:46.615224515Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: e139c74a076bf4fcba24053c571dcd2b342f7e34d54dc38da233c513a4bbe5c1
@@ -4383,7 +4409,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.26
-    created: "2026-11-11T11:42:50.578685392Z"
+    created: "2026-11-12T09:06:46.614116182Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: a0df351719a9ec4b0380381077b43d564a9552cc946f38a9b6edc956d306ff51
@@ -4408,7 +4434,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.24
-    created: "2026-11-11T11:42:50.573949686Z"
+    created: "2026-11-12T09:06:46.612825267Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 3778d97a678283a9008254d656ba338143eb16d6cc778dd12998bc47d2232d7b
@@ -4433,7 +4459,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.22
-    created: "2026-11-11T11:42:50.572763742Z"
+    created: "2026-11-12T09:06:46.611586811Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 4912408d4aa237043cce5153fc888b3935ca84cc2c314978b7ad079a129737b7
@@ -4458,7 +4484,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.21
-    created: "2026-11-11T11:42:50.571439619Z"
+    created: "2026-11-12T09:06:46.610281798Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: ab79d54a8825e5d61f1150e6b5b51506ab605db85945d7f8c9c859e58c17c791
@@ -4483,7 +4509,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.20
-    created: "2026-11-11T11:42:50.570216466Z"
+    created: "2026-11-12T09:06:46.609025728Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 26a04638a94ef3fcb2f32be682f4e1224dbbc4d12add799f0bed257436830b63
@@ -4508,7 +4534,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.19
-    created: "2026-11-11T11:42:50.567737116Z"
+    created: "2026-11-12T09:06:46.605406799Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 50f44b7075b8721f917bc11fad3c55f1c40f01cec9a5231b1b1f80f49ed846fc
@@ -4533,7 +4559,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.18
-    created: "2026-11-11T11:42:50.566182716Z"
+    created: "2026-11-12T09:06:46.603569977Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 05d086a22274c85644fb1e55d728bf6ab654c430a00a2edefa9a1eadc38db4f1
@@ -4558,7 +4584,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.17
-    created: "2026-11-11T11:42:50.564378674Z"
+    created: "2026-11-12T09:06:46.602120383Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 27d8039cd2cefc8a64c5b5411b0611d956a1c504acdbddca38779ead1da573f0
@@ -4583,7 +4609,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.16
-    created: "2026-11-11T11:42:50.560906558Z"
+    created: "2026-11-12T09:06:46.600673324Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 6278b1cb810e75baad2b24dac817498c1c0f7998ed2b1bf3c1f7cc48c70d9a49
@@ -4608,7 +4634,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.15
-    created: "2026-11-11T11:42:50.559278528Z"
+    created: "2026-11-12T09:06:46.599455145Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: c12bdd144f14522481ee0baaa2b5f30381c6045c4d98db9db6a2e7cd6f87e03e
@@ -4633,7 +4659,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.14
-    created: "2026-11-11T11:42:50.558169792Z"
+    created: "2026-11-12T09:06:46.598149393Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 10bc2113a8396614d1d6750ae57c7021f27ba932ccb6812f9d2d08e8841e6648
@@ -4658,7 +4684,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.13
-    created: "2026-11-11T11:42:50.556019946Z"
+    created: "2026-11-12T09:06:46.596797482Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 1c4f3a55916a81e24eb617ed6e251732fd8ba79489237b219e821c5d1930dbbe
@@ -4683,7 +4709,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.12
-    created: "2026-11-11T11:42:50.554634396Z"
+    created: "2026-11-12T09:06:46.595394997Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 80078694ead1966af3d953232a292c7fe634e75245b7ae74b6c23316fa123b3c
@@ -4708,7 +4734,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.11
-    created: "2026-11-11T11:42:50.55332573Z"
+    created: "2026-11-12T09:06:46.594136202Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 7113507bc88f7b9694b50cf5e83a1f8e04cd0596e6000e0cf47e52f789504870
@@ -4733,7 +4759,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.10
-    created: "2026-11-11T11:42:50.551920913Z"
+    created: "2026-11-12T09:06:46.592781176Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: d57a18ad8e1a191c5edc9caafa349de97d2cebb354e6796f25a6e75123b0250e
@@ -4758,7 +4784,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.9
-    created: "2026-11-11T11:42:50.603646489Z"
+    created: "2026-11-12T09:06:46.632927277Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: dd6d8011dd8844b5c9786e170da5154d6c2be1ca2cd9d51cd949155181299b3e
@@ -4783,7 +4809,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.8
-    created: "2026-11-11T11:42:50.598550942Z"
+    created: "2026-11-12T09:06:46.631328924Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: fdc14b3e45ab276651d95152fd0f5d367caf1df34bd4ece101dfa444fe485bf3
@@ -4808,7 +4834,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.7
-    created: "2026-11-11T11:42:50.597087846Z"
+    created: "2026-11-12T09:06:46.629963128Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 5bc69edd58f87f4cfc9eb6f8caf6f7fc446be295ecb43088ad4fc93396f77163
@@ -4833,7 +4859,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.6
-    created: "2026-11-11T11:42:50.595725108Z"
+    created: "2026-11-12T09:06:46.628721375Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: ec226575073a5375d2b004c0081c4dbd5a9864f01ccde9c992358edc7c8a518e
@@ -4858,7 +4884,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.5
-    created: "2026-11-11T11:42:50.59440958Z"
+    created: "2026-11-12T09:06:46.627519817Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: ebea6ca860b1f07bf41d1cd83f408cda4659c33b376f0ac2eb79ececdc7e07ea
@@ -4883,7 +4909,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.4
-    created: "2026-11-11T11:42:50.592800747Z"
+    created: "2026-11-12T09:06:46.626285397Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: b21246d660028bdb2920b2d909002c4aa9cbe0e51ab6b76d605ba385bdf7f566
@@ -4908,7 +4934,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.3
-    created: "2026-11-11T11:42:50.584834662Z"
+    created: "2026-11-12T09:06:46.617844808Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: f11509ecb463718ca57aec4b94891eb8795fd89ae28a2240b897f3081aaced0f
@@ -4933,7 +4959,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.2
-    created: "2026-11-11T11:42:50.569012188Z"
+    created: "2026-11-12T09:06:46.607647829Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 9b65d1cc2b66f78ef93d1b349de638e5c9c7a88e36d89c744aa4a080248fabf6
@@ -4958,7 +4984,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.1
-    created: "2026-11-11T11:42:50.550310679Z"
+    created: "2026-11-12T09:06:46.589972218Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 427bee748a5e46f4c7a9785e6d3e3dcc8a81e24fccca74fce2ff187b7824d449
@@ -4983,7 +5009,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.4.0
-    created: "2026-11-11T11:42:50.544597403Z"
+    created: "2026-11-12T09:06:46.588883783Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: ad496c316f93876b6bcb3bcf77c7b38177205656b66a9fb631d59771ebd42bb3
@@ -5008,7 +5034,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.3.0
-    created: "2026-11-11T11:42:50.540700062Z"
+    created: "2026-11-12T09:06:46.587691914Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 30f0d6f4b68ddbdd0194b80c4866d61072c4cae8d3ebb0756591cff846e4c038
@@ -5033,7 +5059,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.2.28
-    created: "2026-11-11T11:42:50.525723207Z"
+    created: "2026-11-12T09:06:46.575423592Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: e3409ffa720da873023608f5ebb25d53d980c2a0ce946d69af94bb9d9a9ca460
@@ -5058,7 +5084,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.2.27
-    created: "2026-11-11T11:42:50.522385546Z"
+    created: "2026-11-12T09:06:46.57421426Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: a53642acd617054cd12b4655ceb588be3ee45bbfb5a10c11d2123777aebbc0fb
@@ -5083,7 +5109,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.2.26
-    created: "2026-11-11T11:42:50.521002069Z"
+    created: "2026-11-12T09:06:46.572901473Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 7b44d8a8002698943eb109f2b32b0eb708edd57d76611d500601c4c09c60b70e
@@ -5108,7 +5134,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.2.25
-    created: "2026-11-11T11:42:50.519314136Z"
+    created: "2026-11-12T09:06:46.571574981Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: e922d8ef3a88b2d08aa3cd647fa36c2be06bab8da1ef31515a2cf5c28c5eae67
@@ -5133,7 +5159,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.2.24
-    created: "2026-11-11T11:42:50.517026079Z"
+    created: "2026-11-12T09:06:46.570052761Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 49f52b5411e5443ffdb327f783a40a37e51b0c23acf3a8b0149ff2609cb3d0f9
@@ -5158,7 +5184,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.2.23
-    created: "2026-11-11T11:42:50.514763371Z"
+    created: "2026-11-12T09:06:46.56871074Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 209ed727d8e0a7e0e580397c6aef9fb790945a0dd13063ffc6bc26fcf844fe5a
@@ -5183,7 +5209,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.2.22
-    created: "2026-11-11T11:42:50.510387705Z"
+    created: "2026-11-12T09:06:46.567376643Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 31dec64870fd6a86d8394add3fa217ad96caac31923e0cf5f0f9b104de8ead4f
@@ -5208,7 +5234,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.2.21
-    created: "2026-11-11T11:42:50.507900641Z"
+    created: "2026-11-12T09:06:46.566138557Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 863bc643dccfbb3ff56ecd8dbc69bca28ea12db53a719c14e1097606ead365e5
@@ -5233,7 +5259,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.2.20
-    created: "2026-11-11T11:42:50.506187872Z"
+    created: "2026-11-12T09:06:46.563311134Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: cd3c808d60f2e85d3e30c283b620efc1017375460033f3681f4638add3658d10
@@ -5258,7 +5284,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.2.19
-    created: "2026-11-11T11:42:50.502935351Z"
+    created: "2026-11-12T09:06:46.560478652Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: b6282657efc7ba27035e345b12e7b51239e18c2422406ee45e385363a3062c48
@@ -5283,7 +5309,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.2.18
-    created: "2026-11-11T11:42:50.500022893Z"
+    created: "2026-11-12T09:06:46.559122895Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 0ee12361fad2ef6b9db0e6c4b1b8ff73f36fef5d108fb3a59726f580a461bcab
@@ -5308,7 +5334,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.2.17
-    created: "2026-11-11T11:42:50.498571247Z"
+    created: "2026-11-12T09:06:46.557456153Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: e67202722c99757096cdcf46da590a0fbadbf2d6575ef0f19f2741ab916cda56
@@ -5333,7 +5359,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.2.16
-    created: "2026-11-11T11:42:50.496091958Z"
+    created: "2026-11-12T09:06:46.556141253Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 47c3f09fa1a1d1547df775e9446a1f94454dc35aa11e894adaf71b803b221d14
@@ -5358,7 +5384,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.2.15
-    created: "2026-11-11T11:42:50.492562372Z"
+    created: "2026-11-12T09:06:46.554864283Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 6bdb3a04d6cc9a23da7e398bcc1ba8871092ef65603413be0b777d6e51ae433d
@@ -5383,7 +5409,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.2.14
-    created: "2026-11-11T11:42:50.490733654Z"
+    created: "2026-11-12T09:06:46.553677433Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 25fef798317b2f0e0c330526cb6177a5ba1299fa89deaaa0524163b99f6f8d3e
@@ -5408,7 +5434,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.2.13
-    created: "2026-11-11T11:42:50.488844661Z"
+    created: "2026-11-12T09:06:46.552381258Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 822f667572459de24723776a6a29404488d8ece427d5c8b5e14c5ecf9a8d8ed1
@@ -5433,7 +5459,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.2.12
-    created: "2026-11-11T11:42:50.486904302Z"
+    created: "2026-11-12T09:06:46.549116834Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: dc2c6829ad624a203e073ae331cb69ce6bc02daadf7b625ebcc7348b2b0bbb2c
@@ -5458,7 +5484,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.2.11
-    created: "2026-11-11T11:42:50.484885303Z"
+    created: "2026-11-12T09:06:46.547450764Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: b2d8184ebe66f8094a724fb96a20320eabafdbbc387c51e19e161d71f45169df
@@ -5483,7 +5509,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.2.10
-    created: "2026-11-11T11:42:50.480945072Z"
+    created: "2026-11-12T09:06:46.546051464Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 76fae938da9cb24d44996083db2522df7a5e5e30e6440a6ba843723c9a220326
@@ -5508,7 +5534,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.2.9
-    created: "2026-11-11T11:42:50.538352764Z"
+    created: "2026-11-12T09:06:46.586538697Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: b7d1f9317ac8fbbf1201ddc695c9dec4ed9ba7002291b980e1353714e86a1c7c
@@ -5533,7 +5559,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.2.8
-    created: "2026-11-11T11:42:50.534757564Z"
+    created: "2026-11-12T09:06:46.58526271Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: d4d2d33b04a0c11dffcf4d127345045507a2e7b25a3306672636282815eb36b2
@@ -5558,7 +5584,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.2.7
-    created: "2026-11-11T11:42:50.532408802Z"
+    created: "2026-11-12T09:06:46.583895771Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: d503177ff3a7530dae4dc12a4dd60836d701a23a1c7ad9452e201e8644281c9d
@@ -5583,7 +5609,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.2.6
-    created: "2026-11-11T11:42:50.531029524Z"
+    created: "2026-11-12T09:06:46.582361768Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 6cdad346ff938d2b42ace172b11f49dffa35cfedf014a6d3e51b96dd6a2a9e10
@@ -5608,7 +5634,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.2.5
-    created: "2026-11-11T11:42:50.529795139Z"
+    created: "2026-11-12T09:06:46.581139312Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 10ab141c9172ee24f41cc98fe281291ce5b78d93359c03f55989bb7393db6bc7
@@ -5633,7 +5659,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.2.4
-    created: "2026-11-11T11:42:50.528533974Z"
+    created: "2026-11-12T09:06:46.579834972Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: cd355a0f6002043d030952b4ec58e02a433b5cce7b9d667599e13362bc7978aa
@@ -5658,7 +5684,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.2.3
-    created: "2026-11-11T11:42:50.527140428Z"
+    created: "2026-11-12T09:06:46.576868447Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 865de9ed835af6962d0299c7f39249790adc9e37c2d207004a462c6f00d7e9a1
@@ -5683,7 +5709,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.2.2
-    created: "2026-11-11T11:42:50.504756985Z"
+    created: "2026-11-12T09:06:46.561703343Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 4b785a8393576f61e25602f2213c0f3514a0e20253ee0a7c0aa4b24c2953841b
@@ -5708,7 +5734,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.2.1
-    created: "2026-11-11T11:42:50.476932343Z"
+    created: "2026-11-12T09:06:46.544850658Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 0b4f0019b56db665d5d9094c75bfe232f9deba1107f919409562b11acf9d1214
@@ -5733,7 +5759,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.2.0
-    created: "2026-11-11T11:42:50.467923374Z"
+    created: "2026-11-12T09:06:46.543688956Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 5798733041dacd9d7bd7aa56c0dc08fca5db17b600e4651430b6d6666e54bdaa
@@ -5758,7 +5784,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.1.2
-    created: "2026-11-11T11:42:50.465267401Z"
+    created: "2026-11-12T09:06:46.542143823Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: a21c34133dbe78284eef5758b189083f363a14111628028fd23e9cfad5843e4b
@@ -5783,7 +5809,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.1.1
-    created: "2026-11-11T11:42:50.460420275Z"
+    created: "2026-11-12T09:06:46.54072687Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: b9cd9cd00a611df932f68fe81215eee3c2af5f1afa343afe65f7aad5e9675204
@@ -5808,7 +5834,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.1.0
-    created: "2026-11-11T11:42:50.458723976Z"
+    created: "2026-11-12T09:06:46.539335075Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 2705b05e6597e2039e436a8e66457bbda620177a2066d01d3b15cc2064966f78
@@ -5833,7 +5859,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.0.11
-    created: "2026-11-11T11:42:50.442428839Z"
+    created: "2026-11-12T09:06:46.527022671Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 2137a3034fe006e0888a87970c4668b3246d383326cd0d499e993bc7c919ff19
@@ -5858,7 +5884,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.0.10
-    created: "2026-11-11T11:42:50.439652167Z"
+    created: "2026-11-12T09:06:46.525787661Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 9b1b4e7c1fc919291811713cb25f1162afe810932e3e4f27f6c00f3d4597471f
@@ -5883,7 +5909,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.0.9
-    created: "2026-11-11T11:42:50.456971853Z"
+    created: "2026-11-12T09:06:46.537766507Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 6cef167d6b7409a7e303c66fa26c052ac9f0b4901f09e29d1d0203332d655a79
@@ -5908,7 +5934,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.0.8
-    created: "2026-11-11T11:42:50.455242803Z"
+    created: "2026-11-12T09:06:46.534666704Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 35938756c53080597171f4dd45db8cf5199ae705bca49165776bc69cad8a31f6
@@ -5933,7 +5959,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.0.7
-    created: "2026-11-11T11:42:50.45348601Z"
+    created: "2026-11-12T09:06:46.533385156Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 145f0a22c978f271980782987ce7758ce9a0aa335d8876d97135fb18afd666c8
@@ -5958,7 +5984,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.0.6
-    created: "2026-11-11T11:42:50.451751019Z"
+    created: "2026-11-12T09:06:46.532172036Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 45d290c8933033cb6c777951265fde782b1bceaa0d0307ec5cc17679731045e7
@@ -5983,7 +6009,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.0.5
-    created: "2026-11-11T11:42:50.449547291Z"
+    created: "2026-11-12T09:06:46.531023909Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 80fd4d837b9f5ef460062cedd3712d3fca3da7cd83c885d2a67777738dfe774d
@@ -6008,7 +6034,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.0.4
-    created: "2026-11-11T11:42:50.447820726Z"
+    created: "2026-11-12T09:06:46.529689682Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: 3f423b3f94aa309327486e381f0dabb3ebe64057c14dd60cdfedf5d305cd387e
@@ -6033,7 +6059,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 3.0.3
-    created: "2026-11-11T11:42:50.444624702Z"
+    created: "2026-11-12T09:06:46.528363942Z"
     description: A Helm chart for S3 Encryption Proxy - transparent S3 encryption/decryption
       proxy
     digest: b9241b5e3bb54bfb62aec4fa81ffb9def2b469b4ea24684408278874c5b13af2
@@ -6054,4 +6080,4 @@ entries:
     urls:
     - https://guided-traffic.github.io/s3-encryption-proxy/s3-encryption-proxy-helm-3.0.3.tgz
     version: 3.0.3
-generated: "2026-11-11T11:42:50.027908482Z"
+generated: "2026-11-12T09:06:46.25413133Z"
