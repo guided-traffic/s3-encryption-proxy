@@ -2,84 +2,60 @@
 
 ## Status
 
-**Accepted.** Date: 2026-09-07.
+**Accepted.** Date: 2026-10-29.
 
-Implemented and released in **3.8.56**: the Helm chart no longer ships a working
-key-encryption key as its default — the default values and the monitoring variant both
-reference `${S3EP_AES_KEY}`, so an install that configures nothing refuses to start instead
-of encrypting under a published key. Also implemented: the test certificate authority is
-untracked and generated on demand, and only its generator is tracked.
+**Implemented for everything an operator copies into a deployment.** The Helm chart ships no
+working key encryption key as its default: since **3.8.56** the default values and the
+monitoring variant reference `${S3EP_AES_KEY}`, and the chart hands that variable to the pod,
+so an install that configures nothing refuses to start instead of encrypting under a published
+key. No example configuration, chart values file, deployment values file or compose file
+carries a key, and no private key or certificate is tracked at all: the test certificate
+authority is generated on demand and only its generator is tracked. There are no RSA private
+keys in the tree; the `rsa` key provider went with ADR 0004, and what remains of it are two
+obviously truncated placeholder strings in configuration tests.
 
-**Implemented 2026-09-11: no usable key reaches a running stack from an example, a values file
-or the demo bring-up.** The conformance runner is the exception and is named below. The
-statement here used to be the wider "no usable key is tracked any more", **corrected
-2026-09-12** — see the block below. The on-demand generator writes
-`S3EP_AES_KEY` and `S3EP_AES_KEY_RETIRED` into the repository's ignored environment file,
-keeping a value that is already there so a restarted stack still reads what it wrote, and it
-is called by the demo bring-up, by the end-to-end bring-up and by continuous integration.
-Every example configuration, the user-facing reference and the end-to-end deployment values
-reference the variable; the demo stack takes it from the same file its compose environment
-reads, and the chart gained the wiring that hands it to the pod — which it had never had, so a
-default install referenced a variable nothing supplied.
+The on-demand generator writes `S3EP_AES_KEY` and `S3EP_AES_KEY_RETIRED` into the
+repository's ignored environment file, keeping a value that is already there so a restarted
+stack still reads what it wrote. It is called by the demo bring-up, by the end-to-end
+bring-up, by continuous integration and by the two monitoring targets that load an example
+configuration. Every example configuration, the user-facing reference and the end-to-end
+deployment values reference the variable; the demo stack takes it from the same file its
+compose environment reads. `S3EP_AES_KEY` is the only name for the active key (D3). The
+generator's second name, `S3EP_AES_KEY_RETIRED`, belongs to the second provider of the
+rotation example, and the conformance runner carries its own, `S3EP_CONFORMANCE_AES_KEY`.
 
-**Corrected 2026-09-12: D1 is met for everything an operator copies into a deployment, and is not
-met for the test fixtures and the conformance runner.** No example configuration, chart values
-file, deployment values file or compose file carries a key, and no private key or certificate
-is tracked at all. The unit and integration tests are the exception, and D1 names a
-test fixture in the same breath as an example: twenty-four test files carry base64 literals of
-exactly 32 bytes, eight distinct keys between them, and each one would be accepted as a key
-encryption key by a configuration that used it. The most-used of the eight appears in eighteen
-files; the one that this repository also published outside the tests, and which D5 covers, in
-three — it has been in one of them since 2025-08-31, was the literal in two example
-configurations and in the chart's development values until they were cleared, and on 2026-09-12
-it was written into a third test as the fixture for the test that loads the configuration the
-image ships with. Four of the eight are the captured format and wrap vectors added on 2026-09-12,
-so the number moves whenever a vector suite is added — which is the argument for not restating it
-in a document that is not regenerated. The 2026-09-11 removal cleared the examples and the values
-files and replaced one test fixture with a non-key string; the rest of the tests it left alone.
-None of these keys encrypts anything that outlives a test process; that is an argument about
-impact, not about D1.
+**Not met: D1 for the test fixtures and the conformance runner.** D1 names a test fixture in
+the same breath as an example, and the unit and integration tests carry base64 literals of
+exactly 32 bytes, each of which a configuration would accept as a key encryption key. The
+format and wrap test vectors are among them, so their number moves whenever a vector suite is
+added, and it is not restated in a document that is not regenerated. One of them is a key this
+repository also published outside the tests, and which D5 covers: two example configurations
+and the chart's development values carried it, and it is the fixture of the test that loads
+the configuration the image ships with. The conformance runner carries a working key as a
+shell default, because a stored object names the fingerprint of the key that wrapped it and an
+already seeded corpus would otherwise be unreadable; a `make test-conformance` run hands that
+repository-public key to a real proxy. None of these keys encrypts anything that outlives a
+test process or the local backend's container — an argument about impact, not about D1.
 
-The conformance runner also carries a working key as a shell default, because a stored object
-names the fingerprint of the key that wrapped it and an already seeded corpus would otherwise be
-unreadable. It is a repository-public key that a `make test-conformance` run hands to a real
-proxy; the local backends are thrown away with their container, which is again an argument about
-impact, not about D1.
-
-**The keys that were published stay published (D5).** Five working 256-bit keys were in this
-repository's tree — one across the example configurations, the user-facing reference, the
-monitoring values and the end-to-end values, its retired companion in one example configuration
-and the user-facing reference, and a third in two example configurations and in the chart's
-development values, where it still serves as a test fixture — and the chart's own default until
-3.8.56 was a fourth: a thirty-two character string that is not base64 of thirty-two bytes, which
-the loader of the day therefore took as raw bytes — a working key then, and a string today's
-validator refuses. A fifth stood for five days in September 2025 in the example configuration of
-the counter-mode provider that has since been removed: base64 of thirty-two printable
-characters, which the loader of the day took as a key encryption key and today's validator
-refuses on the same printable-only rule as the fourth. All five are to be treated as
-compromised: any deployment that ever ran under
-one re-writes its data under a new key before the old provider is removed. Deleting them from the
-tree does not un-publish them.
-
-**Corrected 2026-09-10: there are no RSA private keys in the tree.** This block used to name
-two. The `rsa` key provider was deleted with ADR 0004, and every key file it needed went with
-it; what remains are two obviously truncated placeholder strings in configuration tests. A
-reader auditing this repository should not go looking for keys that are not there.
+**The keys that were published stay published (D5).** Five working 256-bit keys appeared in
+this repository: one across the example configurations, the user-facing reference, the
+monitoring values and the end-to-end values; its retired companion in one example
+configuration and the user-facing reference; a third in two example configurations and in the
+chart's development values, which still serves as a test fixture; the chart's own default
+before 3.8.56, a thirty-two character string that is not base64 of thirty-two bytes, which the
+loader of that release took as raw bytes — a working key then, and a string today's validator
+refuses; and, for five days in September 2025, base64 of thirty-two printable characters in the
+example configuration of the counter-mode provider that no longer exists, which the loader of
+that release took as a key encryption key and today's validator refuses on the same
+printable-only rule. All five are to be treated as compromised: any deployment that ever ran
+under one re-writes its data under a new key before the old provider is removed. Deleting them
+from the tree does not un-publish them.
 
 **The build context names what it keeps out.** It excludes the generated environment file and
-the token file a workstation may still hold from the licensed releases (ADR 0016), which no
-longer grants anything and still names its licensee. The wildcard rules beside them reach only
-the root of the tree, so it is a rule naming the path that keeps a file out of the configuration
+the token file a workstation may still hold from the licensed releases (ADR 0016), which
+grants nothing and still names its licensee. The wildcard rules beside them reach only the
+root of the tree, so it is a rule naming the path that keeps a file out of the configuration
 directory the image copies whole; a key placed in that directory needs its own rule.
-
-**Closed 2026-09-11: D3's one name.** `S3EP_AES_KEY` is the only name for the active key: every
-example configuration, values file and chart reference uses it, and the second name that lived in
-the example comments is gone with the literals. The generator writes one further name,
-`S3EP_AES_KEY_RETIRED`, for the second provider of the rotation example, and the conformance
-runner carries its own, `S3EP_CONFORMANCE_AES_KEY`.
-
-The monitoring targets that load an example configuration invoke the generator on a fresh
-checkout, which makes them the fourth and fifth call sites the Consequences below warn about.
 
 ## Context
 
@@ -95,12 +71,12 @@ under a key printed in this repository — and the install *succeeded*, so nothi
 operator anything was wrong. That is the worst shape a security defect can take: silent, on
 by default, and indistinguishable from working.
 
-**The same material sits in the example configurations**, and those are not documentation.
+**The same material sat in the example configurations**, and those are not documentation.
 They are live fixtures: the demo stack mounts two of them as the running proxies'
 configuration, integration tests load one directly to start a proxy instance, and monitoring
-targets pass another on the command line. One key appears in three of those files, so a
-single copy-paste puts the same repository-public key on three deployments. Most of those
-files already carry a commented-out environment-variable form beside the literal — which is
+targets pass another on the command line. One key appeared in three of those files, so a
+single copy-paste put the same repository-public key on three deployments. Most of those
+files carried a commented-out environment-variable form beside the literal — which is
 exactly the point: a comment recommending the safe shape is documentation, and the threat
 model's own rule is that a control which exists only in documentation is worse than no
 control, because it gets relied upon.
@@ -145,13 +121,14 @@ produces a key. No document, example or default in this product ever prints a us
 
 ## Consequences
 
-- **A clean clone can no longer bring the demo up by hand.** Starting the stack without the
+- **A clean clone cannot bring the demo up by hand.** Starting the stack without the
   bring-up step fails on a missing key. That is the price of not publishing keys, and it
   makes the bring-up scripts the only supported entry point.
-- **A generator, and every call site of it, becomes maintained code.** Three call sites are
-  named (demo, end-to-end, continuous integration), and any new environment has to remember
-  to add its own.
-- **Operators who installed the chart with its defaults are broken by the upgrade**: it
+- **A generator, and every call site of it, is maintained code.** Its call sites are the demo
+  bring-up, the end-to-end bring-up, continuous integration and the two monitoring targets,
+  and any new environment has to remember to add its own.
+- **Operators who installed the chart with its defaults before 3.8.56 are broken by the
+  upgrade**: it
   refuses to start until they supply a key, and the objects they already wrote are encrypted
   under a public key and must be re-written. That is the correct outcome, but it shipped as
   an ordinary fix rather than as a headline of the next major release, so the warning lives
@@ -162,18 +139,18 @@ produces a key. No document, example or default in this product ever prints a us
 - **Generated fixture keys are as durable as a working copy.** Deleting the generated file
   makes the objects a demo stack wrote before it unreadable — the same property production
   has, arrived at by accident rather than by procedure.
-- **A generated key is now a precondition of every target that starts a proxy from an example
-  configuration.** The monitoring targets that load one call the generator themselves, so the
-  "just run it" property survives — at the cost of two more call sites that have to keep calling
-  it. A target that forgets is not broken loudly; it starts under whatever the environment
-  happens to hold, or refuses on a missing variable.
-- **Test fixtures lose material they got for free.** The integration tests that started a
-  proxy from an example configuration with a real asymmetric key now need generated material —
-  which costs nothing here only because that provider type is removed anyway (ADR 0004).
+- **A generated key is a precondition of every target that starts a proxy from an example
+  configuration.** The monitoring targets that load one call the generator themselves, keeping
+  a key that is already there, so the "just run it" property holds for them — at the cost of
+  two call sites that have to keep calling it. A target that forgets is not broken loudly; it
+  starts under whatever the environment happens to hold, or refuses on a missing variable.
+- **Test fixtures get no key material for free.** A test that starts a proxy from an example
+  configuration needs generated material; for an asymmetric key that costs nothing, because no
+  provider takes one (ADR 0004).
 
 ## Alternatives Considered
 
-**Leave the example configurations as they are.** They are fixtures, the demo stack is local
+**Keep working keys in the example configurations.** They are fixtures, the demo stack is local
 and throwaway, and its object-store credentials are the well-known defaults anyway. Rejected:
 a private key inside a repository reads as a real leak in every scan that looks at it, a key
 in a file named "example" is what people copy, and the safe shape written as a comment beside
@@ -191,30 +168,19 @@ checkout.
 
 ## Residual risks
 
-- **Closed 2026-09-12: what the monitoring targets do on a fresh checkout.** They invoke the
-  generator, keeping a key that is already there. The "just run it" property is back for them, at the cost of two more call
-  sites of the generator to maintain.
-- **Corrected 2026-09-12: what is still in the tree is the test fixtures.** This entry named one
-  working key in three example configurations, the same key in the end-to-end deployment values,
-  and two complete RSA private keys. None of that is there any more. What is there is eight
-  working 256-bit keys across twenty-four test files, plus one in the conformance runner; one of
-  the eight this repository also published outside the tests long ago; they are public as of the
+- **What is still in the tree is test fixtures and the conformance runner's default.** Working
+  256-bit keys sit in the unit and integration tests, and one in the conformance runner; one of
+  the fixture keys this repository also published outside the tests. They are public as of the
   day they were committed, not as of the day anything is removed, and D5 governs any deployment
   that ever ran under one.
-- **Closed 2026-09-11: the second variable name.** `S3EP_AES_KEY` is the only name an example
-  configuration references for the active key, so a reader following a comment in one wires up
-  the variable the bring-up actually sets. The generator's `S3EP_AES_KEY_RETIRED`, which the
-  rotation example names for its retired provider, and the conformance runner's
-  `S3EP_CONFORMANCE_AES_KEY` are the two other names.
-- **Nothing enforces D1 mechanically, and as of 2026-09-12 this is verified rather than
-  suspected.** No step of this project's own pipeline scans for secrets on a push or a pull
+- **Nothing enforces D1 mechanically, and this is verified rather than suspected.** No step of this project's own pipeline scans for secrets on a push or a pull
   request; whether the hosting platform applies its own push protection is outside the tree and
   is still unverified. The rule holds by review, which is the same class of control the decision
   itself calls insufficient — and the fixture keys above are what a review missed.
 - **Not verified: whether any deployment ever ran under the published chart default or under
   an example key.** The assumption must be that at least one did; D5 is written for that case.
 - **Not verified: whether a locally built image that carried a license token of the licensed
-  releases was ever pushed anywhere.** The token grants nothing any more (ADR 0016) and still
+  releases was ever pushed anywhere.** The token grants nothing (ADR 0016) and still
   names its licensee. What was verified is only the negative side — no token and no signing key
   was ever committed, and published images came from a checkout without one.
 - **Generated fixture keys are never rotated** and live as long as a working copy does.

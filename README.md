@@ -504,7 +504,7 @@ What it deliberately does **not** do:
 | | |
 |---|---|
 | **No rate limiting** | Nothing is throttled and nothing is counted per caller. Put a real limiter in front if you need one ([ADR 0014](./docs/adr/0014-authentication-is-sigv4-no-rate-limiting.md)) |
-| **Object key names are in the clear** | Every byte of an object is encrypted; its name is not. Backup layouts put namespaces, backup names and schedules there. Encrypting them is specified and unbuilt ([ADR 0023](./docs/adr/0023-filename-encryption-encrypts-directory-segments.md)) |
+| **Object key names are in the clear** | Every byte of an object is encrypted; its name is not. Backup layouts put namespaces, backup names and schedules there. Encrypting them is specified and unbuilt ([ADR 0023](./docs/adr/0023-filename-encryption-encrypts-every-segment-with-a-searchable-leaf-head.md)) |
 | **No KMS** | Wrapping a data key with a remote key is specified and unbuilt ([ADR 0005](./docs/adr/0005-a-kms-key-is-a-provider.md)) |
 | **No server-side copy** | `CopyObject` and `UploadPartCopy` answer `422 NotSupportedWithEncryption`: a copy runs inside the backend, where the proxy cannot decrypt and re-encrypt |
 | **No SSE-C** | `501 NotImplemented`: no read path carries the customer key, so such an object could never be read back |

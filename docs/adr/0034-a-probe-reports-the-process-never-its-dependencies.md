@@ -25,8 +25,7 @@ it answered `503`. Readiness wanted exactly that answer. Liveness got it too, an
 therefore spent the whole of its shutdown failing the probe whose only remedy is a kill.
 
 What sits inside that window is the part of the shutdown that cannot be repeated: the proxy
-holds its own multipart uploads (ADR 0033) and ends them in the shutdown tail (ADR 0028,
-ADR 0029). A kill there leaves every open upload at the backend as an orphan — the precise
+holds its own multipart uploads (ADR 0033) and ends them in the shutdown tail (ADR 0029). A kill there leaves every open upload at the backend as an orphan — the precise
 failure the sweep exists to prevent, triggered by the mechanism meant to protect the pod.
 
 The same few lines carried a second defect. There was no `preStop` hold, so the listener stopped
@@ -51,7 +50,7 @@ the answer is no:
   once, and back off exponentially, so the proxy would recover *later* than the backend it was
   waiting for: a foreign outage converted into one of our own. It is worse here than elsewhere,
   because a restart is not a drain — a backend hiccup of thirty seconds would strand exactly the
-  uploads D2 exists to protect.
+  uploads ADR 0029 D2 exists to protect.
 * **The configuration cannot be false at run time.** The loader decodes strictly and an unknown
   key refuses the start (ADR 0013), so a process that answers at all has a configuration that
   parsed. That is a startup fact, not a runtime signal.
@@ -227,11 +226,11 @@ front of the person who can act on it.
 
 ## References
 
-* [ADR 0028](0028-an-abandoned-upload-is-ended-not-forgotten.md) — the sweep that a kill inside
-  the shutdown window destroys.
+* [ADR 0028](0028-an-abandoned-upload-is-ended-not-forgotten.md) — the same abort for an upload
+  that goes idle while the process keeps running.
 * [ADR 0029](0029-the-shutdown-budget-finishes-work-and-sweeps-what-cannot-be-finished.md) — the
-  order of the shutdown and why the listener closes last, which is what keeps the readiness
-  endpoint answering during the sweep.
+  sweep that a kill inside the shutdown window destroys, the order of the shutdown, and why the
+  listener closes last, which is what keeps the readiness endpoint answering during the sweep.
 * [ADR 0033](0033-a-proxy-instance-holds-its-uploads.md) — why the state a restart discards cannot
   be recovered by another instance.
 * [ADR 0030](0030-the-network-boundary-belongs-to-the-administrator.md) — the boundary the status

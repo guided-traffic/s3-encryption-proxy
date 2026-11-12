@@ -2,14 +2,12 @@
 
 ## Status
 
-Accepted. Date: 2026-09-19. **Supersedes D5 of ADR 0035**, which kept the security design
-as one undecomposed document at the repository root.
+Accepted. Date: 2026-09-19.
 
-**Implemented in the change that wrote this record.** The single security document and the
-page of closed hardening items are deleted; `docs/security/` carries one page per
-perspective plus a page describing the form; vulnerability reporting is `SECURITY.md` at
-the repository root. What is *not* done is the knowledge graph, which is rebuilt by a
-separate, user-approved run and still names the deleted layout.
+**Implemented.** There is no single security document and no page of closed hardening items;
+`docs/security/` carries one page per perspective plus a README describing the form;
+vulnerability reporting is `SECURITY.md` at the repository root. The knowledge graph is
+rebuilt by a separate, user-approved run and is not part of this decision.
 
 ## Context
 
@@ -18,10 +16,10 @@ which were over three hundred lines on their own. It had the shape ADR 0035 diag
 the README and treated everywhere else: one page holding every subject, where a reader who
 wants one answer meets all of them.
 
-ADR 0035 D5 kept it whole on purpose, and gave a reason worth taking seriously — that
-twenty-four ADRs cite it, several by section number, so splitting it means editing those
-citations, and a mis-edited citation points a reader at a rule that is not where it says it
-is. **That reason was measured before this change and did not hold.** Of the live
+There was a reason to keep it whole, and it is worth taking seriously — that twenty-four
+ADRs cite it, several by section number, so splitting it means editing those citations, and a
+mis-edited citation points a reader at a rule that is not where it says it is. **That reason
+was measured and does not hold.** Of the live
 references outside the knowledge graph and the ticket directory, six named a section or an
 anchor: two code comments, one ADR, one operator page, and two links to the
 vulnerability-reporting section. Every other citation was a "see also" link with no anchor,
@@ -92,14 +90,11 @@ record left it.
   longer live in one list.
 - **Nothing enforces D2, D3 or D4** beyond review, like every documentation rule this
   project has.
-- **The knowledge graph is behind**, as it was after ADR 0035, and now names two layouts
-  that no longer exist.
 
 ### Where each section went
 
-Text written before 2026-09-19 — a commit message, a pull request, a copy of the
-old document — cites the deleted single document by section number. This is what
-each section became.
+Text written against the single document — a commit message, a pull request, a copy
+of it — cites it by section number. This is the page each section is now.
 
 | Cited as | Now |
 |---|---|
@@ -120,9 +115,9 @@ its entry (D3).
 
 ## Alternatives Considered
 
-**Keep the single document (ADR 0035 D5).** Rejected, and this record exists because the
-reason it gave was measurable and was measured: the citation cost it priced was six
-anchors, not twenty-four documents.
+**Keep the single document at the repository root.** Rejected: the reason for keeping it
+was measurable and was measured — the citation cost it priced was six anchors, not
+twenty-four documents.
 
 **Keep a thin root document as a map of the directory.** Rejected. It is a second index to
 maintain beside the directory README, and an index that is not read decays into a summary
@@ -140,8 +135,8 @@ closed defect is not a subject.
 
 ## Residual risks
 
-- **The citation count was measured on 2026-09-19** by searching the tree with the
-  knowledge graph and the ticket directory excluded. The tickets were then retargeted as
+- **The citation count was measured** by searching the tree with the knowledge graph and
+  the ticket directory excluded. The tickets were then retargeted as
   well, archived ones included: a statement recording a past edit to the deleted document
   keeps its tense and says "the security design", while a statement about where material
   lives now names the page. Rewriting an archived work list is a deliberate exception to
@@ -157,8 +152,8 @@ closed defect is not a subject.
 
 ## References
 
-* [ADR 0035](0035-the-readme-advertises-the-reference-lives-under-docs.md) — the record this
-  one amends: the README advertises, the reference lives under `docs/`
+* [ADR 0035](0035-the-readme-advertises-the-reference-lives-under-docs.md) — the five homes
+  of the documentation: the README advertises, the reference lives under `docs/`
 * [ADR 0022](0022-tickets-are-work-lists-that-get-archived.md) — why a work list does not
   live in documentation that states current rules
 * [ADR 0013](0013-a-configuration-key-exists-only-if-code-reads-it.md),

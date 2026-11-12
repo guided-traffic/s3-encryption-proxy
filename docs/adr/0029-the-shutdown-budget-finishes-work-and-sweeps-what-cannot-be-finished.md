@@ -2,31 +2,16 @@
 
 ## Status
 
-**Accepted.** Date: 2026-09-12. **Amended 2026-09-15**: D1 step 1 said `/health`, which was one
-endpoint serving both Kubernetes probes — so the liveness probe reported the drain and its only
-remedy, a kill, landed inside the window step 4 needs. [ADR 0034](0034-a-probe-reports-the-process-never-its-dependencies.md)
-split them: the drain is `/readyz`, and `/livez` is a constant success. The order in D1 is
-unchanged.
-
-**Implemented on the 5.0.0 branch on 2026-09-12**, and
-**corrected 2026-09-12**: the code closed the listener *before* the sweep rather than after it,
-so during step 4 a readiness probe met a connection refusal instead of the `503 shutting_down`
-step 2 exists to give it. The order in D1 is now the order in the code.
-
-Found with it, and worse: the listener close took a **fresh full** copy of `shutdown_timeout`
-rather than what the drain had left. The phases are sequential, so the two budgets added — a
-drain that ran into its timeout could spend the whole budget again on the close, leaving the
-sweep of D2 with nothing and every upload it was holding at the backend. That is the failure D3
-names, present in the implementation of the ADR that names it. The listener close is now bounded
-by the operator's budget as a whole, and the order and the arithmetic both have tests.
+**Accepted.** Date: 2026-09-15. **Built**, D1 to D7 in full: the four steps run in D1's order,
+the readiness endpoint is `/readyz` and the liveness endpoint `/livez` does not report the drain
+([ADR 0034](0034-a-probe-reports-the-process-never-its-dependencies.md)), the sweep and the
+listener close each take what is left of `shutdown_timeout` rather than a fresh copy of it, and
+both the order and the arithmetic have tests.
 
 The graceful shutdown period has four steps in a fixed order: readiness goes false, new work is
 refused while the listener stays up, the transfers in flight are allowed to finish, and then every
 multipart upload this process is holding is ended at the backend. The listener closes last, once
 there is nothing left to serve.
-
-This supersedes **D5 of [ADR 0028](0028-an-abandoned-upload-is-ended-not-forgotten.md)**, taken
-the same day, which said nothing is aborted at shutdown.
 
 ## Context
 
@@ -46,15 +31,15 @@ unfinishable — not delayed, not resumable elsewhere, **unfinishable**. A secon
 same Service cannot adopt it: it has no data key and no part table, and a client that sends the
 next part there is answered `NoSuchUpload`.
 
-ADR 0028 D5 nevertheless left those uploads alone at shutdown, reasoning that a rollout must not
-destroy uploads in flight and that the client can restart. The first half is true of the *data* and
-false of the *upload*: there is no upload left to destroy, only a record of one that can never be
-completed. The second half is the error — the client can indeed start again, but nothing it or
-anyone else does will ever finish the one that was in progress, and the parts already stored stay
-at the backend, invisible to `ListObjects`, until a lifecycle rule removes them or an operator goes
-looking.
+The obvious position is to leave those uploads alone at shutdown, on the reasoning that a rollout
+must not destroy uploads in flight and that the client can restart. The first half is true of the
+*data* and false of the *upload*: there is no upload left to destroy, only a record of one that
+can never be completed. The second half is the error — the client can indeed start again, but
+nothing it or anyone else does will ever finish the one that was in progress, and the parts
+already stored stay at the backend, invisible to `ListObjects`, until a lifecycle rule removes
+them or an operator goes looking.
 
-Every deployment, every scale-down, every node drain, every crash-free restart therefore leaked
+Left alone, every deployment, every scale-down, every node drain, every crash-free restart leaks
 exactly as much storage as was in flight at the time. That is the common case, not the rare one.
 
 A graceful shutdown period exists for precisely this: to spend a bounded amount of time putting
@@ -125,14 +110,12 @@ the only thing that catches those, and the operator documentation says so.
   grace period the operator already configured, and leaves nothing behind.
 * A client that reaches a draining instance gets a retryable `503` rather than a refused
   connection. Measured on 2026-09-12: every S3 route answered `503 ServiceUnavailable` with
-  `Retry-After: 1` for the whole drain, the readiness endpoint answered `503 shutting_down` beside
-  it — it is not behind the drain guard and carries no `Retry-After` — and the listener closed only
-  after both. (That endpoint was `/health` when this was measured; it is `/readyz` since
-  ADR 0034, and the liveness endpoint beside it stays `200` throughout.)
+  `Retry-After: 1` for the whole drain, and the listener closed only after the drain. The
+  readiness endpoint `/readyz` answers `503 shutting_down` beside it — it is not behind the drain
+  guard and carries no `Retry-After` — and the liveness endpoint `/livez` stays `200` throughout.
 * Shutdown takes as long as the work does and no longer. Measured on 2026-09-12 with an 8-second
   budget: **769 µs** with nothing in flight and one multipart upload to end, and **2.78 s** when a
-  1 GiB download was mid-transfer — which is what was left of that download. The same run under
-  the previous poll-every-second drain took 1.0027 s to do nothing.
+  1 GiB download was mid-transfer — which is what was left of that download.
 * An in-flight transfer is not sacrificed to the exit. The 1 GiB download above delivered all
   1073741824 bytes after its instance had been told to stop.
 * A client whose upload this process was holding during a shutdown learns about it sooner: its
@@ -142,16 +125,16 @@ the only thing that catches those, and the operator documentation says so.
   already gone — the usual case when a whole stack is being torn down — costs one failed call per
   upload against the remaining budget, and each failure is logged with what an operator needs to
   finish the job by hand.
-* Shutdown stays within one `shutdown_timeout`, which it did not before: the listener close used
-  to get a fresh full budget on top of the drain, so a drain that ran into its timeout could spend
-  the operator's budget twice and leave the sweep with nothing.
+* Shutdown stays within one `shutdown_timeout`. The listener close takes what the drain and the
+  sweep have left, not a fresh budget of its own, so a drain that runs into its timeout cannot
+  spend the operator's budget twice and leave the sweep with nothing.
 
 ## Alternatives considered
 
-**Leave it to the lifecycle rule.** The position of ADR 0028 D5. Rejected because it treats the
-one case the proxy can handle — a clean, signalled shutdown, where it knows every upload id — as
-if it were the crash case it genuinely cannot handle. It also requires a bucket configuration the
-proxy does not own and cannot check.
+**Leave it to the lifecycle rule.** Rejected because it treats the one case the proxy can handle — a
+clean, signalled shutdown, where it knows every upload id — as if it were the crash case it
+genuinely cannot handle. It also requires a bucket configuration the proxy does not own and cannot
+check.
 
 **Persist sessions so another process can adopt them.** This would make the uploads genuinely
 resumable rather than merely not-cleaned-up, and it is the only alternative that would make D2
@@ -162,6 +145,10 @@ Not taken, and not closed.
 **Complete what has arrived.** Rejected as D5: it produces an object the client never asked for,
 and the segment chain would authenticate it perfectly.
 
+**Poll for the end of the drain on a fixed tick.** Rejected under D7: the drain then ends on the
+next tick rather than when the last transfer does. Measured in the same run as the figures above,
+a once-a-second poll took 1.0027 s to do nothing.
+
 ## Residual risks
 
 * **The clean-refusal window is exactly as long as the drain, and D7 makes it shorter.** An idle
@@ -169,10 +156,9 @@ and the segment chain would authenticate it perfectly.
   request gets a `503` instead of a refused connection; a busy one keeps the window for as long as
   its transfers run. That is the right trade for the instance — it is the load balancer's job to
   have stopped sending — but it does mean the `503` is a courtesy for slow rotation, not a
-  guarantee. A `preStop` sleep is what puts a floor under it, and the chart declares one with no
-  opt-out since 2026-09-15 (ADR 0034 D10) — so the window is now bounded below by that hold,
-  whose duration is a values key and therefore a guess about the cluster rather than a
-  measurement of it.
+  guarantee. A `preStop` hold is what puts a floor under it, and the chart declares one with no
+  opt-out (ADR 0034 D10) — so the window is bounded below by that hold, whose duration is a values
+  key and therefore a guess about the cluster rather than a measurement of it.
 * **A shutdown that overruns its drain cleans up nothing.** D3 chooses the pod's grace period over
   the cleanup, deliberately: being killed mid-abort is worse than not starting. An operator whose
   drains routinely fill the budget gets no cleanup and one warning line.
@@ -183,10 +169,10 @@ and the segment chain would authenticate it perfectly.
   ADR 0027 runs against a backend that is not MinIO, and the abort call is ordinary S3 — but the
   claim that ending an upload releases its parts, and the shutdown path that depends on it, are
   checked against MinIO only.
-* **D4 names only the uploads whose abort the backend refused.** Recorded 2026-09-12. An upload
-  the walk never reached because the budget ran out is counted, not named: the shutdown reports how
-  many were ended and how many were left, and an operator who needs the upload ids of those has to
-  list the incomplete uploads at the backend. The refusal case is logged with all three.
+* **D4 names only the uploads whose abort the backend refused.** An upload the walk never reached
+  because the budget ran out is counted, not named: the shutdown reports how many were ended and how
+  many were left, and an operator who needs the upload ids of those has to list the incomplete
+  uploads at the backend. The refusal case is logged with all three.
 
 ## References
 
@@ -195,4 +181,6 @@ and the segment chain would authenticate it perfectly.
 * [ADR 0015](0015-a-transfer-is-bounded-by-the-client-and-by-shutdown.md) — shutdown is one of the
   two things that may bound a transfer
 * [ADR 0028](0028-an-abandoned-upload-is-ended-not-forgotten.md) — the same cleanup for an upload
-  that goes idle while the proxy keeps running; its D5 is superseded here
+  that goes idle while the proxy keeps running
+* [ADR 0034](0034-a-probe-reports-the-process-never-its-dependencies.md) — the readiness and
+  liveness endpoints of D1 step 1

@@ -11,7 +11,7 @@
 2026-09-17.**
 
 The feature is specified in
-[ADR 0023](../adr/0023-filename-encryption-encrypts-directory-segments.md) and
+[ADR 0023](../adr/0023-filename-encryption-encrypts-every-segment-with-a-searchable-leaf-head.md) and
 nothing of it is built. Both dependencies have landed: the authenticated segment
 chain (ADR 0003) and the listing document rewrite (ADR 0010). What blocks it is
 decisions, and on 2026-09-17 the repository owner set two requirements that

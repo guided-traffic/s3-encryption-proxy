@@ -2365,7 +2365,7 @@ and the first refining round; 34 and 35 from round 2, which reopened 17 and 24;
   [ADR 0027](../adr/0027-conformance-is-asserted-against-a-backend-that-is-not-minio.md)
   and [ADR 0031](../adr/0031-a-test-states-the-target-and-stays-red-until-the-product-meets-it.md)
   — the first pass cited no testing record at all.
-* [ADR 0023](../adr/0023-filename-encryption-encrypts-directory-segments.md) D8 —
+* [ADR 0023](../adr/0023-filename-encryption-encrypts-every-segment-with-a-searchable-leaf-head.md) D8 —
   the transform is at exactly one boundary, and a shared row sits above it holding
   cleartext names.
 * [ADR 0025](../adr/0025-leaving-is-a-supported-mode.md) — the exit provider keeps
