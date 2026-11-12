@@ -113,7 +113,7 @@ this column is a reading aid.
 
 | ADR | Decision | State |
 |---|---|---|
-| [0017](0017-stored-data-compatibility-is-not-owed.md) | No compatibility is owed for data at rest; a major release may break the format, and there is no migration: the data is uploaded again from its source | Partly built |
+| [0017](0017-stored-data-compatibility-is-not-owed.md) | No compatibility is owed for data at rest; a major release may break the format, and there is no migration: the data is uploaded again from its source | Implemented |
 | [0018](0018-a-major-release-is-declared-by-a-label.md) | Releases are computed from the commits that reach `main`; a major requires a deliberate label on the pull request | Implemented |
 | [0019](0019-integration-and-e2e-tests-are-the-product.md) | The integration and end-to-end suites are part of the product and are never skipped, weakened or disarmed | Partly built |
 | [0020](0020-performance-is-measured-before-and-after.md) | Every performance claim carries a before-and-after measurement, taken locally on one machine; continuous integration measures once and never fails on a performance number | Partly built |
