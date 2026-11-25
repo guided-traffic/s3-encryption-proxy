@@ -257,6 +257,14 @@
       ]
     },
     {
+      "description": "semantic-release stays on 25.x. 26.0.1 depends on beta releases of @semantic-release/commit-analyzer, release-notes-generator and npm, and the tool that cuts every release does not run on betas. Its commit-analyzer and release-notes-generator also bring conventional-changelog-conventionalcommits 10.x of their own, so taking 26 means moving the pin below and release.config.mjs in the same change. Renovate cannot write the lock file for it either: @semantic-release/npm 14 pulls npm 12, a package with bundleDependencies, and npm extracts such a package by its tarball URL, which Renovate's allow-remote=none refuses (EALLOWREMOTE). Lift this once the plugins are out of beta, and regenerate package-lock.json by hand in that change.",
+      "matchPackageNames": [
+        "semantic-release"
+      ],
+      "allowedVersions": "<26",
+      "automerge": false
+    },
+    {
       "description": "conventional-changelog-conventionalcommits must stay in the generation @semantic-release/commit-analyzer and release-notes-generator are built on (conventional-changelog-angular 8.x, writer 8.x). The 10.x line changes the preset shape and needs Node 22; it once broke the release. Bump it only together with a semantic-release generation that moves its own conventional-changelog dependencies.",
       "matchPackageNames": [
         "conventional-changelog-conventionalcommits"
