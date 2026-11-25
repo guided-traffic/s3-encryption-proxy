@@ -51,7 +51,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
     -o s3ep-keygen ./cmd/keygen
 
 # Final stage - using distroless for minimal attack surface
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian13:nonroot
 
 # Build arguments for metadata
 ARG BUILD_NUMBER

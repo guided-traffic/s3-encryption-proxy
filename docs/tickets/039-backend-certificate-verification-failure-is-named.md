@@ -145,7 +145,7 @@ untouched and was already per backend.
    references*, suggested title *The CA bundle, and a backend under a private
    CA*. Content: `ca_file` as the documented way and what its three refusals are;
    the bundle's path and provenance (`/etc/ssl/certs/ca-certificates.crt`,
-   Debian's, 150 certificates, no `update-ca-certificates` in a distroless
+   Debian's, 148 certificates, no `update-ca-certificates` in a distroless
    image); Go's loading rule and what `SSL_CERT_FILE` / `SSL_CERT_DIR` each
    replace, as the mechanism underneath rather than the recommended path; **the
    precedence — `ca_file` wins for its backend, silently, because an environment
@@ -212,9 +212,10 @@ changed on 2026-09-18*. The transport facts below were verified on 2026-09-14
 against release 5.0.0 and still hold.
 
 - **The bundle.** `/etc/ssl/certs/ca-certificates.crt` in the image — Debian's
-  `ca-certificates` as `gcr.io/distroless/static-debian12:nonroot` ships it,
-  224,449 bytes, 150 certificates, mode `r-xr-xr-x`, and the only entry under
-  `/etc/ssl` (verified with `docker export | tar -tv` on the 5.0.0 image). No
+  `ca-certificates` as `gcr.io/distroless/static-debian13:nonroot` ships it,
+  222,073 bytes, 148 certificates, mode `r-xr-xr-x`, and the only entry under
+  `/etc/ssl` (verified with `docker export | tar -tv` on the 5.0.0 image, and
+  the size and count again after the move to Debian 13 on 2026-11-25). No
   OpenSSL, no `update-ca-certificates`, no shell.
 - **How roots are loaded** (Go 1.27.1 `crypto/x509/root.go`, `loadOnDiskRoots`):
   the first readable file of `certFiles` (`/etc/ssl/certs/ca-certificates.crt`
