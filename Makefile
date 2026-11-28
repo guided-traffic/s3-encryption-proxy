@@ -479,7 +479,7 @@ helm-lint:
 # The helm-unittest plugin version CI installs. Renovate bumps it through the
 # custom manager in renovate.json, which keeps it off automerge: this job gates
 # semantic-release.
-HELM_UNITTEST_VERSION := v1.2.1
+HELM_UNITTEST_VERSION := v1.3.0
 
 helm-unittest-plugin:
 	@helm plugin list | grep -q '^unittest' || \
